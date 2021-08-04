@@ -1,0 +1,9 @@
+cargo-features = ["edition2021"]
+
+[package]
+name = "rox"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+indexmap = "1.7.0"
