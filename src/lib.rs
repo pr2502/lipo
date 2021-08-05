@@ -1,4 +1,5 @@
 pub mod chunk;
+pub mod lexer;
 pub mod opcode;
 pub mod span;
 pub mod value;

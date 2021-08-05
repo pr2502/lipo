@@ -1,8 +1,19 @@
+use std::ops::Range;
 
 #[derive(Clone, Copy, Default)]
 pub struct FreeSpan {
     pub offset: u32,
     pub len: u32,
+}
+
+impl From<Range<usize>> for FreeSpan {
+    fn from(range: Range<usize>) -> Self {
+        let offset = range.start.try_into()
+            .expect("file size limit exceeded");
+        let len = (range.end - range.start).try_into()
+            .expect("file size limit exceeded");
+        FreeSpan { offset, len }
+    }
 }
 
 impl FreeSpan {
