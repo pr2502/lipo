@@ -1,5 +1,5 @@
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct FreeSpan {
     pub offset: u32,
     pub len: u32,

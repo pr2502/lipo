@@ -15,19 +15,44 @@ macro_rules! opcodes {
 #[derive(Clone, Copy, Debug)]
 pub enum OpCode {
     Constant { index: u16 },
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Negate,
     Return,
 }
 
 opcodes! {
     CONSTANT,
+    ADD,
+    SUBTRACT,
+    MULTIPLY,
+    DIVIDE,
+    NEGATE,
     RETURN,
 }
 
 impl OpCode {
-    pub fn parse(code: &[u8]) -> Option<(OpCode, &[u8])> {
+    pub fn decode(code: &[u8]) -> Option<(OpCode, &[u8])> {
         Some(match code {
             [RETURN, rest @ .. ] => {
                 (OpCode::Return, rest)
+            }
+            [ADD, rest @ .. ] => {
+                (OpCode::Add, rest)
+            }
+            [SUBTRACT, rest @ .. ] => {
+                (OpCode::Subtract, rest)
+            }
+            [MULTIPLY, rest @ .. ] => {
+                (OpCode::Multiply, rest)
+            }
+            [DIVIDE, rest @ .. ] => {
+                (OpCode::Divide, rest)
+            }
+            [NEGATE, rest @ .. ] => {
+                (OpCode::Negate, rest)
             }
             [CONSTANT, x, y, rest @ .. ]  => {
                 (OpCode::Constant { index: u16::from_le_bytes([*x, *y]) }, rest)
@@ -36,10 +61,25 @@ impl OpCode {
         })
     }
 
-    pub fn write(self, code: &mut Vec<u8>) {
+    pub fn encode(self, code: &mut Vec<u8>) {
         match self {
             OpCode::Return => {
                 code.push(RETURN);
+            }
+            OpCode::Add => {
+                code.push(ADD);
+            }
+            OpCode::Subtract => {
+                code.push(SUBTRACT);
+            }
+            OpCode::Multiply => {
+                code.push(MULTIPLY);
+            }
+            OpCode::Divide => {
+                code.push(DIVIDE);
+            }
+            OpCode::Negate => {
+                code.push(NEGATE);
             }
             OpCode::Constant { index } => {
                 code.push(CONSTANT);

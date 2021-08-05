@@ -1,3 +1,4 @@
+use crate::default;
 use crate::opcode::OpCode;
 use crate::span::{FreeSpan, Span};
 use crate::value::{Value, ValueBits};
@@ -27,17 +28,17 @@ pub struct Chunk {
 }
 
 impl Chunk {
-    pub fn new(source: String) -> Self {
+    pub fn new(source: String) -> Chunk {
         Chunk {
-            code: Default::default(),
-            constants: Default::default(),
-            spans: Default::default(),
+            code: default(),
+            constants: default(),
+            spans: default(),
             source,
         }
     }
 
     pub fn write(&mut self, opcode: OpCode, span: FreeSpan) {
-        opcode.write(&mut self.code);
+        opcode.encode(&mut self.code);
         self.spans.push(span);
     }
 
@@ -53,7 +54,7 @@ impl Chunk {
     fn opcodes(&self) -> impl Iterator<Item = OpCode> + '_ {
         let mut code = self.code.as_slice();
         iter::from_fn(move || {
-            let (opcode, rest) = OpCode::parse(code)?;
+            let (opcode, rest) = OpCode::decode(code)?;
             code = rest;
             Some(opcode)
         })
@@ -62,6 +63,10 @@ impl Chunk {
     fn spans(&self) -> impl Iterator<Item = Span<'_>> + '_ {
         self.spans.iter()
             .map(|fs| fs.anchor(&self.source))
+    }
+
+    pub fn code(&self) -> &[u8] {
+        &self.code
     }
 }
 
