@@ -51,7 +51,7 @@ impl Chunk {
         Some(self.constants.get_index(index as usize)?.0)
     }
 
-    fn opcodes(&self) -> impl Iterator<Item = OpCode> + '_ {
+    pub fn opcodes(&self) -> impl Iterator<Item = OpCode> + '_ {
         let mut code = self.code.as_slice();
         iter::from_fn(move || {
             let (opcode, rest) = OpCode::decode(code)?;
@@ -67,6 +67,10 @@ impl Chunk {
 
     pub fn code(&self) -> &[u8] {
         &self.code
+    }
+
+    pub fn source(&self) -> &str {
+        &self.source
     }
 }
 

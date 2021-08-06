@@ -1,17 +1,10 @@
-use logos::{skip, Lexer, Logos};
+use crate::default;
+use crate::span::FreeSpan;
+use logos::{self, skip, Logos};
 
 
-fn string(lex: &mut Lexer<Token>) -> String {
-    lex.slice().into()
-}
-
-fn number(lex: &mut Lexer<Token>) -> Result<f64, std::num::ParseFloatError> {
-    lex.slice().parse()
-}
-
-
-#[derive(Logos, Debug, PartialEq)]
-pub enum Token {
+#[derive(Logos, Debug, PartialEq, Eq, Clone, Copy)]
+pub enum TokenKind {
     // Single-character tokens
     #[token("(")] LeftParen,
     #[token(")")] RightParen,
@@ -36,12 +29,12 @@ pub enum Token {
     #[token("<=")] LessEqual,
 
     // Literals
-    #[regex(r"[a-zA-Z_][a-zA-Z_0-9]*", string)]
-    Identifier(String),
-    #[regex(r#""[^"]*""#, string)]
-    String(String),
-    #[regex(r"[0-9]+(\.[0-9]*)?", number)]
-    Number(f64),
+    #[regex(r"[a-zA-Z_][a-zA-Z_0-9]*")]
+    Identifier,
+    #[regex(r#""[^"]*""#)]
+    String,
+    #[regex(r"[0-9]+(\.[0-9]*)?")]
+    Number,
 
     // Keywords
     #[token("and")] And,
@@ -62,8 +55,54 @@ pub enum Token {
     #[token("var")] Var,
     #[token("while")] While,
 
+    Eof,
+
     #[error]
     #[regex(r"[ \t\n\r]+", skip)] // whitespace
     #[regex(r"//[^\n]*", skip)] // comments
     Error,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Token {
+    pub kind: TokenKind,
+    pub span: FreeSpan,
+}
+
+pub struct Lexer<'src> {
+    inner: logos::Lexer<'src, TokenKind>,
+    current: TokenKind,
+}
+
+impl Default for Token {
+    fn default() -> Token {
+        Token {
+            kind: TokenKind::Error,
+            span: default(),
+        }
+    }
+}
+
+impl<'src> Lexer<'src> {
+    pub fn new(source: &'src str) -> Lexer<'src> {
+        let mut inner = logos::Lexer::new(source);
+        let current = inner.next().unwrap_or(TokenKind::Eof);
+        Lexer { current, inner }
+    }
+
+    pub fn peek(&self) -> Token {
+        Token {
+            kind: self.current,
+            span: self.inner.span().into(),
+        }
+    }
+
+    pub fn next(&mut self) -> Token {
+        self.current = self.inner.next().unwrap_or(TokenKind::Eof);
+        self.peek()
+    }
+
+    pub fn source(&self) -> &str {
+        self.inner.source()
+    }
 }

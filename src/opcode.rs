@@ -12,7 +12,7 @@ macro_rules! opcodes {
 }
 
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum OpCode {
     Constant { index: u16 },
     Add,

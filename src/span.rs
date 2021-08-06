@@ -1,4 +1,5 @@
 use std::ops::Range;
+use std::fmt::{self, Debug};
 
 #[derive(Clone, Copy, Default)]
 pub struct FreeSpan {
@@ -21,6 +22,14 @@ impl FreeSpan {
         let FreeSpan { offset, len } = self;
         assert!((offset + len) as usize <= source.len(), "span is out bounds of backing text");
         Span { source, offset, len }
+    }
+}
+
+impl Debug for FreeSpan {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_tuple("Span")
+            .field(&(self.offset..(self.offset+self.len)))
+            .finish()
     }
 }
 
@@ -50,5 +59,11 @@ impl<'src> Span<'src> {
             .count() as u32;
 
         (1 + before, 1 + before + within)
+    }
+
+    pub fn slice(&self) -> &str {
+        let offset = self.offset as usize;
+        let len = self.len as usize;
+        &self.source[offset..][..len]
     }
 }

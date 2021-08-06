@@ -1,4 +1,5 @@
 pub mod chunk;
+pub mod compiler;
 pub mod lexer;
 pub mod opcode;
 pub mod span;
@@ -12,6 +13,7 @@ fn default<T: Default>() -> T {
 #[cfg(test)]
 mod test {
     use crate::chunk::Chunk;
+    use crate::compiler::compile;
     use crate::default;
     use crate::opcode::OpCode;
     use crate::span::FreeSpan;
@@ -93,5 +95,34 @@ Chunk {
             vm.run().unwrap(),
             Value { float: -1.0 },
         );
+    }
+
+    #[test]
+    fn parser() {
+        init();
+
+        let chunk = compile("(-1 + 2) * 3 - -4".to_string()).unwrap();
+        let opcodes = chunk.opcodes().collect::<Vec<_>>();
+
+        assert_eq!(chunk.get_constant(0), Some(Value { float: 1.0 }));
+        assert_eq!(chunk.get_constant(1), Some(Value { float: 2.0 }));
+        assert_eq!(chunk.get_constant(2), Some(Value { float: 3.0 }));
+        assert_eq!(chunk.get_constant(3), Some(Value { float: 4.0 }));
+
+        assert_eq!(
+            opcodes,
+            vec![
+                OpCode::Constant { index: 0 },
+                OpCode::Negate,
+                OpCode::Constant { index: 1 },
+                OpCode::Add,
+                OpCode::Constant { index: 2 },
+                OpCode::Multiply,
+                OpCode::Constant { index: 3 },
+                OpCode::Negate,
+                OpCode::Subtract,
+                OpCode::Return,
+            ],
+        )
     }
 }
