@@ -1,13 +1,19 @@
 use std::fmt::{self, Debug};
 
 #[derive(Clone, Copy, PartialEq)]
-pub struct Value {
-    pub float: f64,
+pub enum Value {
+    Nil,
+    Bool(bool),
+    Number(f64),
 }
 
 impl Debug for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.float.fmt(f)
+        match self {
+            Value::Nil => "nil".fmt(f),
+            Value::Bool(b) => b.fmt(f),
+            Value::Number(n) => n.fmt(f),
+        }
     }
 }
 
@@ -19,7 +25,12 @@ mod bits {
 
     impl PartialEq<ValueBits> for ValueBits {
         fn eq(&self, other: &ValueBits) -> bool {
-            self.0.float.to_bits() == other.0.float.to_bits()
+            match (self.0, other.0) {
+                (Value::Nil, Value::Nil) => true,
+                (Value::Bool(lhs), Value::Bool(rhs)) => lhs == rhs,
+                (Value::Number(lhs), Value::Number(rhs)) => lhs.to_bits() == rhs.to_bits(),
+                _ => false,
+            }
         }
     }
 
@@ -30,7 +41,11 @@ mod bits {
         where
             H: Hasher,
         {
-            state.write_u64(self.0.float.to_bits())
+            match self.0 {
+                Value::Nil => {}
+                Value::Bool(b) => state.write_u8(b as u8),
+                Value::Number(n) => state.write_u64(n.to_bits()),
+            }
         }
     }
 }

@@ -20,7 +20,7 @@ pub struct Chunk {
 
     /// Opcode origin spans
     ///
-    /// Indexed by opcode index, not bytes in `code`. Free spans are anchored against `source`.
+    /// Indexed by bytes in `code`. Free spans are anchored against `source`.
     spans: Vec<FreeSpan>,
 
     /// Original source code
@@ -38,8 +38,14 @@ impl Chunk {
     }
 
     pub fn write(&mut self, opcode: OpCode, span: FreeSpan) {
+        let before = self.code.len();
         opcode.encode(&mut self.code);
-        self.spans.push(span);
+        let bytes = self.code.len() - before;
+        for _ in 0..bytes {
+            // FIXME this is an extremely wasteful way of storing the debug information, make
+            // something a bit better
+            self.spans.push(span);
+        }
     }
 
     pub fn insert_constant(&mut self, value: Value) -> u16 {
@@ -60,7 +66,7 @@ impl Chunk {
         })
     }
 
-    fn spans(&self) -> impl Iterator<Item = Span<'_>> + '_ {
+    pub fn spans(&self) -> impl Iterator<Item = Span<'_>> + '_ {
         self.spans.iter()
             .map(|fs| fs.anchor(&self.source))
     }

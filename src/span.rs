@@ -40,6 +40,20 @@ pub struct Span<'src> {
     len: u32,
 }
 
+impl<'src> Debug for Span<'src> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let offset = self.offset as usize;
+        let len = self.len as usize;
+        let (line, _) = self.lines();
+        let (column, _) = self.columns();
+        f.debug_tuple("Span")
+            .field(&line)
+            .field(&column)
+            .field(&&self.source[offset..][..len])
+            .finish()
+    }
+}
+
 impl<'src> Span<'src> {
     /// Returns on which line does the span start and on which it ends
     ///
@@ -59,6 +73,17 @@ impl<'src> Span<'src> {
             .count() as u32;
 
         (1 + before, 1 + before + within)
+    }
+
+    /// Returns 
+    pub fn columns(&self) -> (u32, u32) {
+        let column = |line: &[u8]| {
+            line.iter().rev().take_while(|byte| **byte != b'\n').count() as u32
+        };
+        let bytes = self.source.as_bytes();
+        let start = self.offset as usize;
+        let end = start + (self.len as usize);
+        (column(&bytes[..start]), column(&bytes[..end]))
     }
 
     pub fn slice(&self) -> &str {

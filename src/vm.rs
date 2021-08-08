@@ -1,6 +1,7 @@
 use crate::chunk::Chunk;
 use crate::default;
 use crate::opcode::OpCode;
+use crate::span::Span;
 use crate::value::Value;
 use log::{debug, trace};
 
@@ -11,9 +12,12 @@ pub struct VM<'code> {
 }
 
 #[derive(Debug)]
-pub enum VmError {
+pub enum VmError<'code> {
     CompileError(CodeError),
-    RuntimeError,
+    RuntimeError {
+        span: Span<'code>,
+        kind: RuntimeErrorKind,
+    },
 }
 
 #[derive(Debug)]
@@ -21,6 +25,11 @@ pub enum CodeError {
     UnexpectedEndOfCode,
     InvalidConstantIndex(u16),
     PopEmptyStack,
+}
+
+#[derive(Debug)]
+pub enum RuntimeErrorKind {
+    TypeError,
 }
 
 impl<'code> VM<'code> {
@@ -32,7 +41,16 @@ impl<'code> VM<'code> {
         }
     }
 
-    pub fn run(mut self) -> Result<Value, VmError> {
+    fn pop(&mut self) -> Result<Value, VmError<'code>> {
+        self.stack.pop()
+            .ok_or(VmError::CompileError(CodeError::PopEmptyStack))
+    }
+
+    fn push(&mut self, value: Value) {
+        self.stack.push(value);
+    }
+
+    pub fn run(mut self) -> Result<Value, VmError<'code>> {
         loop {
             let offset = (self.ip.as_ptr() as usize) - (self.chunk.code().as_ptr() as usize);
             let (opcode, next) = OpCode::decode(self.ip).ok_or(VmError::CompileError(CodeError::UnexpectedEndOfCode))?;
@@ -44,49 +62,124 @@ impl<'code> VM<'code> {
                     let constant = self.chunk.get_constant(index)
                         .ok_or(VmError::CompileError(CodeError::InvalidConstantIndex(index)))?;
                     trace!("constant {:?}", &constant);
-                    self.stack.push(constant);
+                    self.push(constant);
+                }
+                OpCode::Nil => {
+                    self.push(Value::Nil);
+                }
+                OpCode::True => {
+                    self.push(Value::Bool(true));
+                }
+                OpCode::False => {
+                    self.push(Value::Bool(false));
+                }
+                OpCode::Equal => {
+                    let rhs = self.pop()?;
+                    let lhs = self.pop()?;
+                    let result = match (lhs, rhs) {
+                        (Value::Nil, Value::Nil) => true,
+                        (Value::Bool(lhs), Value::Bool(rhs)) => lhs == rhs,
+                        (Value::Number(lhs), Value::Number(rhs)) => (lhs - rhs).abs() <= f64::EPSILON,
+                        // different types are never equal
+                        _ => false,
+                    };
+                    self.push(Value::Bool(result));
+                }
+                OpCode::Greater => {
+                    let rhs = self.pop()?;
+                    let lhs = self.pop()?;
+                    let result = match (lhs, rhs) {
+                        (Value::Number(lhs), Value::Number(rhs)) => Value::Bool(lhs > rhs),
+                        _ => return Err(VmError::RuntimeError {
+                            span: self.chunk.spans().nth(offset).expect("missing span information"),
+                            kind: RuntimeErrorKind::TypeError
+                        }),
+                    };
+                    self.push(result);
+                }
+                OpCode::Less => {
+                    let rhs = self.pop()?;
+                    let lhs = self.pop()?;
+                    let result = match (lhs, rhs) {
+                        (Value::Number(lhs), Value::Number(rhs)) => Value::Bool(lhs < rhs),
+                        _ => return Err(VmError::RuntimeError {
+                            span: self.chunk.spans().nth(offset).expect("missing span information"),
+                            kind: RuntimeErrorKind::TypeError
+                        }),
+                    };
+                    self.push(result);
                 }
                 OpCode::Add => {
-                    let rhs = self.stack.pop()
-                        .ok_or(VmError::CompileError(CodeError::PopEmptyStack))?;
-                    let lhs = self.stack.pop()
-                        .ok_or(VmError::CompileError(CodeError::PopEmptyStack))?;
-                    let result = Value { float: lhs.float + rhs.float };
-                    self.stack.push(result);
+                    let rhs = self.pop()?;
+                    let lhs = self.pop()?;
+                    let result = match (lhs, rhs) {
+                        (Value::Number(lhs), Value::Number(rhs)) => Value::Number(lhs + rhs),
+                        _ => return Err(VmError::RuntimeError {
+                            span: self.chunk.spans().nth(offset).expect("missing span information"),
+                            kind: RuntimeErrorKind::TypeError
+                        }),
+                    };
+                    self.push(result);
                 }
                 OpCode::Subtract => {
-                    let rhs = self.stack.pop()
-                        .ok_or(VmError::CompileError(CodeError::PopEmptyStack))?;
-                    let lhs = self.stack.pop()
-                        .ok_or(VmError::CompileError(CodeError::PopEmptyStack))?;
-                    let result = Value { float: lhs.float - rhs.float };
-                    self.stack.push(result);
+                    let rhs = self.pop()?;
+                    let lhs = self.pop()?;
+                    let result = match (lhs, rhs) {
+                        (Value::Number(lhs), Value::Number(rhs)) => Value::Number(lhs - rhs),
+                        _ => return Err(VmError::RuntimeError {
+                            span: self.chunk.spans().nth(offset).expect("missing span information"),
+                            kind: RuntimeErrorKind::TypeError
+                        }),
+                    };
+                    self.push(result);
                 }
                 OpCode::Multiply => {
-                    let rhs = self.stack.pop()
-                        .ok_or(VmError::CompileError(CodeError::PopEmptyStack))?;
-                    let lhs = self.stack.pop()
-                        .ok_or(VmError::CompileError(CodeError::PopEmptyStack))?;
-                    let result = Value { float: lhs.float * rhs.float };
-                    self.stack.push(result);
+                    let rhs = self.pop()?;
+                    let lhs = self.pop()?;
+                    let result = match (lhs, rhs) {
+                        (Value::Number(lhs), Value::Number(rhs)) => Value::Number(lhs * rhs),
+                        _ => return Err(VmError::RuntimeError {
+                            span: self.chunk.spans().nth(offset).expect("missing span information"),
+                            kind: RuntimeErrorKind::TypeError
+                        }),
+                    };
+                    self.push(result);
                 }
                 OpCode::Divide => {
-                    let rhs = self.stack.pop()
-                        .ok_or(VmError::CompileError(CodeError::PopEmptyStack))?;
-                    let lhs = self.stack.pop()
-                        .ok_or(VmError::CompileError(CodeError::PopEmptyStack))?;
-                    let result = Value { float: lhs.float / rhs.float };
-                    self.stack.push(result);
+                    let rhs = self.pop()?;
+                    let lhs = self.pop()?;
+                    let result = match (lhs, rhs) {
+                        (Value::Number(lhs), Value::Number(rhs)) => Value::Number(lhs / rhs),
+                        _ => return Err(VmError::RuntimeError {
+                            span: self.chunk.spans().nth(offset).expect("missing span information"),
+                            kind: RuntimeErrorKind::TypeError
+                        }),
+                    };
+                    self.push(result);
+                }
+                OpCode::Not => {
+                    let value = self.pop()?;
+                    let value = match value {
+                        // only `nil` and `false` are "falsey", so their negation is `true`
+                        Value::Nil | Value::Bool(false) => Value::Bool(true),
+                        // everything else is "truthy" so the negation is always false
+                        _ => Value::Bool(false),
+                    };
+                    self.push(value);
                 }
                 OpCode::Negate => {
-                    let value = self.stack.pop()
-                        .ok_or(VmError::CompileError(CodeError::PopEmptyStack))?;
-                    let value = Value { float: -value.float };
-                    self.stack.push(value);
+                    let value = self.pop()?;
+                    let value = match value {
+                        Value::Number(n) => Value::Number(-n),
+                        _ => return Err(VmError::RuntimeError {
+                            span: self.chunk.spans().nth(offset).expect("missing span information"),
+                            kind: RuntimeErrorKind::TypeError
+                        }),
+                    };
+                    self.push(value);
                 }
                 OpCode::Return => {
-                    let value = self.stack.pop()
-                        .ok_or(VmError::CompileError(CodeError::PopEmptyStack))?;
+                    let value = self.pop()?;
                     debug!("return value {:?}", &value);
                     break Ok(value);
                 }

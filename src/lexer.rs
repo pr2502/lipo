@@ -45,7 +45,6 @@ pub enum TokenKind {
     #[token("fun")] Fun,
     #[token("if")] If,
     #[token("nil")] Nil,
-    #[token("not")] Not,
     #[token("or")] Or,
     #[token("print")] Print,
     #[token("return")] Return,

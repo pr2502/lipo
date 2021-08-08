@@ -71,6 +71,34 @@ pub fn compile(source: String) -> Result<Chunk, Vec<ParserError>> {
 }
 
 impl<'ctx> Parser<'ctx> {
+    /// Get currently compiling Chunk
+    fn chunk(&mut self) -> &mut Chunk {
+        self.chunk
+    }
+
+    fn emit(&mut self, opcode: OpCode) {
+        let span = self.previous.span;
+        self.chunk().write(opcode, span);
+    }
+}
+
+/// Helper macro for emitting a variable number of instructions or constants in a single
+/// expression.
+macro_rules! emit {
+    ( $self:ident ) => {};
+    ( $self:ident, ) => {};
+    ( $self:ident, Constant ( $value:expr ) $($tt:tt)* ) => {{
+        let index = $self.chunk().insert_constant($value);
+        $self.emit(OpCode::Constant { index });
+        emit!( $self $($tt)* );
+    }};
+    ( $self:ident, $opcode:ident $($tt:tt)* ) => {{
+        $self.emit(OpCode::$opcode);
+        emit!( $self $($tt)* );
+    }};
+}
+
+impl<'ctx> Parser<'ctx> {
     fn enter(&mut self, fun: &'static str) {
         #[cfg(debug_assertions)] {
             let indent = iter::repeat(' ').take(self.callstack.len()).collect::<String>();
@@ -78,6 +106,7 @@ impl<'ctx> Parser<'ctx> {
             trace!("{} + {}", indent, fun);
         }
     }
+
     fn leave(&mut self) {
         #[cfg(debug_assertions)] {
             let fun = self.callstack.pop().unwrap();
@@ -85,7 +114,9 @@ impl<'ctx> Parser<'ctx> {
             trace!("{} - {}", indent, fun);
         }
     }
+}
 
+impl<'ctx> Parser<'ctx> {
     fn error(&mut self, span: FreeSpan, kind: ParserErrorKind) {
         if !self.panicking {
             self.errors.push(ParserError { span, kind });
@@ -111,19 +142,7 @@ impl<'ctx> Parser<'ctx> {
 
     fn finish(&mut self) {
         self.consume(TokenKind::Eof);
-        self.emit(OpCode::Return);
-    }
-}
-
-impl<'ctx> Parser<'ctx> {
-    /// Get currently compiling Chunk
-    fn chunk(&mut self) -> &mut Chunk {
-        self.chunk
-    }
-
-    fn emit(&mut self, opcode: OpCode) {
-        let span = self.previous.span;
-        self.chunk().write(opcode, span);
+        emit!(self, Return);
     }
 }
 
@@ -181,9 +200,8 @@ impl<'ctx> Parser<'ctx> {
         let operator = self.previous.kind;
         self.parse_precedence(Precedence::UNARY);
         match operator {
-            TokenKind::Minus => {
-                self.emit(OpCode::Negate);
-            }
+            TokenKind::Bang     => emit!(self, Not),
+            TokenKind::Minus    => emit!(self, Negate),
             _ => unreachable!(),
         }
 
@@ -199,10 +217,16 @@ impl<'ctx> Parser<'ctx> {
         self.parse_precedence(rule.precedence + 1);
 
         match operator {
-            TokenKind::Plus => self.emit(OpCode::Add),
-            TokenKind::Minus => self.emit(OpCode::Subtract),
-            TokenKind::Star => self.emit(OpCode::Multiply),
-            TokenKind::Slash => self.emit(OpCode::Divide),
+            TokenKind::BangEqual    => emit!(self, Equal, Not),
+            TokenKind::EqualEqual   => emit!(self, Equal),
+            TokenKind::Greater      => emit!(self, Greater),
+            TokenKind::GreaterEqual => emit!(self, Less, Not),
+            TokenKind::Less         => emit!(self, Less),
+            TokenKind::LessEqual    => emit!(self, Greater, Not),
+            TokenKind::Plus         => emit!(self, Add),
+            TokenKind::Minus        => emit!(self, Subtract),
+            TokenKind::Star         => emit!(self, Multiply),
+            TokenKind::Slash        => emit!(self, Divide),
             _ => unreachable!(),
         }
 
@@ -216,10 +240,7 @@ impl<'ctx> Parser<'ctx> {
         let span = self.previous.span.anchor(self.lex.source());
         let slice = span.slice();
         match slice.parse() {
-            Ok(float) => {
-                let index = self.chunk().insert_constant(Value { float });
-                self.emit(OpCode::Constant { index });
-            }
+            Ok(float) => emit!(self, Constant(Value::Number(float))),
             Err(cause) => {
                 let token = slice.to_owned();
                 self.error(self.previous.span, ParserErrorKind::InvalidNumberLiteral {
@@ -228,6 +249,20 @@ impl<'ctx> Parser<'ctx> {
                 });
             }
         }
+
+        self.leave();
+    }
+
+    /// `nil` | `true` | `false`
+    fn literal(&mut self) {
+        self.enter("literal");
+
+        match self.previous.kind {
+            TokenKind::Nil      => emit!(self, Nil),
+            TokenKind::True     => emit!(self, True),
+            TokenKind::False    => emit!(self, False),
+            _ => unreachable!(),
+        };
 
         self.leave();
     }
@@ -266,8 +301,8 @@ mod precedence {
         ASSIGNMENT,
         _OR,
         _AND,
-        _EQUALITY,
-        _COMPARISON,
+        EQUALITY,
+        COMPARISON,
         TERM,
         FACTOR,
         UNARY,
@@ -294,11 +329,6 @@ fn parser_rule<'ctx>(kind: TokenKind) -> ParserRule<'ctx> {
                         precedence: parser_rules!( @prec $precedence ),
                     },
                 )*
-                _ => ParserRule {
-                    prefix: None,
-                    infix: None,
-                    precedence: Precedence::NONE,
-                }
             }
         };
 
@@ -321,31 +351,31 @@ fn parser_rule<'ctx>(kind: TokenKind) -> ParserRule<'ctx> {
         Semicolon       _           _           _,
         Slash           _           binary      FACTOR,
         Star            _           binary      FACTOR,
-        Bang            _           _           _,
+        Bang            unary       _           _,
         BangEqual       _           _           _,
         Equal           _           _           _,
-        EqualEqual      _           _           _,
-        Greater         _           _           _,
-        GreaterEqual    _           _           _,
-        Less            _           _           _,
-        LessEqual       _           _           _,
+        EqualEqual      _           binary      EQUALITY,
+        Greater         _           binary      COMPARISON,
+        GreaterEqual    _           binary      COMPARISON,
+        Less            _           binary      COMPARISON,
+        LessEqual       _           binary      COMPARISON,
         Identifier      _           _           _,
         String          _           _           _,
         Number          number      _           _,
         And             _           _           _,
         Class           _           _           _,
         Else            _           _           _,
-        False           _           _           _,
+        False           literal     _           _,
         For             _           _           _,
         Fun             _           _           _,
         If              _           _           _,
-        Nil             _           _           _,
+        Nil             literal     _           _,
         Or              _           _           _,
         Print           _           _           _,
         Return          _           _           _,
         Super           _           _           _,
         This            _           _           _,
-        True            _           _           _,
+        True            literal     _           _,
         Var             _           _           _,
         While           _           _           _,
         Error           _           _           _,
