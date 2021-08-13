@@ -18,7 +18,7 @@ impl From<Range<usize>> for FreeSpan {
 }
 
 impl FreeSpan {
-    pub fn anchor<'src>(self, source: &'src str) -> Span<'src> {
+    pub fn anchor(self, source: &str) -> Span<'_> {
         let FreeSpan { offset, len } = self;
         assert!((offset + len) as usize <= source.len(), "span is out bounds of backing text");
         Span { source, offset, len }
@@ -26,7 +26,7 @@ impl FreeSpan {
 }
 
 impl Debug for FreeSpan {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("Span")
             .field(&(self.offset..(self.offset+self.len)))
             .finish()
@@ -41,7 +41,7 @@ pub struct Span<'src> {
 }
 
 impl<'src> Debug for Span<'src> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let offset = self.offset as usize;
         let len = self.len as usize;
         let (line, _) = self.lines();

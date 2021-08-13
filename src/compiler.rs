@@ -3,10 +3,11 @@ use crate::default;
 use crate::lexer::{Lexer, Token, TokenKind};
 use crate::opcode::OpCode;
 use crate::span::FreeSpan;
+use crate::string::String as RoxString;
 use crate::value::Value;
 use log::trace;
+use std::mem;
 use std::num::ParseFloatError;
-use std::{iter, mem};
 
 
 #[derive(Debug)]
@@ -101,7 +102,7 @@ macro_rules! emit {
 impl<'ctx> Parser<'ctx> {
     fn enter(&mut self, fun: &'static str) {
         #[cfg(debug_assertions)] {
-            let indent = iter::repeat(' ').take(self.callstack.len()).collect::<String>();
+            let indent = " ".repeat(self.callstack.len());
             self.callstack.push(fun);
             trace!("{} + {}", indent, fun);
         }
@@ -110,7 +111,7 @@ impl<'ctx> Parser<'ctx> {
     fn leave(&mut self) {
         #[cfg(debug_assertions)] {
             let fun = self.callstack.pop().unwrap();
-            let indent = iter::repeat(' ').take(self.callstack.len()).collect::<String>();
+            let indent = " ".repeat(self.callstack.len());
             trace!("{} - {}", indent, fun);
         }
     }
@@ -193,7 +194,7 @@ impl<'ctx> Parser<'ctx> {
         self.leave();
     }
 
-    /// `operator` `expression`
+    /// `<operator>` `<expression>`
     fn unary(&mut self) {
         self.enter("unary");
 
@@ -208,7 +209,7 @@ impl<'ctx> Parser<'ctx> {
         self.leave();
     }
 
-    /// `expression` `operator` `expression`
+    /// `<expression>` `<operator>` `<expression>`
     fn binary(&mut self) {
         self.enter("binary");
 
@@ -233,7 +234,7 @@ impl<'ctx> Parser<'ctx> {
         self.leave();
     }
 
-    /// `number`
+    /// `<number>`
     fn number(&mut self) {
         self.enter("number");
 
@@ -253,7 +254,22 @@ impl<'ctx> Parser<'ctx> {
         self.leave();
     }
 
-    /// `nil` | `true` | `false`
+    /// `"\""` `<string>` `"\""`
+    fn string(&mut self) {
+        self.enter("string");
+
+        let span = self.previous.span.anchor(self.lex.source());
+        let slice = span.slice()
+            .strip_prefix('"').unwrap()
+            .strip_suffix('"').unwrap();
+        let string = RoxString::new(slice);
+
+        emit!(self, Constant(Value::Object(string.upcast())));
+
+        self.leave();
+    }
+
+    /// `"nil"` | `"true"` | `"false"`
     fn literal(&mut self) {
         self.enter("literal");
 
@@ -360,7 +376,7 @@ fn parser_rule<'ctx>(kind: TokenKind) -> ParserRule<'ctx> {
         Less            _           binary      COMPARISON,
         LessEqual       _           binary      COMPARISON,
         Identifier      _           _           _,
-        String          _           _           _,
+        String          string      _           _,
         Number          number      _           _,
         And             _           _           _,
         Class           _           _           _,

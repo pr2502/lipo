@@ -96,6 +96,7 @@ impl<'src> Lexer<'src> {
         }
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Token {
         self.current = self.inner.next().unwrap_or(TokenKind::Eof);
         self.peek()

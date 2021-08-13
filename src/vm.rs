@@ -2,6 +2,7 @@ use crate::chunk::Chunk;
 use crate::default;
 use crate::opcode::OpCode;
 use crate::span::Span;
+use crate::string::String;
 use crate::value::Value;
 use log::{debug, trace};
 
@@ -80,6 +81,7 @@ impl<'code> VM<'code> {
                         (Value::Nil, Value::Nil) => true,
                         (Value::Bool(lhs), Value::Bool(rhs)) => lhs == rhs,
                         (Value::Number(lhs), Value::Number(rhs)) => (lhs - rhs).abs() <= f64::EPSILON,
+                        (Value::Object(lhs), Value::Object(rhs)) => lhs == rhs,
                         // different types are never equal
                         _ => false,
                     };
@@ -114,6 +116,12 @@ impl<'code> VM<'code> {
                     let lhs = self.pop()?;
                     let result = match (lhs, rhs) {
                         (Value::Number(lhs), Value::Number(rhs)) => Value::Number(lhs + rhs),
+                        (Value::Object(lhs), Value::Object(rhs)) if lhs.is::<String>() && rhs.is::<String>() => {
+                            let lhs = lhs.downcast::<String>().unwrap();
+                            let rhs = rhs.downcast::<String>().unwrap();
+                            let sum = lhs.as_str().to_string() + rhs.as_str();
+                            Value::Object(String::new_owned(sum.into_boxed_str()).upcast())
+                        }
                         _ => return Err(VmError::RuntimeError {
                             span: self.chunk.spans().nth(offset).expect("missing span information"),
                             kind: RuntimeErrorKind::TypeError

@@ -1,7 +1,7 @@
 use crate::default;
 use crate::opcode::OpCode;
 use crate::span::{FreeSpan, Span};
-use crate::value::{Value, ValueBits};
+use crate::value::Value;
 use indexmap::IndexSet;
 use std::convert::TryInto;
 use std::fmt::{self, Debug};
@@ -16,7 +16,7 @@ pub struct Chunk {
     /// Constant pool
     ///
     /// Chunk may contain up to `u16::MAX` unique constants.
-    constants: IndexSet<ValueBits>,
+    constants: IndexSet<Value>,
 
     /// Opcode origin spans
     ///
@@ -49,12 +49,12 @@ impl Chunk {
     }
 
     pub fn insert_constant(&mut self, value: Value) -> u16 {
-        let (index, _) = self.constants.insert_full(ValueBits(value));
+        let (index, _) = self.constants.insert_full(value);
         index.try_into().expect("constant pool size limit reached")
     }
 
     pub fn get_constant(&self, index: u16) -> Option<Value> {
-        Some(self.constants.get_index(index as usize)?.0)
+        self.constants.get_index(index as usize).copied()
     }
 
     pub fn opcodes(&self) -> impl Iterator<Item = OpCode> + '_ {
@@ -81,7 +81,7 @@ impl Chunk {
 }
 
 impl Debug for Chunk {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut prev_line = 0;
         writeln!(f, "Chunk {{")?;
         for (opcode, span) in self.opcodes().zip(self.spans()) {

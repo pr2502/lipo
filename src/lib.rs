@@ -1,8 +1,14 @@
+#![feature(const_type_id)]
+#![feature(new_uninit)]
+#![feature(option_result_unwrap_unchecked)]
+
 pub mod chunk;
 pub mod compiler;
 pub mod lexer;
+pub mod object;
 pub mod opcode;
 pub mod span;
+pub mod string;
 pub mod value;
 pub mod vm;
 
@@ -17,6 +23,7 @@ mod test {
     use crate::default;
     use crate::opcode::OpCode;
     use crate::span::FreeSpan;
+    use crate::string::String as RoxString;
     use crate::value::Value;
     use crate::vm::{RuntimeErrorKind, VmError, VM};
 
@@ -147,5 +154,18 @@ Chunk {
         dbg!(&chunk);
         let vm = VM::new(&chunk);
         assert_eq!(vm.run().unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn strings_ops() {
+        let chunk = compile(r#""string" == "string""#.to_string()).unwrap();
+        dbg!(&chunk);
+        let vm = VM::new(&chunk);
+        assert_eq!(vm.run().unwrap(), Value::Bool(true));
+
+        let chunk = compile(r#""foo" + "bar""#.to_string()).unwrap();
+        dbg!(&chunk);
+        let vm = VM::new(&chunk);
+        assert_eq!(vm.run().unwrap(), Value::Object(RoxString::new(Box::from("foobar")).upcast()));
     }
 }
