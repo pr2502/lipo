@@ -23,7 +23,6 @@ mod test {
     use crate::default;
     use crate::opcode::OpCode;
     use crate::span::FreeSpan;
-    use crate::string::String as RoxString;
     use crate::value::Value;
     use crate::vm::{RuntimeErrorKind, VmError, VM};
 
@@ -108,7 +107,7 @@ Chunk {
     fn parser() {
         init();
 
-        let chunk = compile("(-1 + 2) * 3 - -4".to_string()).unwrap();
+        let chunk = compile("(-1 + 2) * 3 - -4;".to_string()).unwrap();
         let opcodes = chunk.opcodes().collect::<Vec<_>>();
 
         assert_eq!(chunk.get_constant(0), Some(Value::Number(1.0)));
@@ -128,44 +127,60 @@ Chunk {
                 OpCode::Constant { index: 3 },
                 OpCode::Negate,
                 OpCode::Subtract,
-                OpCode::Return,
+                OpCode::Pop,
             ],
         )
     }
 
+    macro_rules! run {
+        ( $code:literal, $($tt:tt)* ) => {{
+            init();
+
+            let chunk = compile($code.to_string()).unwrap();
+            dbg!(&chunk);
+            let vm = VM::new(&chunk);
+            let res = vm.run();
+            dbg!(&res);
+            assert!(matches!(res, $($tt)*));
+        }};
+        ( $code:literal ) => { run!( $code, Ok(_) ) };
+    }
+
     #[test]
     fn type_error() {
-        init();
-
-        let chunk = compile("1 / true".to_string()).unwrap();
-        dbg!(&chunk);
-        let vm = VM::new(&chunk);
-        assert!(matches!(
-            vm.run(),
-            Err(VmError::RuntimeError { kind: RuntimeErrorKind::TypeError, .. }),
-        ));
+        run!(
+            "1 / true;",
+            Err(VmError::RuntimeError { kind: RuntimeErrorKind::TypeError(_), .. }),
+        );
     }
 
     #[test]
     fn weird_expr() {
-        init();
-
-        let chunk = compile("!(5 - 4 > 3 * 2 == !nil)".to_string()).unwrap();
-        dbg!(&chunk);
-        let vm = VM::new(&chunk);
-        assert_eq!(vm.run().unwrap(), Value::Bool(true));
+        run!("assert !(5 - 4 > 3 * 2 == !nil);");
     }
 
     #[test]
     fn strings_ops() {
-        let chunk = compile(r#""string" == "string""#.to_string()).unwrap();
-        dbg!(&chunk);
-        let vm = VM::new(&chunk);
-        assert_eq!(vm.run().unwrap(), Value::Bool(true));
+        run!(r#"assert "string" == "string";"#);
+        run!(r#"assert "foo" + "bar" == "foobar";"#);
+    }
 
-        let chunk = compile(r#""foo" + "bar""#.to_string()).unwrap();
-        dbg!(&chunk);
-        let vm = VM::new(&chunk);
-        assert_eq!(vm.run().unwrap(), Value::Object(RoxString::new(Box::from("foobar")).upcast()));
+    #[test]
+    fn print() {
+        run!(r#"
+            print 1 + 2;
+            print 3 + 4;
+        "#);
+    }
+
+    #[test]
+    fn global() {
+        run!("
+            var a;
+            var b = 2;
+            print b;
+            b = 3;
+            print b;
+        ");
     }
 }

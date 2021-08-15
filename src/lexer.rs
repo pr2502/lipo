@@ -38,6 +38,7 @@ pub enum TokenKind {
 
     // Keywords
     #[token("and")] And,
+    #[token("assert")] Assert,
     #[token("class")] Class,
     #[token("else")] Else,
     #[token("false")] False,

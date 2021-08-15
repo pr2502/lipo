@@ -1,6 +1,7 @@
 use crate::chunk::Chunk;
 use crate::default;
 use crate::lexer::{Lexer, Token, TokenKind};
+use crate::object::ObjectRef;
 use crate::opcode::OpCode;
 use crate::span::FreeSpan;
 use crate::string::String as RoxString;
@@ -29,6 +30,7 @@ pub enum ParserErrorKind {
         token: String,
         cause: ParseFloatError,
     },
+    InvalidAssignmentTarget,
 }
 
 struct Parser<'ctx> {
@@ -61,7 +63,9 @@ pub fn compile(source: String) -> Result<Chunk, Vec<ParserError>> {
         callstack: default(),
     };
 
-    parser.expression();
+    while parser.current.kind != TokenKind::Eof {
+        parser.declaration();
+    }
     parser.finish();
 
     if parser.errors.is_empty() {
@@ -91,6 +95,21 @@ macro_rules! emit {
     ( $self:ident, Constant ( $value:expr ) $($tt:tt)* ) => {{
         let index = $self.chunk().insert_constant($value);
         $self.emit(OpCode::Constant { index });
+        emit!( $self $($tt)* );
+    }};
+    ( $self:ident, GetGlobal ( $value:expr ) $($tt:tt)* ) => {{
+        let index = $self.chunk().insert_constant($value);
+        $self.emit(OpCode::GetGlobal { index });
+        emit!( $self $($tt)* );
+    }};
+    ( $self:ident, DefGlobal ( $value:expr ) $($tt:tt)* ) => {{
+        let index = $self.chunk().insert_constant($value);
+        $self.emit(OpCode::DefGlobal { index });
+        emit!( $self $($tt)* );
+    }};
+    ( $self:ident, SetGlobal ( $value:expr ) $($tt:tt)* ) => {{
+        let index = $self.chunk().insert_constant($value);
+        $self.emit(OpCode::SetGlobal { index });
         emit!( $self $($tt)* );
     }};
     ( $self:ident, $opcode:ident $($tt:tt)* ) => {{
@@ -143,7 +162,6 @@ impl<'ctx> Parser<'ctx> {
 
     fn finish(&mut self) {
         self.consume(TokenKind::Eof);
-        emit!(self, Return);
     }
 }
 
@@ -154,8 +172,10 @@ impl<'ctx> Parser<'ctx> {
         self.advance();
         let rule = parser_rule(self.previous.kind);
 
+        let can_assign = precedence <= Precedence::ASSIGNMENT;
+
         if let Some(prefix) = rule.prefix {
-            prefix(self);
+            prefix(self, can_assign);
         } else {
             self.error(self.previous.span, ParserErrorKind::ExpectedExpressionStart {
                 found: self.previous.kind,
@@ -167,13 +187,24 @@ impl<'ctx> Parser<'ctx> {
             self.advance();
             let rule = parser_rule(self.previous.kind);
             if let Some(infix) = rule.infix {
-                infix(self);
+                infix(self, can_assign);
             } else {
                 unreachable!();
             }
         }
 
+        if can_assign && self.current.kind == TokenKind::Equal {
+            self.error(self.previous.span, ParserErrorKind::InvalidAssignmentTarget);
+            return
+        }
+
         self.leave();
+    }
+
+    fn identifier_constant(&mut self, token: Token) -> ObjectRef<RoxString> {
+        assert_eq!(token.kind, TokenKind::Identifier);
+        let span = token.span.anchor(self.lex.source());
+        RoxString::new(span.slice())
     }
 
     fn expression(&mut self) {
@@ -184,8 +215,130 @@ impl<'ctx> Parser<'ctx> {
         self.leave();
     }
 
+    fn var_declaration(&mut self) {
+        self.enter("var_declaration");
+
+        self.consume(TokenKind::Var);
+        self.consume(TokenKind::Identifier);
+
+        let name = self.identifier_constant(self.previous);
+
+        if self.current.kind == TokenKind::Equal {
+            self.advance();
+            self.expression();
+        } else {
+            emit!(self, Nil);
+        }
+
+        self.consume(TokenKind::Semicolon);
+
+        // define_variable();
+        emit!(self, DefGlobal(Value::Object(name.upcast())));
+
+        self.leave();
+    }
+
+    fn expression_statement(&mut self) {
+        self.enter("expression_statement");
+
+        self.expression();
+        self.consume(TokenKind::Semicolon);
+        emit!(self, Pop);
+
+        self.leave();
+    }
+
+    fn assert_statement(&mut self) {
+        self.enter("assert_statement");
+
+        self.consume(TokenKind::Assert);
+        self.expression();
+        self.consume(TokenKind::Semicolon);
+        emit!(self, Assert);
+
+        self.leave();
+    }
+
+    fn print_statement(&mut self) {
+        self.enter("print_statement");
+
+        self.consume(TokenKind::Print);
+        self.expression();
+        self.consume(TokenKind::Semicolon);
+        emit!(self, Print);
+
+        self.leave();
+    }
+
+    fn synchronize(&mut self) {
+        self.enter("synchronize");
+
+        self.panicking = false;
+
+        while self.current.kind != TokenKind::Eof {
+            if self.previous.kind == TokenKind::Semicolon {
+                break;
+            }
+            if matches!(
+                self.current.kind,
+                TokenKind::Assert |
+                TokenKind::Class |
+                TokenKind::Fun |
+                TokenKind::Var |
+                TokenKind::For |
+                TokenKind::If |
+                TokenKind::While |
+                TokenKind::Print |
+                TokenKind::Return
+            ) {
+                break;
+            }
+
+            self.advance();
+        }
+
+        self.leave();
+    }
+
+    fn declaration(&mut self) {
+        self.enter("declaration");
+
+        match self.current.kind {
+            TokenKind::Var => {
+                self.var_declaration();
+            }
+            _ => {
+                self.statement();
+            }
+        }
+
+        if self.panicking {
+            self.synchronize();
+        }
+
+        self.leave();
+    }
+
+    fn statement(&mut self) {
+        self.enter("statement");
+
+        match self.current.kind {
+            TokenKind::Assert => {
+                self.assert_statement();
+            }
+            TokenKind::Print => {
+                self.print_statement();
+            }
+            _ => {
+                self.expression_statement();
+            }
+        }
+
+        self.leave();
+    }
+
     /// `"("` `expression` `")"`
-    fn grouping(&mut self) {
+    fn grouping(&mut self, _: bool) {
         self.enter("grouping");
 
         self.expression();
@@ -195,7 +348,7 @@ impl<'ctx> Parser<'ctx> {
     }
 
     /// `<operator>` `<expression>`
-    fn unary(&mut self) {
+    fn unary(&mut self, _: bool) {
         self.enter("unary");
 
         let operator = self.previous.kind;
@@ -210,7 +363,7 @@ impl<'ctx> Parser<'ctx> {
     }
 
     /// `<expression>` `<operator>` `<expression>`
-    fn binary(&mut self) {
+    fn binary(&mut self, _: bool) {
         self.enter("binary");
 
         let operator = self.previous.kind;
@@ -235,7 +388,7 @@ impl<'ctx> Parser<'ctx> {
     }
 
     /// `<number>`
-    fn number(&mut self) {
+    fn number(&mut self, _: bool) {
         self.enter("number");
 
         let span = self.previous.span.anchor(self.lex.source());
@@ -255,7 +408,7 @@ impl<'ctx> Parser<'ctx> {
     }
 
     /// `"\""` `<string>` `"\""`
-    fn string(&mut self) {
+    fn string(&mut self, _: bool) {
         self.enter("string");
 
         let span = self.previous.span.anchor(self.lex.source());
@@ -269,8 +422,34 @@ impl<'ctx> Parser<'ctx> {
         self.leave();
     }
 
+    fn named_variable(&mut self, token: Token, can_assign: bool) {
+        self.enter("named_variable");
+
+        let name = self.identifier_constant(token);
+        let name = Value::Object(name.upcast());
+
+        if can_assign && self.current.kind == TokenKind::Equal {
+            self.advance();
+            self.expression();
+            emit!(self, SetGlobal(name));
+        } else {
+            emit!(self, GetGlobal(name));
+        }
+
+        self.leave();
+    }
+
+    /// `<ident>`
+    fn variable(&mut self, can_assign: bool) {
+        self.enter("variable");
+
+        self.named_variable(self.previous, can_assign);
+
+        self.leave();
+    }
+
     /// `"nil"` | `"true"` | `"false"`
-    fn literal(&mut self) {
+    fn literal(&mut self, _: bool) {
         self.enter("literal");
 
         match self.previous.kind {
@@ -329,8 +508,8 @@ mod precedence {
 use precedence::Precedence;
 
 struct ParserRule<'ctx> {
-    prefix: Option<fn(&mut Parser<'ctx>)>,
-    infix: Option<fn(&mut Parser<'ctx>)>,
+    prefix: Option<fn(&mut Parser<'ctx>, bool)>,
+    infix: Option<fn(&mut Parser<'ctx>, bool)>,
     precedence: Precedence,
 }
 
@@ -375,10 +554,11 @@ fn parser_rule<'ctx>(kind: TokenKind) -> ParserRule<'ctx> {
         GreaterEqual    _           binary      COMPARISON,
         Less            _           binary      COMPARISON,
         LessEqual       _           binary      COMPARISON,
-        Identifier      _           _           _,
+        Identifier      variable    _           _,
         String          string      _           _,
         Number          number      _           _,
         And             _           _           _,
+        Assert          _           _           _,
         Class           _           _           _,
         Else            _           _           _,
         False           literal     _           _,

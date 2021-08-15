@@ -101,6 +101,15 @@ impl Debug for Chunk {
                         write!(f, "\t; missing constant index={}", index)?;
                     }
                 }
+                OpCode::DefGlobal { index } |
+                OpCode::GetGlobal { index } |
+                OpCode::SetGlobal { index } => {
+                    if let Some(value) = self.get_constant(index) {
+                        write!(f, "\t; var {:?}", value)?;
+                    } else {
+                        write!(f, "\t; missing constant index={}", index)?;
+                    }
+                }
                 _ => {}
             }
             writeln!(f)?;

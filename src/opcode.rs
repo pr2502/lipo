@@ -14,10 +14,14 @@ macro_rules! opcodes {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum OpCode {
-    Constant { index: u16 },
+    Constant { index: u16 }, // indexes into the chunk constant pool
     Nil,
     True,
     False,
+    Pop,
+    GetGlobal { index: u16 }, // all three
+    DefGlobal { index: u16 }, // also index into
+    SetGlobal { index: u16 }, // the chunk constant pool
     Equal,
     Greater,
     Less,
@@ -27,6 +31,8 @@ pub enum OpCode {
     Divide,
     Not,
     Negate,
+    Assert,
+    Print,
     Return,
 }
 
@@ -35,6 +41,10 @@ opcodes! {
     NIL,
     TRUE,
     FALSE,
+    POP,
+    GET_GLOBAL,
+    DEF_GLOBAL,
+    SET_GLOBAL,
     EQUAL,
     GREATER,
     LESS,
@@ -44,6 +54,8 @@ opcodes! {
     DIVIDE,
     NOT,
     NEGATE,
+    ASSERT,
+    PRINT,
     RETURN,
 }
 
@@ -56,6 +68,16 @@ impl OpCode {
             [NIL, rest @ .. ]       => (OpCode::Nil, rest),
             [TRUE, rest @ .. ]      => (OpCode::True, rest),
             [FALSE, rest @ .. ]     => (OpCode::False, rest),
+            [POP, rest @ .. ]       => (OpCode::Pop, rest),
+            [GET_GLOBAL, x, y, rest @ .. ] => {
+                (OpCode::GetGlobal { index: u16::from_le_bytes([*x, *y]) }, rest)
+            }
+            [DEF_GLOBAL, x, y, rest @ .. ] => {
+                (OpCode::DefGlobal { index: u16::from_le_bytes([*x, *y]) }, rest)
+            }
+            [SET_GLOBAL, x, y, rest @ .. ] => {
+                (OpCode::SetGlobal { index: u16::from_le_bytes([*x, *y]) }, rest)
+            }
             [EQUAL, rest @ .. ]     => (OpCode::Equal, rest),
             [GREATER, rest @ .. ]   => (OpCode::Greater, rest),
             [LESS, rest @ .. ]      => (OpCode::Less, rest),
@@ -65,6 +87,8 @@ impl OpCode {
             [DIVIDE, rest @ .. ]    => (OpCode::Divide, rest),
             [NOT, rest @ .. ]       => (OpCode::Not, rest),
             [NEGATE, rest @ .. ]    => (OpCode::Negate, rest),
+            [ASSERT, rest @ .. ]    => (OpCode::Assert, rest),
+            [PRINT, rest @ .. ]     => (OpCode::Print, rest),
             [RETURN, rest @ .. ]    => (OpCode::Return, rest),
             _ => return None,
         })
@@ -79,6 +103,19 @@ impl OpCode {
             OpCode::Nil         => code.push(NIL),
             OpCode::True        => code.push(TRUE),
             OpCode::False       => code.push(FALSE),
+            OpCode::Pop         => code.push(POP),
+            OpCode::GetGlobal { index } => {
+                code.push(GET_GLOBAL);
+                code.extend(index.to_le_bytes());
+            }
+            OpCode::DefGlobal { index } => {
+                code.push(DEF_GLOBAL);
+                code.extend(index.to_le_bytes());
+            }
+            OpCode::SetGlobal { index } => {
+                code.push(SET_GLOBAL);
+                code.extend(index.to_le_bytes());
+            }
             OpCode::Equal       => code.push(EQUAL),
             OpCode::Greater     => code.push(GREATER),
             OpCode::Less        => code.push(LESS),
@@ -88,6 +125,8 @@ impl OpCode {
             OpCode::Divide      => code.push(DIVIDE),
             OpCode::Not         => code.push(NOT),
             OpCode::Negate      => code.push(NEGATE),
+            OpCode::Assert      => code.push(ASSERT),
+            OpCode::Print       => code.push(PRINT),
             OpCode::Return      => code.push(RETURN),
         }
     }

@@ -43,10 +43,19 @@ pub struct ObjectRefAny {
     ptr: *mut ObjectHeader,
 }
 
-#[derive(Clone, Copy)]
 pub struct ObjectRef<O: Object> {
     ptr: *mut O,
 }
+
+// Implement `Clone` and `Copy` manually, because deriving them inherits the `Clone+Copy`
+// properties of the concrete `O` but `ObjectRef` is meant to be `Clone+Copy` for any `O: Object`
+// regardless of whether `O` is `Clone` or `Copy`.
+impl<O: Object> Clone for ObjectRef<O> {
+    fn clone(&self) -> Self {
+        ObjectRef { ..*self }
+    }
+}
+impl<O: Object> Copy for ObjectRef<O> {}
 
 pub struct ObjectVtable {
     /// Must be the result of calling `std::any::TypeId::of::<Self>()` in [`Object`] trait impl.
@@ -116,9 +125,32 @@ impl Hash for ObjectRefAny {
 impl<O: Object> Deref for ObjectRef<O> {
     type Target = O;
     fn deref(&self) -> &Self::Target {
+        // SAFETY GC ensures the pointer stays valid.
+        //        We never give mutable access to the value.
         unsafe { &*self.ptr }
     }
 }
+
+impl<O: Object + Debug> Debug for ObjectRef<O> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        <O as Debug>::fmt(&*self, f)
+    }
+}
+
+impl<O: Object + PartialEq> PartialEq for ObjectRef<O> {
+    fn eq(&self, other: &Self) -> bool {
+        <O as PartialEq>::eq(&*self, &*other)
+    }
+}
+
+impl<O: Object + Eq> Eq for ObjectRef<O> {}
+
+impl<O: Object + Hash> Hash for ObjectRef<O> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        <O as Hash>::hash(&*self, state)
+    }
+}
+
 
 #[repr(C)]
 pub struct ObjectHeader {
