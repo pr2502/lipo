@@ -19,9 +19,11 @@ pub enum OpCode {
     True,
     False,
     Pop,
-    GetGlobal { index: u16 }, // all three
-    DefGlobal { index: u16 }, // also index into
-    SetGlobal { index: u16 }, // the chunk constant pool
+    GetLocal { index: u16 }, // indexes into the stack
+    SetLocal { index: u16 }, // indexes into the stack
+    GetGlobal { index: u16 }, // indexes into the chunk constant pool 
+    DefGlobal { index: u16 }, // indexes into the chunk constant pool
+    SetGlobal { index: u16 }, // indexes into the chunk constant pool 
     Equal,
     Greater,
     Less,
@@ -42,6 +44,8 @@ opcodes! {
     TRUE,
     FALSE,
     POP,
+    GET_LOCAL,
+    SET_LOCAL,
     GET_GLOBAL,
     DEF_GLOBAL,
     SET_GLOBAL,
@@ -69,6 +73,12 @@ impl OpCode {
             [TRUE, rest @ .. ]      => (OpCode::True, rest),
             [FALSE, rest @ .. ]     => (OpCode::False, rest),
             [POP, rest @ .. ]       => (OpCode::Pop, rest),
+            [GET_LOCAL, x, y, rest @ .. ] => {
+                (OpCode::GetLocal { index: u16::from_le_bytes([*x, *y]) }, rest)
+            }
+            [SET_LOCAL, x, y, rest @ .. ] => {
+                (OpCode::SetLocal { index: u16::from_le_bytes([*x, *y]) }, rest)
+            }
             [GET_GLOBAL, x, y, rest @ .. ] => {
                 (OpCode::GetGlobal { index: u16::from_le_bytes([*x, *y]) }, rest)
             }
@@ -104,6 +114,14 @@ impl OpCode {
             OpCode::True        => code.push(TRUE),
             OpCode::False       => code.push(FALSE),
             OpCode::Pop         => code.push(POP),
+            OpCode::GetLocal { index } => {
+                code.push(GET_LOCAL);
+                code.extend(index.to_le_bytes());
+            }
+            OpCode::SetLocal { index } => {
+                code.push(SET_LOCAL);
+                code.extend(index.to_le_bytes());
+            }
             OpCode::GetGlobal { index } => {
                 code.push(GET_GLOBAL);
                 code.extend(index.to_le_bytes());

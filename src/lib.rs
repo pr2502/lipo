@@ -1,4 +1,5 @@
 #![feature(const_type_id)]
+#![feature(drain_filter)]
 #![feature(new_uninit)]
 #![feature(option_result_unwrap_unchecked)]
 
@@ -143,7 +144,7 @@ Chunk {
             dbg!(&res);
             assert!(matches!(res, $($tt)*));
         }};
-        ( $code:literal ) => { run!( $code, Ok(_) ) };
+        ( $code:literal ) => { run!( $code, Ok(Value::Nil) ) };
     }
 
     #[test]
@@ -182,5 +183,16 @@ Chunk {
             b = 3;
             print b;
         ");
+    }
+
+    #[test]
+    fn locals() {
+        run!("{
+            var a = 1;
+            {
+                var a = a;
+                print a;
+            }
+        }");
     }
 }

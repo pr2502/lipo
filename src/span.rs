@@ -86,7 +86,7 @@ impl<'src> Span<'src> {
         (column(&bytes[..start]), column(&bytes[..end]))
     }
 
-    pub fn slice(&self) -> &str {
+    pub fn slice(&self) -> &'src str {
         let offset = self.offset as usize;
         let len = self.len as usize;
         &self.source[offset..][..len]

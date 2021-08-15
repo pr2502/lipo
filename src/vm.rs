@@ -28,6 +28,7 @@ pub enum VmError<'code> {
 pub enum CodeError {
     UnexpectedEndOfCode,
     InvalidConstantIndex(u16),
+    InvalidStackIndex(u16),
     PopEmptyStack,
 }
 
@@ -90,6 +91,17 @@ impl<'code> VM<'code> {
                 }
                 OpCode::Pop => {
                     self.pop()?;
+                }
+                OpCode::GetLocal { index } => {
+                    let value = *self.stack.get(index as usize)
+                        .ok_or(VmError::CompileError(CodeError::InvalidStackIndex(index)))?;
+                    self.push(value);
+                }
+                OpCode::SetLocal { index } => {
+                    let value = self.peek()?;
+                    let slot = self.stack.get_mut(index as usize)
+                        .ok_or(VmError::CompileError(CodeError::InvalidStackIndex(index)))?;
+                    *slot = value;
                 }
                 OpCode::GetGlobal { index } => {
                     let name = self.chunk.get_constant(index)

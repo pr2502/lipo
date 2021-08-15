@@ -31,6 +31,8 @@ pub enum ParserErrorKind {
         cause: ParseFloatError,
     },
     InvalidAssignmentTarget,
+    TooManyLocals,
+    Shadowing,
 }
 
 struct Parser<'ctx> {
@@ -43,8 +45,16 @@ struct Parser<'ctx> {
     previous: Token,
     current: Token,
 
+    locals: Vec<Local>,
+    scope_depth: i32,
+
     #[cfg(debug_assertions)]
     callstack: Vec<&'static str>,
+}
+
+struct Local {
+    name: Token,
+    depth: i32,
 }
 
 pub fn compile(source: String) -> Result<Chunk, Vec<ParserError>> {
@@ -57,6 +67,8 @@ pub fn compile(source: String) -> Result<Chunk, Vec<ParserError>> {
         lex: &mut lex,
         errors: default(),
         panicking: false,
+        locals: default(),
+        scope_depth: 0,
         previous: default(),
         current,
         #[cfg(debug_assertions)]
@@ -95,6 +107,19 @@ macro_rules! emit {
     ( $self:ident, Constant ( $value:expr ) $($tt:tt)* ) => {{
         let index = $self.chunk().insert_constant($value);
         $self.emit(OpCode::Constant { index });
+        emit!( $self $($tt)* );
+    }};
+    ( $self:ident, GetLocal ( $index:expr ) $($tt:tt)* ) => {{
+        $self.emit(OpCode::GetLocal { index: $index });
+        emit!( $self $($tt)* );
+    }};
+    ( $self:ident, SetLocal ( $index:expr ) $($tt:tt)* ) => {{
+        $self.emit(OpCode::SetLocal { index: $index });
+        emit!( $self $($tt)* );
+    }};
+    ( $self:ident, GetGlobal ( $value:expr ) $($tt:tt)* ) => {{
+        let index = $self.chunk().insert_constant($value);
+        $self.emit(OpCode::GetGlobal { index });
         emit!( $self $($tt)* );
     }};
     ( $self:ident, GetGlobal ( $value:expr ) $($tt:tt)* ) => {{
@@ -163,6 +188,23 @@ impl<'ctx> Parser<'ctx> {
     fn finish(&mut self) {
         self.consume(TokenKind::Eof);
     }
+
+    fn begin_scope(&mut self) {
+        self.scope_depth += 1;
+    }
+
+    fn end_scope(&mut self) {
+        assert!(self.scope_depth > 0);
+        self.scope_depth -= 1;
+
+        let pop = self.locals
+            // TODO this is neat and short but doesn't actually match that the elements are only
+            //      ever removed from the back of the Vec
+            .drain_filter(|loc| loc.depth > self.scope_depth)
+            .count();
+        (0..pop)
+            .for_each(|_| emit!(self, Pop));
+    }
 }
 
 impl<'ctx> Parser<'ctx> {
@@ -180,7 +222,8 @@ impl<'ctx> Parser<'ctx> {
             self.error(self.previous.span, ParserErrorKind::ExpectedExpressionStart {
                 found: self.previous.kind,
             });
-            return
+            self.leave();
+            return;
         }
 
         while precedence <= parser_rule(self.current.kind).precedence {
@@ -195,7 +238,8 @@ impl<'ctx> Parser<'ctx> {
 
         if can_assign && self.current.kind == TokenKind::Equal {
             self.error(self.previous.span, ParserErrorKind::InvalidAssignmentTarget);
-            return
+            self.leave();
+            return;
         }
 
         self.leave();
@@ -207,10 +251,46 @@ impl<'ctx> Parser<'ctx> {
         RoxString::new(span.slice())
     }
 
+    fn add_local(&mut self, name: Token) {
+        if self.locals.len() >= (u16::MAX as usize) {
+            self.error(name.span, ParserErrorKind::TooManyLocals);
+            return;
+        }
+        let tokslice = |token: Token| token.span.anchor(self.lex.source()).slice();
+        let shadowing = self.locals.iter()
+            .rev()
+            .take_while(|loc| loc.depth == self.scope_depth)
+            .any(|loc| tokslice(loc.name) == tokslice(name));
+        if shadowing {
+            self.error(name.span, ParserErrorKind::Shadowing);
+            return;
+        }
+        self.locals.push(Local { name, depth: self.scope_depth });
+    }
+
+    fn resolve_local(&mut self, name: Token) -> Option<u16> {
+        let tokslice = |token: Token| token.span.anchor(self.lex.source()).slice();
+        self.locals.iter()
+            .rposition(|loc| tokslice(loc.name) == tokslice(name))
+            .map(|index| index as u16)
+    }
+
     fn expression(&mut self) {
         self.enter("expression");
 
         self.parse_precedence(Precedence::ASSIGNMENT);
+
+        self.leave();
+    }
+
+    fn block(&mut self) {
+        self.enter("block");
+        self.consume(TokenKind::LeftBrace);
+
+        while !matches!(self.current.kind, TokenKind::RightBrace | TokenKind::Eof) {
+            self.declaration();
+        }
+        self.consume(TokenKind::RightBrace);
 
         self.leave();
     }
@@ -221,7 +301,7 @@ impl<'ctx> Parser<'ctx> {
         self.consume(TokenKind::Var);
         self.consume(TokenKind::Identifier);
 
-        let name = self.identifier_constant(self.previous);
+        let name = self.previous;
 
         if self.current.kind == TokenKind::Equal {
             self.advance();
@@ -232,8 +312,14 @@ impl<'ctx> Parser<'ctx> {
 
         self.consume(TokenKind::Semicolon);
 
-        // define_variable();
-        emit!(self, DefGlobal(Value::Object(name.upcast())));
+        if self.scope_depth == 0 {
+            // global variable
+            let name = self.identifier_constant(name);
+            emit!(self, DefGlobal(Value::Object(name.upcast())));
+        } else {
+            // local variable
+            self.add_local(name);
+        }
 
         self.leave();
     }
@@ -328,6 +414,11 @@ impl<'ctx> Parser<'ctx> {
             }
             TokenKind::Print => {
                 self.print_statement();
+            }
+            TokenKind::LeftBrace => {
+                self.begin_scope();
+                self.block();
+                self.end_scope();
             }
             _ => {
                 self.expression_statement();
@@ -425,16 +516,26 @@ impl<'ctx> Parser<'ctx> {
     fn named_variable(&mut self, token: Token, can_assign: bool) {
         self.enter("named_variable");
 
-        let name = self.identifier_constant(token);
-        let name = Value::Object(name.upcast());
-
-        if can_assign && self.current.kind == TokenKind::Equal {
-            self.advance();
-            self.expression();
-            emit!(self, SetGlobal(name));
+        if let Some(index) = self.resolve_local(token) {
+            if can_assign && self.current.kind == TokenKind::Equal {
+                self.advance();
+                self.expression();
+                emit!(self, SetLocal(index));
+            } else {
+                emit!(self, GetLocal(index));
+            }
         } else {
-            emit!(self, GetGlobal(name));
-        }
+            let name = self.identifier_constant(token);
+            let name = Value::Object(name.upcast());
+
+            if can_assign && self.current.kind == TokenKind::Equal {
+                self.advance();
+                self.expression();
+                emit!(self, SetGlobal(name));
+            } else {
+                emit!(self, GetGlobal(name));
+            }
+        };
 
         self.leave();
     }
