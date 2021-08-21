@@ -8,18 +8,18 @@ use crate::value::Value;
 use fxhash::FxHashMap as HashMap;
 use log::{debug, trace};
 
-pub struct VM<'code> {
-    chunk: &'code Chunk,
+pub struct VM<'code, 'src> {
+    chunk: &'code Chunk<'src>,
     ip: &'code [u8],
     stack: Vec<Value>,
     globals: HashMap<ObjectRef<RoxString>, Value>,
 }
 
 #[derive(Debug)]
-pub enum VmError<'code> {
+pub enum VmError<'src> {
     CompileError(CodeError),
     RuntimeError {
-        span: Span<'code>,
+        span: Span<'src>,
         kind: RuntimeErrorKind,
     },
 }
@@ -39,8 +39,8 @@ pub enum RuntimeErrorKind {
     UndefinedGlobalVariable(String),
 }
 
-impl<'code> VM<'code> {
-    pub fn new(chunk: &'code Chunk) -> VM<'code> {
+impl<'code, 'src> VM<'code, 'src> {
+    pub fn new(chunk: &'code Chunk<'src>) -> VM<'code, 'src> {
         VM {
             chunk,
             ip: chunk.code(),
@@ -67,8 +67,9 @@ impl<'code> VM<'code> {
     pub fn run(mut self) -> Result<Value, VmError<'code>> {
         loop {
             let offset = (self.ip.as_ptr() as usize) - (self.chunk.code().as_ptr() as usize);
-            let (opcode, next) = if let Some(res) = OpCode::decode(self.ip) { res } else {
-                return Ok(Value::Nil);
+            let (opcode, next) = match OpCode::decode(self.ip) {
+                Some(res) => res,
+                None => return Ok(Value::Nil),
             };
             trace!("stack {:?}", &self.stack);
             trace!("decode {:04}: {:?}", offset, opcode);
@@ -231,12 +232,7 @@ impl<'code> VM<'code> {
                 }
                 OpCode::Not => {
                     let value = self.pop()?;
-                    let value = match value {
-                        // only `nil` and `false` are "falsey", so their negation is `true`
-                        Value::Nil | Value::Bool(false) => Value::Bool(true),
-                        // everything else is "truthy" so the negation is always false
-                        _ => Value::Bool(false),
-                    };
+                    let value = Value::Bool(value.falsy());
                     self.push(value);
                 }
                 OpCode::Negate => {
@@ -268,6 +264,30 @@ impl<'code> VM<'code> {
                 OpCode::Print => {
                     let value = self.pop()?;
                     println!("{:?}", value);
+                }
+                OpCode::Jump { offset } => {
+                    let offset = offset as usize;
+                    self.ip = &self.ip[offset..];
+                }
+                OpCode::JumpIfTrue { offset } => {
+                    let value = self.peek()?;
+                    if !value.falsy() {
+                        let offset = offset as usize;
+                        self.ip = &self.ip[offset..];
+                    }
+                }
+                OpCode::JumpIfFalse { offset } => {
+                    let value = self.peek()?;
+                    if value.falsy() {
+                        let offset = offset as usize;
+                        self.ip = &self.ip[offset..];
+                    }
+                }
+                OpCode::Loop { offset } => {
+                    let offset = offset as usize;
+                    let ip_offset = self.chunk.code().len() - self.ip.len();
+                    let jump_to = ip_offset - offset;
+                    self.ip = &self.chunk.code()[jump_to..];
                 }
                 OpCode::Return => {
                     let value = self.pop()?;

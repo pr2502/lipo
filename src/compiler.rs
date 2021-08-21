@@ -10,6 +10,9 @@ use log::trace;
 use std::mem;
 use std::num::ParseFloatError;
 
+/// Dummy offset used for pre-patch jumps.
+const DUMMY: u16 = u16::MAX;
+
 
 #[derive(Debug)]
 pub struct ParserError {
@@ -35,9 +38,9 @@ pub enum ParserErrorKind {
     Shadowing,
 }
 
-struct Parser<'ctx> {
-    chunk: &'ctx mut Chunk,
-    lex: &'ctx mut Lexer<'ctx>,
+struct Parser<'ctx, 'src> {
+    chunk: &'ctx mut Chunk<'src>,
+    lex: &'ctx mut Lexer<'src>,
 
     errors: Vec<ParserError>,
     panicking: bool,
@@ -57,9 +60,10 @@ struct Local {
     depth: i32,
 }
 
-pub fn compile(source: String) -> Result<Chunk, Vec<ParserError>> {
-    let mut chunk = Chunk::new(source.clone());
-    let mut lex = Lexer::new(&source);
+#[allow(clippy::needless_lifetimes)]
+pub fn compile<'src>(source: &'src str) -> Result<Chunk<'src>, Vec<ParserError>> {
+    let mut chunk = Chunk::new(source);
+    let mut lex = Lexer::new(source);
 
     let current = lex.peek();
     let mut parser = Parser {
@@ -87,63 +91,45 @@ pub fn compile(source: String) -> Result<Chunk, Vec<ParserError>> {
     }
 }
 
-impl<'ctx> Parser<'ctx> {
+impl<'ctx, 'src> Parser<'ctx, 'src> {
     /// Get currently compiling Chunk
-    fn chunk(&mut self) -> &mut Chunk {
+    fn chunk(&mut self) -> &mut Chunk<'src> {
         self.chunk
     }
 
-    fn emit(&mut self, opcode: OpCode) {
+    fn emit(&mut self, opcode: OpCode) -> usize {
         let span = self.previous.span;
-        self.chunk().write(opcode, span);
+        self.chunk().write(opcode, span)
+    }
+
+    fn patch_jump(&mut self, position: usize) {
+        self.chunk().patch_jump(position)
     }
 }
 
-/// Helper macro for emitting a variable number of instructions or constants in a single
-/// expression.
+/// Helper macro for emitting a variable number of instructions in a single expression.
 macro_rules! emit {
-    ( $self:ident ) => {};
-    ( $self:ident, ) => {};
-    ( $self:ident, Constant ( $value:expr ) $($tt:tt)* ) => {{
+    ( $self:ident $(,)? $(@$ret:ident)* ) => {{
+        #![allow(path_statements)]
+        $($ret);*
+    }};
+
+    ( $self:ident, $opcode:ident { constant: $value:expr } $($tt:tt)* ) => {{
         let index = $self.chunk().insert_constant($value);
-        $self.emit(OpCode::Constant { index });
-        emit!( $self $($tt)* );
+        let ret = $self.emit(OpCode::$opcode { index });
+        emit!( $self $($tt)* @ret )
     }};
-    ( $self:ident, GetLocal ( $index:expr ) $($tt:tt)* ) => {{
-        $self.emit(OpCode::GetLocal { index: $index });
-        emit!( $self $($tt)* );
-    }};
-    ( $self:ident, SetLocal ( $index:expr ) $($tt:tt)* ) => {{
-        $self.emit(OpCode::SetLocal { index: $index });
-        emit!( $self $($tt)* );
-    }};
-    ( $self:ident, GetGlobal ( $value:expr ) $($tt:tt)* ) => {{
-        let index = $self.chunk().insert_constant($value);
-        $self.emit(OpCode::GetGlobal { index });
-        emit!( $self $($tt)* );
-    }};
-    ( $self:ident, GetGlobal ( $value:expr ) $($tt:tt)* ) => {{
-        let index = $self.chunk().insert_constant($value);
-        $self.emit(OpCode::GetGlobal { index });
-        emit!( $self $($tt)* );
-    }};
-    ( $self:ident, DefGlobal ( $value:expr ) $($tt:tt)* ) => {{
-        let index = $self.chunk().insert_constant($value);
-        $self.emit(OpCode::DefGlobal { index });
-        emit!( $self $($tt)* );
-    }};
-    ( $self:ident, SetGlobal ( $value:expr ) $($tt:tt)* ) => {{
-        let index = $self.chunk().insert_constant($value);
-        $self.emit(OpCode::SetGlobal { index });
-        emit!( $self $($tt)* );
+    ( $self:ident, $opcode:ident { $arg:ident $(: $value:expr)? } $($tt:tt)* ) => {{
+        let ret = $self.emit(OpCode::$opcode { $arg $(: $value)? });
+        emit!( $self $($tt)* @ret )
     }};
     ( $self:ident, $opcode:ident $($tt:tt)* ) => {{
-        $self.emit(OpCode::$opcode);
-        emit!( $self $($tt)* );
+        let ret = $self.emit(OpCode::$opcode);
+        emit!( $self $($tt)* @ret )
     }};
 }
 
-impl<'ctx> Parser<'ctx> {
+impl<'ctx, 'src> Parser<'ctx, 'src> {
     fn enter(&mut self, fun: &'static str) {
         #[cfg(debug_assertions)] {
             let indent = " ".repeat(self.callstack.len());
@@ -161,7 +147,7 @@ impl<'ctx> Parser<'ctx> {
     }
 }
 
-impl<'ctx> Parser<'ctx> {
+impl<'ctx, 'src> Parser<'ctx, 'src> {
     fn error(&mut self, span: FreeSpan, kind: ParserErrorKind) {
         if !self.panicking {
             self.errors.push(ParserError { span, kind });
@@ -203,11 +189,11 @@ impl<'ctx> Parser<'ctx> {
             .drain_filter(|loc| loc.depth > self.scope_depth)
             .count();
         (0..pop)
-            .for_each(|_| emit!(self, Pop));
+            .for_each(|_| { emit!(self, Pop); });
     }
 }
 
-impl<'ctx> Parser<'ctx> {
+impl<'ctx, 'src> Parser<'ctx, 'src> {
     fn parse_precedence(&mut self, precedence: Precedence) {
         self.enter("parse_precedence");
 
@@ -248,7 +234,7 @@ impl<'ctx> Parser<'ctx> {
     fn identifier_constant(&mut self, token: Token) -> ObjectRef<RoxString> {
         assert_eq!(token.kind, TokenKind::Identifier);
         let span = token.span.anchor(self.lex.source());
-        RoxString::new(span.slice())
+        RoxString::new(span.as_str())
     }
 
     fn add_local(&mut self, name: Token) {
@@ -256,7 +242,7 @@ impl<'ctx> Parser<'ctx> {
             self.error(name.span, ParserErrorKind::TooManyLocals);
             return;
         }
-        let tokslice = |token: Token| token.span.anchor(self.lex.source()).slice();
+        let tokslice = |token: Token| token.span.anchor(self.lex.source()).as_str();
         let shadowing = self.locals.iter()
             .rev()
             .take_while(|loc| loc.depth == self.scope_depth)
@@ -269,7 +255,7 @@ impl<'ctx> Parser<'ctx> {
     }
 
     fn resolve_local(&mut self, name: Token) -> Option<u16> {
-        let tokslice = |token: Token| token.span.anchor(self.lex.source()).slice();
+        let tokslice = |token: Token| token.span.anchor(self.lex.source()).as_str();
         self.locals.iter()
             .rposition(|loc| tokslice(loc.name) == tokslice(name))
             .map(|index| index as u16)
@@ -315,7 +301,7 @@ impl<'ctx> Parser<'ctx> {
         if self.scope_depth == 0 {
             // global variable
             let name = self.identifier_constant(name);
-            emit!(self, DefGlobal(Value::Object(name.upcast())));
+            emit!(self, DefGlobal { constant: Value::Object(name.upcast()) });
         } else {
             // local variable
             self.add_local(name);
@@ -330,6 +316,29 @@ impl<'ctx> Parser<'ctx> {
         self.expression();
         self.consume(TokenKind::Semicolon);
         emit!(self, Pop);
+
+        self.leave();
+    }
+
+    fn if_statement(&mut self) {
+        self.enter("if_statement");
+
+        self.consume(TokenKind::If);
+        self.expression();
+
+        let then_jump = emit!(self, JumpIfFalse { offset: DUMMY });
+        emit!(self, Pop);
+        self.block();
+
+        let else_jump = emit!(self, Jump { offset: DUMMY });
+        self.patch_jump(then_jump);
+        emit!(self, Pop);
+
+        if self.current.kind == TokenKind::Else {
+            self.advance();
+            self.block();
+        }
+        self.patch_jump(else_jump);
 
         self.leave();
     }
@@ -352,6 +361,27 @@ impl<'ctx> Parser<'ctx> {
         self.expression();
         self.consume(TokenKind::Semicolon);
         emit!(self, Print);
+
+        self.leave();
+    }
+
+    fn while_statement(&mut self) {
+        self.enter("while_statement");
+
+        self.consume(TokenKind::While);
+        let loop_start = self.chunk().code().len();
+        self.expression();
+
+        let exit_jump = emit!(self, JumpIfFalse { offset: DUMMY });
+        emit!(self, Pop);
+        self.block();
+
+        let loop_end = self.chunk().code().len() + 3; // +3 for the encoded `Loop` instruction
+        let offset = (loop_end - loop_start).try_into().expect("loop body too large");
+        emit!(self, Loop { offset });
+
+        self.patch_jump(exit_jump);
+        emit!(self, Pop);
 
         self.leave();
     }
@@ -415,6 +445,12 @@ impl<'ctx> Parser<'ctx> {
             TokenKind::Print => {
                 self.print_statement();
             }
+            TokenKind::If => {
+                self.if_statement();
+            }
+            TokenKind::While => {
+                self.while_statement();
+            }
             TokenKind::LeftBrace => {
                 self.begin_scope();
                 self.block();
@@ -448,7 +484,7 @@ impl<'ctx> Parser<'ctx> {
             TokenKind::Bang     => emit!(self, Not),
             TokenKind::Minus    => emit!(self, Negate),
             _ => unreachable!(),
-        }
+        };
 
         self.leave();
     }
@@ -473,7 +509,31 @@ impl<'ctx> Parser<'ctx> {
             TokenKind::Star         => emit!(self, Multiply),
             TokenKind::Slash        => emit!(self, Divide),
             _ => unreachable!(),
-        }
+        };
+
+        self.leave();
+    }
+
+    /// `"and"` `<expression>`
+    fn and(&mut self, _: bool) {
+        self.enter("and");
+
+        let end_jump = emit!(self, JumpIfFalse { offset: DUMMY });
+        emit!(self, Pop);
+        self.parse_precedence(Precedence::AND);
+        self.patch_jump(end_jump);
+
+        self.leave();
+    }
+
+    /// `"or"` `<expression>`
+    fn or(&mut self, _: bool) {
+        self.enter("or");
+
+        let end_jump = emit!(self, JumpIfTrue { offset: DUMMY });
+        emit!(self, Pop);
+        self.parse_precedence(Precedence::OR);
+        self.patch_jump(end_jump);
 
         self.leave();
     }
@@ -483,9 +543,11 @@ impl<'ctx> Parser<'ctx> {
         self.enter("number");
 
         let span = self.previous.span.anchor(self.lex.source());
-        let slice = span.slice();
+        let slice = span.as_str();
         match slice.parse() {
-            Ok(float) => emit!(self, Constant(Value::Number(float))),
+            Ok(float) => {
+                emit!(self, Constant { constant: Value::Number(float) });
+            }
             Err(cause) => {
                 let token = slice.to_owned();
                 self.error(self.previous.span, ParserErrorKind::InvalidNumberLiteral {
@@ -503,12 +565,12 @@ impl<'ctx> Parser<'ctx> {
         self.enter("string");
 
         let span = self.previous.span.anchor(self.lex.source());
-        let slice = span.slice()
+        let slice = span.as_str()
             .strip_prefix('"').unwrap()
             .strip_suffix('"').unwrap();
         let string = RoxString::new(slice);
 
-        emit!(self, Constant(Value::Object(string.upcast())));
+        emit!(self, Constant { constant: Value::Object(string.upcast()) });
 
         self.leave();
     }
@@ -520,9 +582,9 @@ impl<'ctx> Parser<'ctx> {
             if can_assign && self.current.kind == TokenKind::Equal {
                 self.advance();
                 self.expression();
-                emit!(self, SetLocal(index));
+                emit!(self, SetLocal { index });
             } else {
-                emit!(self, GetLocal(index));
+                emit!(self, GetLocal { index });
             }
         } else {
             let name = self.identifier_constant(token);
@@ -531,9 +593,9 @@ impl<'ctx> Parser<'ctx> {
             if can_assign && self.current.kind == TokenKind::Equal {
                 self.advance();
                 self.expression();
-                emit!(self, SetGlobal(name));
+                emit!(self, SetGlobal { constant: name });
             } else {
-                emit!(self, GetGlobal(name));
+                emit!(self, GetGlobal { constant: name });
             }
         };
 
@@ -595,8 +657,8 @@ mod precedence {
     precedence! {
         NONE,
         ASSIGNMENT,
-        _OR,
-        _AND,
+        OR,
+        AND,
         EQUALITY,
         COMPARISON,
         TERM,
@@ -608,13 +670,13 @@ mod precedence {
 }
 use precedence::Precedence;
 
-struct ParserRule<'ctx> {
-    prefix: Option<fn(&mut Parser<'ctx>, bool)>,
-    infix: Option<fn(&mut Parser<'ctx>, bool)>,
+struct ParserRule<'ctx, 'src> {
+    prefix: Option<fn(&mut Parser<'ctx, 'src>, bool)>,
+    infix: Option<fn(&mut Parser<'ctx, 'src>, bool)>,
     precedence: Precedence,
 }
 
-fn parser_rule<'ctx>(kind: TokenKind) -> ParserRule<'ctx> {
+fn parser_rule<'ctx, 'src>(kind: TokenKind) -> ParserRule<'ctx, 'src> {
     macro_rules! parser_rules {
         ( $( $kind:ident $prefix:tt $infix:tt $precedence:tt ),* $(,)? ) => {
             match kind {
@@ -658,7 +720,7 @@ fn parser_rule<'ctx>(kind: TokenKind) -> ParserRule<'ctx> {
         Identifier      variable    _           _,
         String          string      _           _,
         Number          number      _           _,
-        And             _           _           _,
+        And             _           and         AND,
         Assert          _           _           _,
         Class           _           _           _,
         Else            _           _           _,
@@ -667,7 +729,7 @@ fn parser_rule<'ctx>(kind: TokenKind) -> ParserRule<'ctx> {
         Fun             _           _           _,
         If              _           _           _,
         Nil             literal     _           _,
-        Or              _           _           _,
+        Or              _           or          OR,
         Print           _           _           _,
         Return          _           _           _,
         Super           _           _           _,

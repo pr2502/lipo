@@ -10,6 +10,17 @@ pub enum Value {
     Object(ObjectRefAny),
 }
 
+impl Value {
+    pub fn falsy(&self) -> bool {
+        match self {
+            // only `nil` and `false` are "falsy"
+            Value::Nil | Value::Bool(false) => true,
+            // everything else is "truthy"
+            _ => false,
+        }
+    }
+}
+
 impl Debug for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

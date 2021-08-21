@@ -103,7 +103,7 @@ impl<'src> Lexer<'src> {
         self.peek()
     }
 
-    pub fn source(&self) -> &str {
+    pub fn source(&self) -> &'src str {
         self.inner.source()
     }
 }
