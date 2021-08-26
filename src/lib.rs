@@ -10,7 +10,6 @@ pub mod lexer;
 pub mod object;
 pub mod opcode;
 pub mod span;
-pub mod string;
 pub mod value;
 pub mod vm;
 

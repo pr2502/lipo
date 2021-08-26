@@ -23,9 +23,9 @@ pub enum OpCode {
     Pop,
     GetLocal { index: u16 }, // indexes into the stack
     SetLocal { index: u16 }, // indexes into the stack
-    GetGlobal { index: u16 }, // indexes into the chunk constant pool 
+    GetGlobal { index: u16 }, // indexes into the chunk constant pool
     DefGlobal { index: u16 }, // indexes into the chunk constant pool
-    SetGlobal { index: u16 }, // indexes into the chunk constant pool 
+    SetGlobal { index: u16 }, // indexes into the chunk constant pool
     Equal,
     Greater,
     Less,

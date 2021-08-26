@@ -16,13 +16,13 @@ fn init() {
 fn debug_output() {
     init();
 
-    let mut chunk = Chunk::new("".into());
-    chunk.insert_constant(Value::Number(42.0));
-    chunk.write(OpCode::Constant { index: 0 }, FreeSpan::from(0..0));
+    let mut chunk = Chunk::default();
+    chunk.insert_constant(Value::new_number(42.0));
+    chunk.write(OpCode::Constant { index: 0 }, FreeSpan::from(0..2));
     chunk.write(OpCode::Return, FreeSpan::from(0..0));
 
     assert_eq!(
-        format!("{:?}", chunk),
+        format!("{:?}", chunk.debug("42")),
         "\
 Chunk {
    1    Constant { index: 0 }\t; 42.0
@@ -36,16 +36,16 @@ Chunk {
 fn vm() {
     init();
 
-    let mut chunk = Chunk::new("");
-    chunk.insert_constant(Value::Number(42.0));
+    let mut chunk = Chunk::default();
+    chunk.insert_constant(Value::new_number(42.0));
     chunk.write(OpCode::Constant { index: 0 }, default());
     chunk.write(OpCode::Negate, default());
     chunk.write(OpCode::Return, default());
 
-    let vm = VM::new(&chunk);
+    let vm = VM::new(&chunk, "");
     assert_eq!(
         vm.run().unwrap(),
-        Value::Number(-42.0),
+        Value::new_number(-42.0),
     );
 }
 
@@ -53,17 +53,17 @@ fn vm() {
 fn vm2() {
     init();
 
-    let mut chunk = Chunk::new("");
+    let mut chunk = Chunk::default();
 
-    let index = chunk.insert_constant(Value::Number(1.2));
+    let index = chunk.insert_constant(Value::new_number(1.2));
     chunk.write(OpCode::Constant { index }, default());
 
-    let index = chunk.insert_constant(Value::Number(3.4));
+    let index = chunk.insert_constant(Value::new_number(3.4));
     chunk.write(OpCode::Constant { index }, default());
 
     chunk.write(OpCode::Add, default());
 
-    let index = chunk.insert_constant(Value::Number(4.6));
+    let index = chunk.insert_constant(Value::new_number(4.6));
     chunk.write(OpCode::Constant { index }, default());
 
     chunk.write(OpCode::Divide, default());
@@ -71,10 +71,10 @@ fn vm2() {
 
     chunk.write(OpCode::Return, default());
 
-    let vm = VM::new(&chunk);
+    let vm = VM::new(&chunk, "");
     assert_eq!(
         vm.run().unwrap(),
-        Value::Number(-1.0),
+        Value::new_number(-1.0),
     );
 }
 
@@ -82,13 +82,14 @@ fn vm2() {
 fn parser() {
     init();
 
-    let chunk = compile("(-1 + 2) * 3 - -4;").unwrap();
+    let main = compile("(-1 + 2) * 3 - -4;").unwrap();
+    let chunk = &main.chunk;
     let opcodes = chunk.opcodes().collect::<Vec<_>>();
 
-    assert_eq!(chunk.get_constant(0), Some(Value::Number(1.0)));
-    assert_eq!(chunk.get_constant(1), Some(Value::Number(2.0)));
-    assert_eq!(chunk.get_constant(2), Some(Value::Number(3.0)));
-    assert_eq!(chunk.get_constant(3), Some(Value::Number(4.0)));
+    assert_eq!(chunk.get_constant(0), Some(Value::new_number(1.0)));
+    assert_eq!(chunk.get_constant(1), Some(Value::new_number(2.0)));
+    assert_eq!(chunk.get_constant(2), Some(Value::new_number(3.0)));
+    assert_eq!(chunk.get_constant(3), Some(Value::new_number(4.0)));
 
     assert_eq!(
         opcodes,
@@ -111,14 +112,18 @@ macro_rules! run {
     ( $code:literal, $($tt:tt)* ) => {{
         init();
 
-        let chunk = compile($code).unwrap();
-        dbg!(&chunk);
-        let vm = VM::new(&chunk);
+        let main = compile($code).unwrap();
+        let chunk = &main.chunk;
+        {
+            let chunk = chunk.debug($code);
+            dbg!(chunk);
+        }
+        let vm = VM::new(&chunk, $code);
         let res = vm.run();
         dbg!(&res);
-        assert!(matches!(res, $($tt)*));
+        std::assert_matches::assert_matches!(res, $($tt)*);
     }};
-    ( $code:literal ) => { run!( $code, Ok(Value::Nil) ) };
+    ( $code:literal ) => { run!( $code, Ok(v) if v.is_nil() ) };
 }
 
 #[test]

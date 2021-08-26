@@ -1,10 +1,11 @@
 use crate::chunk::Chunk;
 use crate::default;
 use crate::lexer::{Lexer, Token, TokenKind};
+use crate::object::function::Function;
+use crate::object::string::String as RoxString;
 use crate::object::ObjectRef;
 use crate::opcode::OpCode;
 use crate::span::FreeSpan;
-use crate::string::String as RoxString;
 use crate::value::Value;
 use log::trace;
 use std::mem;
@@ -39,7 +40,7 @@ pub enum ParserErrorKind {
 }
 
 struct Parser<'ctx, 'src> {
-    chunk: &'ctx mut Chunk<'src>,
+    chunk: &'ctx mut Chunk,
     lex: &'ctx mut Lexer<'src>,
 
     errors: Vec<ParserError>,
@@ -61,8 +62,8 @@ struct Local {
 }
 
 #[allow(clippy::needless_lifetimes)]
-pub fn compile<'src>(source: &'src str) -> Result<Chunk<'src>, Vec<ParserError>> {
-    let mut chunk = Chunk::new(source);
+pub fn compile<'src>(source: &'src str) -> Result<ObjectRef<Function>, Vec<ParserError>> {
+    let mut chunk = Chunk::default();
     let mut lex = Lexer::new(source);
 
     let current = lex.peek();
@@ -85,47 +86,65 @@ pub fn compile<'src>(source: &'src str) -> Result<Chunk<'src>, Vec<ParserError>>
     parser.finish();
 
     if parser.errors.is_empty() {
-        Ok(chunk)
+        Ok(Function::new(chunk, 0, ""))
     } else {
         Err(parser.errors)
     }
 }
 
-impl<'ctx, 'src> Parser<'ctx, 'src> {
-    /// Get currently compiling Chunk
-    fn chunk(&mut self) -> &mut Chunk<'src> {
-        self.chunk
+mod emit {
+    use crate::opcode::OpCode;
+    use super::Parser;
+
+    pub struct PatchPlace {
+        position: usize,
     }
 
-    fn emit(&mut self, opcode: OpCode) -> usize {
-        let span = self.previous.span;
-        self.chunk().write(opcode, span)
+    impl<'ctx, 'src> Parser<'ctx, 'src> {
+        pub fn emit(&mut self, opcode: OpCode) -> Option<PatchPlace> {
+            let span = self.previous.span;
+            let position = self.chunk.write(opcode, span);
+            matches!(opcode, OpCode::Jump { .. } | OpCode::JumpIfTrue { .. } | OpCode::JumpIfFalse { .. })
+                .then(|| PatchPlace { position })
+        }
+
+        #[track_caller]
+        pub fn patch_jump(&mut self, place: Option<PatchPlace>) {
+            let place = place.expect("tried to patch an unpatchable instruction");
+            self.chunk.patch_jump(place.position)
+        }
     }
 
-    fn patch_jump(&mut self, position: usize) {
-        self.chunk().patch_jump(position)
+    pub fn one_patchplace(a: Option<PatchPlace>, b: Option<PatchPlace>) -> Option<PatchPlace> {
+        assert!(a.is_none() || b.is_none(), "discarding a PatchPlace");
+        a.or(b)
     }
 }
 
 /// Helper macro for emitting a variable number of instructions in a single expression.
 macro_rules! emit {
-    ( $self:ident $(,)? $(@$ret:ident)* ) => {{
-        #![allow(path_statements)]
-        $($ret);*
+    ( $self:ident $(,)? ) => {{
+        None
     }};
 
     ( $self:ident, $opcode:ident { constant: $value:expr } $($tt:tt)* ) => {{
-        let index = $self.chunk().insert_constant($value);
-        let ret = $self.emit(OpCode::$opcode { index });
-        emit!( $self $($tt)* @ret )
+        let index = $self.chunk.insert_constant($value);
+        emit::one_patchplace(
+            $self.emit(OpCode::$opcode { index }),
+            emit!( $self $($tt)* ),
+        )
     }};
     ( $self:ident, $opcode:ident { $arg:ident $(: $value:expr)? } $($tt:tt)* ) => {{
-        let ret = $self.emit(OpCode::$opcode { $arg $(: $value)? });
-        emit!( $self $($tt)* @ret )
+        emit::one_patchplace(
+            $self.emit(OpCode::$opcode { $arg $(: $value)? }),
+            emit!( $self $($tt)* ),
+        )
     }};
     ( $self:ident, $opcode:ident $($tt:tt)* ) => {{
-        let ret = $self.emit(OpCode::$opcode);
-        emit!( $self $($tt)* @ret )
+        emit::one_patchplace(
+            $self.emit(OpCode::$opcode),
+            emit!( $self $($tt)* ),
+        )
     }};
 }
 
@@ -243,11 +262,11 @@ impl<'ctx, 'src> Parser<'ctx, 'src> {
             return;
         }
         let tokslice = |token: Token| token.span.anchor(self.lex.source()).as_str();
-        let shadowing = self.locals.iter()
+        let is_shadowing = self.locals.iter()
             .rev()
             .take_while(|loc| loc.depth == self.scope_depth)
             .any(|loc| tokslice(loc.name) == tokslice(name));
-        if shadowing {
+        if is_shadowing {
             self.error(name.span, ParserErrorKind::Shadowing);
             return;
         }
@@ -301,7 +320,7 @@ impl<'ctx, 'src> Parser<'ctx, 'src> {
         if self.scope_depth == 0 {
             // global variable
             let name = self.identifier_constant(name);
-            emit!(self, DefGlobal { constant: Value::Object(name.upcast()) });
+            emit!(self, DefGlobal { constant: Value::new_object(name) });
         } else {
             // local variable
             self.add_local(name);
@@ -369,14 +388,14 @@ impl<'ctx, 'src> Parser<'ctx, 'src> {
         self.enter("while_statement");
 
         self.consume(TokenKind::While);
-        let loop_start = self.chunk().code().len();
+        let loop_start = self.chunk.code().len();
         self.expression();
 
         let exit_jump = emit!(self, JumpIfFalse { offset: DUMMY });
         emit!(self, Pop);
         self.block();
 
-        let loop_end = self.chunk().code().len() + 3; // +3 for the encoded `Loop` instruction
+        let loop_end = self.chunk.code().len() + 3; // +3 for the encoded `Loop` instruction
         let offset = (loop_end - loop_start).try_into().expect("loop body too large");
         emit!(self, Loop { offset });
 
@@ -464,7 +483,7 @@ impl<'ctx, 'src> Parser<'ctx, 'src> {
         self.leave();
     }
 
-    /// `"("` `expression` `")"`
+    /// <expr> )
     fn grouping(&mut self, _: bool) {
         self.enter("grouping");
 
@@ -474,7 +493,7 @@ impl<'ctx, 'src> Parser<'ctx, 'src> {
         self.leave();
     }
 
-    /// `<operator>` `<expression>`
+    /// <op> <expr>
     fn unary(&mut self, _: bool) {
         self.enter("unary");
 
@@ -489,7 +508,7 @@ impl<'ctx, 'src> Parser<'ctx, 'src> {
         self.leave();
     }
 
-    /// `<expression>` `<operator>` `<expression>`
+    /// <op> <expr>
     fn binary(&mut self, _: bool) {
         self.enter("binary");
 
@@ -514,7 +533,7 @@ impl<'ctx, 'src> Parser<'ctx, 'src> {
         self.leave();
     }
 
-    /// `"and"` `<expression>`
+    /// and <expr>
     fn and(&mut self, _: bool) {
         self.enter("and");
 
@@ -526,7 +545,7 @@ impl<'ctx, 'src> Parser<'ctx, 'src> {
         self.leave();
     }
 
-    /// `"or"` `<expression>`
+    /// or <expr>
     fn or(&mut self, _: bool) {
         self.enter("or");
 
@@ -538,7 +557,7 @@ impl<'ctx, 'src> Parser<'ctx, 'src> {
         self.leave();
     }
 
-    /// `<number>`
+    /// <number>
     fn number(&mut self, _: bool) {
         self.enter("number");
 
@@ -546,7 +565,7 @@ impl<'ctx, 'src> Parser<'ctx, 'src> {
         let slice = span.as_str();
         match slice.parse() {
             Ok(float) => {
-                emit!(self, Constant { constant: Value::Number(float) });
+                emit!(self, Constant { constant: Value::new_number(float) });
             }
             Err(cause) => {
                 let token = slice.to_owned();
@@ -560,7 +579,7 @@ impl<'ctx, 'src> Parser<'ctx, 'src> {
         self.leave();
     }
 
-    /// `"\""` `<string>` `"\""`
+    /// " <string> "
     fn string(&mut self, _: bool) {
         self.enter("string");
 
@@ -570,15 +589,16 @@ impl<'ctx, 'src> Parser<'ctx, 'src> {
             .strip_suffix('"').unwrap();
         let string = RoxString::new(slice);
 
-        emit!(self, Constant { constant: Value::Object(string.upcast()) });
+        emit!(self, Constant { constant: Value::new_object(string) });
 
         self.leave();
     }
 
-    fn named_variable(&mut self, token: Token, can_assign: bool) {
-        self.enter("named_variable");
+    /// <ident>
+    fn variable(&mut self, can_assign: bool) {
+        self.enter("variable");
 
-        if let Some(index) = self.resolve_local(token) {
+        if let Some(index) = self.resolve_local(self.previous) {
             if can_assign && self.current.kind == TokenKind::Equal {
                 self.advance();
                 self.expression();
@@ -587,8 +607,8 @@ impl<'ctx, 'src> Parser<'ctx, 'src> {
                 emit!(self, GetLocal { index });
             }
         } else {
-            let name = self.identifier_constant(token);
-            let name = Value::Object(name.upcast());
+            let name = self.identifier_constant(self.previous);
+            let name = Value::new_object(name);
 
             if can_assign && self.current.kind == TokenKind::Equal {
                 self.advance();
@@ -602,16 +622,7 @@ impl<'ctx, 'src> Parser<'ctx, 'src> {
         self.leave();
     }
 
-    /// `<ident>`
-    fn variable(&mut self, can_assign: bool) {
-        self.enter("variable");
-
-        self.named_variable(self.previous, can_assign);
-
-        self.leave();
-    }
-
-    /// `"nil"` | `"true"` | `"false"`
+    /// nil | true | false
     fn literal(&mut self, _: bool) {
         self.enter("literal");
 
@@ -700,7 +711,7 @@ fn parser_rule<'ctx, 'src>(kind: TokenKind) -> ParserRule<'ctx, 'src> {
     parser_rules! {
         LeftParen       grouping    _           _,
         RightParen      _           _           _,
-        LeftBrace       _           _           _, 
+        LeftBrace       _           _           _,
         RightBrace      _           _           _,
         Comma           _           _           _,
         Dot             _           _           _,

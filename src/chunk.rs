@@ -1,4 +1,3 @@
-use crate::default;
 use crate::opcode::OpCode;
 use crate::span::{FreeSpan, Span};
 use crate::value::Value;
@@ -10,7 +9,8 @@ use std::iter;
 
 
 /// Emmited bytecode Chunk
-pub struct Chunk<'src> {
+#[derive(Default)]
+pub struct Chunk {
     /// Packed bytecode opcodes
     code: Vec<u8>,
 
@@ -23,21 +23,14 @@ pub struct Chunk<'src> {
     ///
     /// Indexed by bytes in `code`. Free spans are anchored against `source`.
     spans: Vec<FreeSpan>,
-
-    /// Original source code
-    source: &'src str,
 }
 
-impl<'src> Chunk<'src> {
-    pub fn new(source: &'src str) -> Chunk<'src> {
-        Chunk {
-            code: default(),
-            constants: default(),
-            spans: default(),
-            source,
-        }
-    }
+pub struct DebugChunk<'code, 'src> {
+    source: &'src str,
+    chunk: &'code Chunk,
+}
 
+impl Chunk {
     pub fn write(&mut self, opcode: OpCode, span: FreeSpan) -> usize {
         let before = self.code.len();
         opcode.encode(&mut self.code);
@@ -92,25 +85,27 @@ impl<'src> Chunk<'src> {
         })
     }
 
-    pub fn spans(&self) -> impl Iterator<Item = Span<'_>> + '_ {
-        self.spans.iter()
-            .map(|fs| fs.anchor(self.source))
+    pub fn debug<'src>(&self, source: &'src str) -> DebugChunk<'_, 'src> {
+        DebugChunk { chunk: self, source }
     }
 
     pub fn code(&self) -> &[u8] {
         &self.code
     }
+}
 
-    pub fn source(&self) -> &'src str {
-        self.source
+impl<'code, 'src> DebugChunk<'code, 'src> {
+    pub fn spans(&self) -> impl Iterator<Item = Span<'src>> + '_ {
+        self.chunk.spans.iter()
+            .map(|fs| fs.anchor(self.source))
     }
 }
 
-impl<'src> Debug for Chunk<'src> {
+impl<'code, 'src> Debug for DebugChunk<'code, 'src> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut prev_line = 0;
         writeln!(f, "Chunk {{")?;
-        for (opcode, span) in self.opcodes().zip(self.spans()) {
+        for (opcode, span) in self.chunk.opcodes().zip(self.spans()) {
             let (line, _) = span.lines();
             if line != prev_line {
                 prev_line = line;
@@ -121,7 +116,7 @@ impl<'src> Debug for Chunk<'src> {
             write!(f, "  {:?}", opcode)?;
             match opcode {
                 OpCode::Constant { index } => {
-                    if let Some(value) = self.get_constant(index) {
+                    if let Some(value) = self.chunk.get_constant(index) {
                         write!(f, "\t; {:?}", value)?;
                     } else {
                         write!(f, "\t; missing constant index={}", index)?;
@@ -130,7 +125,7 @@ impl<'src> Debug for Chunk<'src> {
                 OpCode::DefGlobal { index } |
                 OpCode::GetGlobal { index } |
                 OpCode::SetGlobal { index } => {
-                    if let Some(value) = self.get_constant(index) {
+                    if let Some(value) = self.chunk.get_constant(index) {
                         write!(f, "\t; var {:?}", value)?;
                     } else {
                         write!(f, "\t; missing constant index={}", index)?;
