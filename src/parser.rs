@@ -82,6 +82,7 @@ impl<'src> Parser<'src> {
     }
 
     fn item(&mut self) -> Result<Item> {
+        // TODO recovery
         Ok(match self.peek_kind() {
             TokenKind::Class => Item::Class(self.class_item()?),
             TokenKind::Fun => Item::Fun(self.fun_item()?),
@@ -100,10 +101,11 @@ impl<'src> Parser<'src> {
 
     fn let_item(&mut self) -> Result<LetItem> {
         let let_tok = self.expect_next(TokenKind::Let)?;
-        let mut_tok = self.match_peek(TokenKind::Mut);
-        if mut_tok.is_some() {
-            self.lexer.next2();
-        }
+        let (mut_tok, rec_tok) = match self.peek_kind() {
+            TokenKind::Mut => (Some(self.lexer.next2()), None),
+            TokenKind::Rec => (None, Some(self.lexer.next2())),
+            _ => (None, None),
+        };
         let name = self.name()?;
         let init = if let Some(equal_tok) = self.match_peek(TokenKind::Equal) {
             self.lexer.next2();
@@ -113,7 +115,7 @@ impl<'src> Parser<'src> {
             None
         };
         let semicolon_tok = self.expect_next(TokenKind::Semicolon)?;
-        Ok(LetItem { let_tok, mut_tok, name, init, semicolon_tok })
+        Ok(LetItem { let_tok, mut_tok, rec_tok, name, init, semicolon_tok })
     }
 
     fn statement(&mut self) -> Result<Statement> {
@@ -130,6 +132,7 @@ impl<'src> Parser<'src> {
     }
 
     fn for_stmt(&mut self) -> Result<ForStmt> {
+        // our for doesn't make sense until we have working function calls
         todo!()
     }
 
@@ -211,7 +214,7 @@ impl<'src> Parser<'src> {
                     })
                 }
                 TokenKind::Minus |
-                TokenKind::Bang => {
+                TokenKind::Not => {
                     let ((), r_bp) = prefix_binding_power(token.kind);
                     let expr = self.expr_bp(r_bp)?;
                     Expression::Unary(UnaryExpr {
@@ -244,7 +247,7 @@ impl<'src> Parser<'src> {
                 TokenKind::Equal |
                 TokenKind::Or |
                 TokenKind::And |
-                TokenKind::BangEqual |
+                TokenKind::NotEqual |
                 TokenKind::EqualEqual |
                 TokenKind::Greater |
                 TokenKind::GreaterEqual |
@@ -252,8 +255,8 @@ impl<'src> Parser<'src> {
                 TokenKind::LessEqual |
                 TokenKind::Minus |
                 TokenKind::Plus |
-                TokenKind::Slash |
-                TokenKind::Star => {}
+                TokenKind::Div |
+                TokenKind::Mul => {}
                 // postfix operators
                 TokenKind::LeftParen => {}
                 // expression end
@@ -310,7 +313,7 @@ impl<'src> Parser<'src> {
 fn prefix_binding_power(kind: TokenKind) -> ((), u8) {
     match kind {
         // unary (higher than factor for infix operators)
-        TokenKind::Bang |
+        TokenKind::Not |
         TokenKind::Minus => ((), 15),
 
         _ => unreachable!(),
@@ -334,7 +337,7 @@ fn infix_binding_power(kind: TokenKind) -> Option<(u8, u8)> {
         TokenKind::And          => (5, 6),
         // equality
         TokenKind::EqualEqual |
-        TokenKind::BangEqual    => (7, 8),
+        TokenKind::NotEqual     => (7, 8),
         // comparison
         TokenKind::Less |
         TokenKind::LessEqual |
@@ -344,34 +347,9 @@ fn infix_binding_power(kind: TokenKind) -> Option<(u8, u8)> {
         TokenKind::Minus |
         TokenKind::Plus         => (11, 12),
         // factor
-        TokenKind::Slash |
-        TokenKind::Star         => (13, 14),
+        TokenKind::Div |
+        TokenKind::Mul          => (13, 14),
 
         _ => return None,
     })
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-    use crate::fmt::SourceDebug;
-
-    #[test]
-    fn binary_expr_precedence() {
-        let src = "!(5 - 4 > 3 * 2 == !nil);";
-        let res = parse(src);
-        match res {
-            Ok(ast) => {
-                let sexpr = format!("{:?}", ast[0].wrap(src));
-                assert_eq!(
-                    sexpr,
-                    "(! (== (> (- 5 4) (* 3 2)) (! nil)))",
-                );
-            }
-            Err(e) => {
-                dbg!(e);
-                panic!();
-            }
-        }
-    }
 }

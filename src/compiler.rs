@@ -317,7 +317,7 @@ impl<'src> Emitter<'src> {
 
         let span = binary_expr.span();
         match op {
-            TokenKind::BangEqual => {
+            TokenKind::NotEqual => {
                 self.chunk.emit(OpCode::Equal, span);
                 self.chunk.emit(OpCode::Not, span);
             }
@@ -344,10 +344,10 @@ impl<'src> Emitter<'src> {
             TokenKind::Minus => {
                 self.chunk.emit(OpCode::Subtract, span);
             }
-            TokenKind::Star => {
+            TokenKind::Mul => {
                 self.chunk.emit(OpCode::Multiply, span);
             }
-            TokenKind::Slash => {
+            TokenKind::Div => {
                 self.chunk.emit(OpCode::Divide, span);
             }
             _ => unreachable!()
@@ -394,7 +394,7 @@ impl<'src> Emitter<'src> {
 
         let span = unary_expr.span();
         match op {
-            TokenKind::Bang => {
+            TokenKind::Not => {
                 self.chunk.emit(OpCode::Not, span);
             }
             TokenKind::Minus => {

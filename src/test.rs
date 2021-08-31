@@ -17,10 +17,10 @@ macro_rules! run {
         init();
 
         let src = $code;
-        println!("{}", src);
+        println!("src:\n{}\n", src);
 
         let ast = parse(src).unwrap();
-        println!("{:#?}", ast.as_slice().wrap(src));
+        println!("ast:\n{:#?}\n", ast.as_slice().wrap(src));
 
         let chunk = compile(src, ast).unwrap();
         println!("{:?}", chunk.wrap(src));
@@ -43,7 +43,7 @@ fn type_error() {
 
 #[test]
 fn weird_expr() {
-    run!("assert !(5 - 4 > 3 * 2 == !nil);");
+    run!("assert not (5 - 4 > 3 * 2 == not nil);");
 }
 
 #[test]

@@ -1,17 +1,16 @@
 //! Implement [`SourceDebug`] for AST.
 
 use super::*;
-use crate::fmt::{debug_sexpr, SourceDebug};
+use crate::fmt::SourceDebug;
+use crate::lexer::TokenKind;
 use std::fmt;
 
 
-impl SourceDebug for &[Item] {
+impl<T: SourceDebug> SourceDebug for &[T] {
     fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut d = debug_sexpr(f, "Block");
-        for i in self.iter() {
-            d.atom(&i.wrap(source));
-        }
-        d.finish()
+        f.debug_list()
+            .entries(self.iter().map(|e| e.wrap(source)))
+            .finish()
     }
 }
 
@@ -28,12 +27,13 @@ impl SourceDebug for Item {
 
 impl SourceDebug for ClassItem {
     fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        debug_sexpr(f, "Class")
-            .atom(&self.name.wrap(source))
-            .opt_kw_atom("inherit", self.inherit.as_ref()
-                .map(|inherit| inherit.name.wrap(source)))
-            // TODO methods
-            .finish()
+        let mut w = f.debug_struct("Class");
+        w.field("name", &self.name.wrap(source));
+        if let Some(inherit) = &self.inherit {
+            w.field("inherit", &inherit.name.wrap(source));
+        }
+        w.field("methods", &self.methods.as_slice().wrap(source));
+        w.finish()
     }
 }
 
@@ -45,20 +45,28 @@ impl SourceDebug for FunItem {
 
 impl SourceDebug for Function {
     fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        debug_sexpr(f, "Fun")
-            .kw_atom("name", &self.name.wrap(source))
-            // TODO parameters
-            // TODO body
+        f.debug_struct("Fun")
+            .field("name", &self.name.wrap(source))
+            .field("params", &self.parameters.items.as_slice().wrap(source))
+            .field("body", &self.body.wrap(source))
             .finish()
     }
 }
 
 impl SourceDebug for LetItem {
     fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        debug_sexpr(f, "Let")
-            .atom(&self.name.wrap(source))
-            // TODO expression
-            .finish()
+        let mut w = if self.mut_tok.is_some() {
+            f.debug_tuple("LetMut")
+        } else {
+            f.debug_tuple("Let")
+        };
+        w.field(&self.name.wrap(source));
+        if let Some(init) = &self.init {
+            w.field(&init.expr.wrap(source));
+        } else {
+            w.field(&TokenKind::Nil);
+        }
+        w.finish()
     }
 }
 
@@ -66,14 +74,13 @@ impl SourceDebug for Statement {
     fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Statement::Expr(inner) => inner.fmt(source, f),
-            // Statement::For(inner) => inner.fmt(source, f),
-            // Statement::If(inner) => inner.fmt(source, f),
-            // Statement::Assert(inner) => inner.fmt(source, f),
-            // Statement::Print(inner) => inner.fmt(source, f),
-            // Statement::Return(inner) => inner.fmt(source, f),
-            // Statement::While(inner) => inner.fmt(source, f),
-            // Statement::Block(inner) => inner.fmt(source, f),
-            _ => Ok(())
+            Statement::For(inner) => inner.fmt(source, f),
+            Statement::If(inner) => inner.fmt(source, f),
+            Statement::Assert(inner) => inner.fmt(source, f),
+            Statement::Print(inner) => inner.fmt(source, f),
+            Statement::Return(inner) => inner.fmt(source, f),
+            Statement::While(inner) => inner.fmt(source, f),
+            Statement::Block(inner) => inner.fmt(source, f),
         }
     }
 }
@@ -81,6 +88,67 @@ impl SourceDebug for Statement {
 impl SourceDebug for ExprStmt {
     fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.expr.fmt(source, f)
+    }
+}
+
+impl SourceDebug for ForStmt {
+    fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("For")
+            .field("elem", &self.elem.wrap(source))
+            .field("iter", &self.iter.wrap(source))
+            .field("body", &self.body.wrap(source))
+            .finish()
+    }
+}
+
+impl SourceDebug for IfStmt {
+    fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut w = f.debug_struct("If");
+        w.field("pred", &self.pred.wrap(source));
+        w.field("then", &self.body.wrap(source));
+        if let Some(else_branch) = &self.else_branch {
+            w.field("else", &else_branch.body.wrap(source));
+        }
+        w.finish()
+    }
+}
+
+impl SourceDebug for AssertStmt {
+    fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("Assert")
+            .field(&self.expr.wrap(source))
+            .finish()
+    }
+}
+
+impl SourceDebug for PrintStmt {
+    fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("Print")
+            .field(&self.expr.wrap(source))
+            .finish()
+    }
+}
+
+impl SourceDebug for ReturnStmt {
+    fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("Return")
+            .field(&self.expr.wrap(source))
+            .finish()
+    }
+}
+
+impl SourceDebug for WhileStmt {
+    fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("While")
+            .field("pred", &self.pred.wrap(source))
+            .field("body", &self.body.wrap(source))
+            .finish()
+    }
+}
+
+impl SourceDebug for Block {
+    fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.body.as_slice().fmt(source, f)
     }
 }
 
@@ -100,17 +168,17 @@ impl SourceDebug for Expression {
 
 impl SourceDebug for BinaryExpr {
     fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        debug_sexpr(f, self.operator.span.anchor(source).as_str())
-            .atom(&self.lhs.wrap(source))
-            .atom(&self.rhs.wrap(source))
+        f.debug_tuple(self.operator.span.anchor(source).as_str())
+            .field(&self.lhs.wrap(source))
+            .field(&self.rhs.wrap(source))
             .finish()
     }
 }
 
 impl SourceDebug for UnaryExpr {
     fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        debug_sexpr(f, self.operator.span.anchor(source).as_str())
-            .atom(&self.expr.wrap(source))
+        f.debug_tuple(self.operator.span.anchor(source).as_str())
+            .field(&self.expr.wrap(source))
             .finish()
     }
 }
