@@ -6,16 +6,14 @@
 
 pub mod chunk;
 pub mod compiler;
+pub mod fmt;
 pub mod lexer;
 pub mod object;
 pub mod opcode;
+pub mod parser;
 pub mod span;
 pub mod value;
 pub mod vm;
-
-fn default<T: Default>() -> T {
-    <T as Default>::default()
-}
 
 #[cfg(test)]
 mod test;

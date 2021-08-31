@@ -1,4 +1,3 @@
-use crate::default;
 use crate::span::FreeSpan;
 use logos::{self, skip, Logos};
 
@@ -78,7 +77,7 @@ impl Default for Token {
     fn default() -> Token {
         Token {
             kind: TokenKind::Error,
-            span: default(),
+            span: FreeSpan::default(),
         }
     }
 }
@@ -101,6 +100,12 @@ impl<'src> Lexer<'src> {
     pub fn next(&mut self) -> Token {
         self.current = self.inner.next().unwrap_or(TokenKind::Eof);
         self.peek()
+    }
+
+    pub fn next2(&mut self) -> Token {
+        let last = self.peek();
+        self.next();
+        last
     }
 
     pub fn source(&self) -> &'src str {

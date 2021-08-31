@@ -1,31 +1,37 @@
 use std::fmt::{self, Debug};
 use std::ops::Range;
 
+
+pub trait Spanned {
+    fn span(&self) -> FreeSpan;
+}
+
+
 #[derive(Clone, Copy, Default)]
 pub struct FreeSpan {
-    pub start: usize,
-    pub end: usize,
+    pub start: u32,
+    pub end: u32,
 }
 
 impl From<Range<usize>> for FreeSpan {
     fn from(range: Range<usize>) -> Self {
-        let Range { start, end } = range;
+        let start = range.start.try_into().expect("out of span range");
+        let end = range.end.try_into().expect("out of span range");
         FreeSpan { start, end }
     }
 }
 
 impl FreeSpan {
     pub fn range(self) -> Range<usize> {
-        let FreeSpan { start, end } = self;
-        Range { start, end }
+        (self.start as usize)..(self.end as usize)
     }
 
     pub fn anchor(self, source: &str) -> Span<'_> {
         let FreeSpan { start, end } = self;
 
         assert!(
-            source.is_char_boundary(start) &&
-            source.is_char_boundary(end),
+            source.is_char_boundary(start as usize) &&
+            source.is_char_boundary(end as usize),
             "span boundaries are not valid char boundaries",
         );
 
@@ -33,6 +39,13 @@ impl FreeSpan {
             source,
             start,
             end,
+        }
+    }
+
+    pub fn join(a: FreeSpan, b: FreeSpan) -> FreeSpan {
+        FreeSpan {
+            start: Ord::min(a.start, b.start),
+            end: Ord::max(a.end, b.end),
         }
     }
 }
@@ -45,11 +58,12 @@ impl Debug for FreeSpan {
     }
 }
 
+
 #[derive(Clone, Copy)]
 pub struct Span<'src> {
     source: &'src str,
-    start: usize,
-    end: usize,
+    start: u32,
+    end: u32,
 }
 
 impl<'src> Debug for Span<'src> {
@@ -64,12 +78,43 @@ impl<'src> Debug for Span<'src> {
 }
 
 impl<'src> Span<'src> {
+    fn range(&self) -> Range<usize> {
+        (self.start as usize)..(self.end as usize)
+    }
+
     pub fn as_str(&self) -> &'src str {
-        &self.source[self.start .. self.end]
+        &self.source[self.range()]
     }
 
     pub fn is_multiline(&self) -> bool {
         self.as_str().as_bytes().contains(&b'\n')
+    }
+
+    pub fn line_parts(&self) -> Option<(&'src str, &'src str, &'src str)> {
+        if self.is_multiline() {
+            return None;
+        }
+
+        let Range { start, end } = self.range();
+
+        let before = &self.source[..start];
+        let before = if before.ends_with("\n") {
+            // `str::lines` ignores the trailing newline, if we don't special case it here
+            // we get the previous line instead
+            ""
+        } else {
+            before.lines()
+                .rev()
+                .next()
+                .unwrap_or("")
+        };
+        let after = self.source[end..]
+            .lines()
+            .next()
+            .unwrap_or("");
+        let this = self.as_str();
+
+        Some((before, this, after))
     }
 
     /// Returns on which line does the span start and on which it ends
@@ -87,9 +132,10 @@ impl<'src> Span<'src> {
             src.lines().count() + buff
         }
 
+        let Range { start, end } = self.range();
         (
-            lines(&self.source[..self.start], true) as u32,
-            lines(&self.source[..self.end], false) as u32,
+            lines(&self.source[..start], true) as u32,
+            lines(&self.source[..end], false) as u32,
         )
     }
 
@@ -110,9 +156,10 @@ impl<'src> Span<'src> {
             }
         }
 
+        let Range { start, end } = self.range();
         (
-            column(&self.source[..self.start]) as u32 + 1,
-            column(&self.source[..self.end]).max(1) as u32,
+            column(&self.source[..start]) as u32 + 1,
+            column(&self.source[..end]).max(1) as u32,
         )
     }
 }

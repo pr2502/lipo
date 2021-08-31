@@ -4,7 +4,6 @@ use crate::object::ObjectRefAny;
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) struct ValueRepr(u64);
 
-
 const QUIET_NAN: u64    = 0x7FFC_0000_0000_0000; // bits 50..63 (the whole exponent plus bits 50..52 to avoid some intel behaviour)
 const TAG_NIL: u64      = 0x0000_0000_0000_0001;
 const TAG_FALSE: u64    = 0x0000_0000_0000_0002;
@@ -14,7 +13,6 @@ const TAG_OBJECT: u64   = 0x8000_0000_0000_0000; // bit 63 (the sign bit)
 const NIL_REPR: ValueRepr   = ValueRepr(QUIET_NAN | TAG_NIL);
 const TRUE_REPR: ValueRepr  = ValueRepr(QUIET_NAN | TAG_TRUE);
 const FALSE_REPR: ValueRepr = ValueRepr(QUIET_NAN | TAG_FALSE);
-
 
 impl super::ValueReprInternal for ValueRepr {
     fn new_nil() -> Self {

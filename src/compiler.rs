@@ -1,754 +1,471 @@
-use crate::chunk::Chunk;
-use crate::default;
-use crate::lexer::{Lexer, Token, TokenKind};
-use crate::object::function::Function;
-use crate::object::string::String as RoxString;
-use crate::object::ObjectRef;
+use crate::chunk::{Chunk, ConstKey};
+use crate::lexer::TokenKind;
+use crate::object::string::String as ObjString;
 use crate::opcode::OpCode;
-use crate::span::FreeSpan;
+use crate::parser::ast::*;
+use crate::span::{FreeSpan, Spanned};
 use crate::value::Value;
-use log::trace;
-use std::mem;
 use std::num::ParseFloatError;
 
-/// Dummy offset used for pre-patch jumps.
-const DUMMY: u16 = u16::MAX;
-
 
 #[derive(Debug)]
-pub struct ParserError {
-    pub span: FreeSpan,
-    pub kind: ParserErrorKind,
-}
-
-#[derive(Debug)]
-pub enum ParserErrorKind {
-    UnexpectedToken {
-        found: TokenKind,
-        expected: TokenKind,
+pub enum Error {
+    NotYetImplemented {
+        feature: &'static str,
+        span: FreeSpan,
     },
-    ExpectedExpressionStart {
-        found: TokenKind,
+    TooManyLocals {
+        span: FreeSpan,
+    },
+    Shadowing {
+        shadowing_span: FreeSpan,
+        shadowed_span: FreeSpan,
     },
     InvalidNumberLiteral {
-        token: String,
         cause: ParseFloatError,
+        span: FreeSpan,
     },
-    InvalidAssignmentTarget,
-    TooManyLocals,
-    Shadowing,
+    InvalidAssignmentTarget {
+        span: FreeSpan,
+    },
 }
 
-struct Parser<'ctx, 'src> {
-    chunk: &'ctx mut Chunk,
-    lex: &'ctx mut Lexer<'src>,
-
-    errors: Vec<ParserError>,
-    panicking: bool,
-
-    previous: Token,
-    current: Token,
+struct Emitter<'src> {
+    source: &'src str,
+    chunk: Chunk,
 
     locals: Vec<Local>,
     scope_depth: i32,
-
-    #[cfg(debug_assertions)]
-    callstack: Vec<&'static str>,
 }
 
 struct Local {
-    name: Token,
+    name: Identifier,
     depth: i32,
 }
 
-#[allow(clippy::needless_lifetimes)]
-pub fn compile<'src>(source: &'src str) -> Result<ObjectRef<Function>, Vec<ParserError>> {
-    let mut chunk = Chunk::default();
-    let mut lex = Lexer::new(source);
+type Result = std::result::Result<(), Error>;
 
-    let current = lex.peek();
-    let mut parser = Parser {
-        chunk: &mut chunk,
-        lex: &mut lex,
-        errors: default(),
-        panicking: false,
-        locals: default(),
+pub fn compile(source: &str, ast: Program) -> std::result::Result<Chunk, Error> {
+    let mut emitter = Emitter {
+        source,
+        chunk: Chunk::default(),
+        locals: Vec::default(),
         scope_depth: 0,
-        previous: default(),
-        current,
-        #[cfg(debug_assertions)]
-        callstack: default(),
     };
 
-    while parser.current.kind != TokenKind::Eof {
-        parser.declaration();
+    for d in &ast {
+        emitter.declaration(d)?
     }
-    parser.finish();
 
-    if parser.errors.is_empty() {
-        Ok(Function::new(chunk, 0, ""))
-    } else {
-        Err(parser.errors)
-    }
+    Ok(emitter.chunk)
 }
 
-mod emit {
-    use crate::opcode::OpCode;
-    use super::Parser;
+const DUMMY: u16 = u16::MAX;
 
-    pub struct PatchPlace {
-        position: usize,
+impl<'src> Emitter<'src> {
+    fn identifier_constant(&mut self, ident: Identifier) -> ConstKey {
+        let span_str = ident.token.span.anchor(self.source).as_str();
+        let value = Value::new_object(ObjString::new(span_str));
+        self.chunk.insert_constant(value)
     }
 
-    impl<'ctx, 'src> Parser<'ctx, 'src> {
-        pub fn emit(&mut self, opcode: OpCode) -> Option<PatchPlace> {
-            let span = self.previous.span;
-            let position = self.chunk.write(opcode, span);
-            matches!(opcode, OpCode::Jump { .. } | OpCode::JumpIfTrue { .. } | OpCode::JumpIfFalse { .. })
-                .then(|| PatchPlace { position })
+    fn add_local(&mut self, name: Identifier) -> Result {
+        if self.locals.len() >= (u16::MAX as usize) {
+            return Err(Error::TooManyLocals { span: name.span() });
         }
-
-        #[track_caller]
-        pub fn patch_jump(&mut self, place: Option<PatchPlace>) {
-            let place = place.expect("tried to patch an unpatchable instruction");
-            self.chunk.patch_jump(place.position)
-        }
-    }
-
-    pub fn one_patchplace(a: Option<PatchPlace>, b: Option<PatchPlace>) -> Option<PatchPlace> {
-        assert!(a.is_none() || b.is_none(), "discarding a PatchPlace");
-        a.or(b)
-    }
-}
-
-/// Helper macro for emitting a variable number of instructions in a single expression.
-macro_rules! emit {
-    ( $self:ident $(,)? ) => {{
-        None
-    }};
-
-    ( $self:ident, $opcode:ident { constant: $value:expr } $($tt:tt)* ) => {{
-        let index = $self.chunk.insert_constant($value);
-        emit::one_patchplace(
-            $self.emit(OpCode::$opcode { index }),
-            emit!( $self $($tt)* ),
-        )
-    }};
-    ( $self:ident, $opcode:ident { $arg:ident $(: $value:expr)? } $($tt:tt)* ) => {{
-        emit::one_patchplace(
-            $self.emit(OpCode::$opcode { $arg $(: $value)? }),
-            emit!( $self $($tt)* ),
-        )
-    }};
-    ( $self:ident, $opcode:ident $($tt:tt)* ) => {{
-        emit::one_patchplace(
-            $self.emit(OpCode::$opcode),
-            emit!( $self $($tt)* ),
-        )
-    }};
-}
-
-impl<'ctx, 'src> Parser<'ctx, 'src> {
-    fn enter(&mut self, fun: &'static str) {
-        #[cfg(debug_assertions)] {
-            let indent = " ".repeat(self.callstack.len());
-            self.callstack.push(fun);
-            trace!("{} + {}", indent, fun);
-        }
-    }
-
-    fn leave(&mut self) {
-        #[cfg(debug_assertions)] {
-            let fun = self.callstack.pop().unwrap();
-            let indent = " ".repeat(self.callstack.len());
-            trace!("{} - {}", indent, fun);
-        }
-    }
-}
-
-impl<'ctx, 'src> Parser<'ctx, 'src> {
-    fn error(&mut self, span: FreeSpan, kind: ParserErrorKind) {
-        if !self.panicking {
-            self.errors.push(ParserError { span, kind });
-            self.panicking = true;
-        }
-    }
-
-    fn advance(&mut self) {
-        let next = self.lex.next();
-        self.previous = mem::replace(&mut self.current, next);
-    }
-
-    fn consume(&mut self, kind: TokenKind) {
-        if self.current.kind == kind {
-            self.advance();
-        } else {
-            self.error(self.current.span, ParserErrorKind::UnexpectedToken {
-                found: self.current.kind,
-                expected: kind,
+        let ident_slice = |ident: Identifier| ident.token.span.anchor(self.source).as_str();
+        let shadowing = self.locals.iter()
+            .rev()
+            .take_while(|loc| loc.depth == self.scope_depth)
+            .find(|loc| ident_slice(loc.name) == ident_slice(name));
+        if let Some(local) = shadowing {
+            return Err(Error::Shadowing {
+                shadowing_span: name.span(),
+                shadowed_span: local.name.span(),
             });
         }
+        self.locals.push(Local { name, depth: self.scope_depth });
+        Ok(())
     }
 
-    fn finish(&mut self) {
-        self.consume(TokenKind::Eof);
+    fn resolve_local(&mut self, name: Identifier) -> Option<u16> {
+        let ident_slice = |ident: Identifier| ident.token.span.anchor(self.source).as_str();
+        self.locals.iter()
+            .rposition(|loc| ident_slice(loc.name) == ident_slice(name))
+            .map(|index| index as u16)
     }
 
     fn begin_scope(&mut self) {
         self.scope_depth += 1;
     }
 
-    fn end_scope(&mut self) {
+    fn end_scope(&mut self, span: FreeSpan) {
         assert!(self.scope_depth > 0);
         self.scope_depth -= 1;
-
-        let pop = self.locals
-            // TODO this is neat and short but doesn't actually match that the elements are only
-            //      ever removed from the back of the Vec
-            .drain_filter(|loc| loc.depth > self.scope_depth)
-            .count();
-        (0..pop)
-            .for_each(|_| { emit!(self, Pop); });
+        while let Some(local) = self.locals.last() {
+            if local.depth <= self.scope_depth {
+                break
+            }
+            self.locals.pop();
+            self.chunk.emit(OpCode::Pop, span);
+        }
     }
 }
 
-impl<'ctx, 'src> Parser<'ctx, 'src> {
-    fn parse_precedence(&mut self, precedence: Precedence) {
-        self.enter("parse_precedence");
+impl<'src> Emitter<'src> {
+    fn declaration(&mut self, declaration: &Declaration) -> Result {
+        match declaration {
+            Declaration::Class(class_decl) => self.class_decl(class_decl),
+            Declaration::Fun(fun_decl) => self.fun_decl(fun_decl),
+            Declaration::Var(var_decl) => self.var_decl(var_decl),
+            Declaration::Statement(stmt) => self.statement(stmt),
+        }
+    }
 
-        self.advance();
-        let rule = parser_rule(self.previous.kind);
+    fn class_decl(&mut self, class_decl: &ClassDecl) -> Result {
+        Err(Error::NotYetImplemented {
+            feature: "class",
+            span: class_decl.class_tok.span,
+        })
+    }
 
-        let can_assign = precedence <= Precedence::ASSIGNMENT;
+    fn fun_decl(&mut self, fun_decl: &FunDecl) -> Result {
+        Err(Error::NotYetImplemented {
+            feature: "function",
+            span: fun_decl.fun_tok.span,
+        })
+    }
 
-        if let Some(prefix) = rule.prefix {
-            prefix(self, can_assign);
+    fn var_decl(&mut self, var_decl: &VarDecl) -> Result {
+        let span = var_decl.span();
+
+        if let Some(init) = &var_decl.init {
+            self.expression(&init.expr)?;
         } else {
-            self.error(self.previous.span, ParserErrorKind::ExpectedExpressionStart {
-                found: self.previous.kind,
-            });
-            self.leave();
-            return;
+            // empty initializer, set value to Nil
+            self.chunk.emit(OpCode::Nil, span);
         }
-
-        while precedence <= parser_rule(self.current.kind).precedence {
-            self.advance();
-            let rule = parser_rule(self.previous.kind);
-            if let Some(infix) = rule.infix {
-                infix(self, can_assign);
-            } else {
-                unreachable!();
-            }
-        }
-
-        if can_assign && self.current.kind == TokenKind::Equal {
-            self.error(self.previous.span, ParserErrorKind::InvalidAssignmentTarget);
-            self.leave();
-            return;
-        }
-
-        self.leave();
-    }
-
-    fn identifier_constant(&mut self, token: Token) -> ObjectRef<RoxString> {
-        assert_eq!(token.kind, TokenKind::Identifier);
-        let span = token.span.anchor(self.lex.source());
-        RoxString::new(span.as_str())
-    }
-
-    fn add_local(&mut self, name: Token) {
-        if self.locals.len() >= (u16::MAX as usize) {
-            self.error(name.span, ParserErrorKind::TooManyLocals);
-            return;
-        }
-        let tokslice = |token: Token| token.span.anchor(self.lex.source()).as_str();
-        let is_shadowing = self.locals.iter()
-            .rev()
-            .take_while(|loc| loc.depth == self.scope_depth)
-            .any(|loc| tokslice(loc.name) == tokslice(name));
-        if is_shadowing {
-            self.error(name.span, ParserErrorKind::Shadowing);
-            return;
-        }
-        self.locals.push(Local { name, depth: self.scope_depth });
-    }
-
-    fn resolve_local(&mut self, name: Token) -> Option<u16> {
-        let tokslice = |token: Token| token.span.anchor(self.lex.source()).as_str();
-        self.locals.iter()
-            .rposition(|loc| tokslice(loc.name) == tokslice(name))
-            .map(|index| index as u16)
-    }
-
-    fn expression(&mut self) {
-        self.enter("expression");
-
-        self.parse_precedence(Precedence::ASSIGNMENT);
-
-        self.leave();
-    }
-
-    fn block(&mut self) {
-        self.enter("block");
-        self.consume(TokenKind::LeftBrace);
-
-        while !matches!(self.current.kind, TokenKind::RightBrace | TokenKind::Eof) {
-            self.declaration();
-        }
-        self.consume(TokenKind::RightBrace);
-
-        self.leave();
-    }
-
-    fn var_declaration(&mut self) {
-        self.enter("var_declaration");
-
-        self.consume(TokenKind::Var);
-        self.consume(TokenKind::Identifier);
-
-        let name = self.previous;
-
-        if self.current.kind == TokenKind::Equal {
-            self.advance();
-            self.expression();
-        } else {
-            emit!(self, Nil);
-        }
-
-        self.consume(TokenKind::Semicolon);
 
         if self.scope_depth == 0 {
             // global variable
-            let name = self.identifier_constant(name);
-            emit!(self, DefGlobal { constant: Value::new_object(name) });
+            let name_key = self.identifier_constant(var_decl.ident);
+            self.chunk.emit(OpCode::DefGlobal { name_key }, span);
         } else {
             // local variable
-            self.add_local(name);
+            self.add_local(var_decl.ident)?;
         }
 
-        self.leave();
+        Ok(())
     }
 
-    fn expression_statement(&mut self) {
-        self.enter("expression_statement");
-
-        self.expression();
-        self.consume(TokenKind::Semicolon);
-        emit!(self, Pop);
-
-        self.leave();
-    }
-
-    fn if_statement(&mut self) {
-        self.enter("if_statement");
-
-        self.consume(TokenKind::If);
-        self.expression();
-
-        let then_jump = emit!(self, JumpIfFalse { offset: DUMMY });
-        emit!(self, Pop);
-        self.block();
-
-        let else_jump = emit!(self, Jump { offset: DUMMY });
-        self.patch_jump(then_jump);
-        emit!(self, Pop);
-
-        if self.current.kind == TokenKind::Else {
-            self.advance();
-            self.block();
+    fn statement(&mut self, stmt: &Statement) -> Result {
+        match stmt {
+            Statement::Expr(expr_stmt) => self.expr_stmt(expr_stmt),
+            Statement::For(for_stmt) => self.for_stmt(for_stmt),
+            Statement::If(if_stmt) => self.if_stmt(if_stmt),
+            Statement::Assert(assert_stmt) => self.assert_stmt(assert_stmt),
+            Statement::Print(print_stmt) => self.print_stmt(print_stmt),
+            Statement::Return(return_stmt) => self.return_stmt(return_stmt),
+            Statement::While(while_stmt) => self.while_stmt(while_stmt),
+            Statement::Block(block) => self.block(block),
         }
-        self.patch_jump(else_jump);
-
-        self.leave();
     }
 
-    fn assert_statement(&mut self) {
-        self.enter("assert_statement");
-
-        self.consume(TokenKind::Assert);
-        self.expression();
-        self.consume(TokenKind::Semicolon);
-        emit!(self, Assert);
-
-        self.leave();
+    fn expr_stmt(&mut self, expr_stmt: &ExprStmt) -> Result {
+        self.expression(&expr_stmt.expr)?;
+        self.chunk.emit(OpCode::Pop, expr_stmt.semicolon_tok.span);
+        Ok(())
     }
 
-    fn print_statement(&mut self) {
-        self.enter("print_statement");
-
-        self.consume(TokenKind::Print);
-        self.expression();
-        self.consume(TokenKind::Semicolon);
-        emit!(self, Print);
-
-        self.leave();
+    fn for_stmt(&mut self, _for_stmt: &ForStmt) -> Result {
+        todo!()
     }
 
-    fn while_statement(&mut self) {
-        self.enter("while_statement");
+    fn if_stmt(&mut self, if_stmt: &IfStmt) -> Result {
+        // if <pred>
+        self.expression(&if_stmt.pred)?;
+        let then_jump = self.chunk.emit(OpCode::JumpIfFalse { offset: DUMMY }, if_stmt.if_tok.span);
 
-        self.consume(TokenKind::While);
-        let loop_start = self.chunk.code().len();
-        self.expression();
+        // then
+        self.chunk.emit(OpCode::Pop, if_stmt.if_tok.span);
+        self.block(&if_stmt.body)?;
+        let else_jump = self.chunk.emit(OpCode::Jump { offset: DUMMY }, if_stmt.if_tok.span);
 
-        let exit_jump = emit!(self, JumpIfFalse { offset: DUMMY });
-        emit!(self, Pop);
-        self.block();
-
-        let loop_end = self.chunk.code().len() + 3; // +3 for the encoded `Loop` instruction
-        let offset = (loop_end - loop_start).try_into().expect("loop body too large");
-        emit!(self, Loop { offset });
-
-        self.patch_jump(exit_jump);
-        emit!(self, Pop);
-
-        self.leave();
-    }
-
-    fn synchronize(&mut self) {
-        self.enter("synchronize");
-
-        self.panicking = false;
-
-        while self.current.kind != TokenKind::Eof {
-            if self.previous.kind == TokenKind::Semicolon {
-                break;
-            }
-            if matches!(
-                self.current.kind,
-                TokenKind::Assert |
-                TokenKind::Class |
-                TokenKind::Fun |
-                TokenKind::Var |
-                TokenKind::For |
-                TokenKind::If |
-                TokenKind::While |
-                TokenKind::Print |
-                TokenKind::Return
-            ) {
-                break;
-            }
-
-            self.advance();
+        // else
+        self.chunk.patch_jump(then_jump);
+        self.chunk.emit(OpCode::Pop, if_stmt.if_tok.span);
+        if let Some(else_branch) = &if_stmt.else_branch {
+            self.block(&else_branch.body)?;
         }
 
-        self.leave();
+        // end
+        self.chunk.patch_jump(else_jump);
+
+        Ok(())
     }
 
-    fn declaration(&mut self) {
-        self.enter("declaration");
+    fn assert_stmt(&mut self, assert_stmt: &AssertStmt) -> Result {
+        self.expression(&assert_stmt.expr)?;
+        self.chunk.emit(OpCode::Assert, assert_stmt.span());
+        Ok(())
+    }
 
-        match self.current.kind {
-            TokenKind::Var => {
-                self.var_declaration();
+    fn print_stmt(&mut self, print_stmt: &PrintStmt) -> Result {
+        self.expression(&print_stmt.expr)?;
+        self.chunk.emit(OpCode::Print, print_stmt.span());
+        Ok(())
+    }
+
+    fn return_stmt(&mut self, _return_stmt: &ReturnStmt) -> Result {
+        todo!()
+    }
+
+    fn while_stmt(&mut self, while_stmt: &WhileStmt) -> Result {
+        let loop_start = self.chunk.loop_point();
+
+        // while <pred>
+        self.expression(&while_stmt.pred)?;
+        let span = FreeSpan::join(while_stmt.while_tok.span, while_stmt.pred.span());
+        let exit_jump = self.chunk.emit(OpCode::JumpIfFalse { offset: DUMMY }, span);
+
+        // then
+        self.chunk.emit(OpCode::Pop, while_stmt.body.left_brace_tok.span);
+        self.block(&while_stmt.body)?;
+        self.chunk.emit_loop(loop_start, while_stmt.body.right_brace_tok.span);
+
+        // end
+        self.chunk.patch_jump(exit_jump);
+        self.chunk.emit(OpCode::Pop, while_stmt.body.right_brace_tok.span);
+
+        Ok(())
+    }
+
+    fn block(&mut self, block: &Block) -> Result {
+        self.begin_scope();
+        for d in &block.body {
+            self.declaration(d)?;
+        }
+        self.end_scope(block.right_brace_tok.span);
+        Ok(())
+    }
+
+    fn expression(&mut self, expr: &Expression) -> Result {
+        match expr {
+            Expression::Binary(binary_expr) => self.binary_expr(binary_expr),
+            Expression::Unary(unary_expr) => self.unary_expr(unary_expr),
+            Expression::Field(field_expr) => self.field_expr(field_expr),
+            Expression::Group(group_expr) => self.expression(&*group_expr.expr),
+            Expression::Call(call_expr) => self.call_expr(call_expr),
+            Expression::Primary(primary_expr) => self.primary_expr(primary_expr),
+        }
+    }
+
+    fn binary_expr(&mut self, binary_expr: &BinaryExpr) -> Result {
+        let op = binary_expr.operator.kind;
+
+        if op == TokenKind::Equal {
+            // for now only allow assigning to an identifier
+            if let Expression::Primary(primary) = &*binary_expr.lhs {
+                if primary.token.kind == TokenKind::Identifier {
+                    let ident = Identifier { token: primary.token };
+                    self.expression(&binary_expr.rhs)?;
+                    if let Some(slot) = self.resolve_local(ident) {
+                        self.chunk.emit(OpCode::SetLocal { slot }, binary_expr.span());
+                    } else {
+                        let name_key = self.identifier_constant(ident);
+                        self.chunk.emit(OpCode::SetGlobal { name_key }, binary_expr.span());
+                    }
+                    return Ok(())
+                }
             }
-            _ => {
-                self.statement();
-            }
+            // TODO more complex assignment target
+            return Err(Error::InvalidAssignmentTarget {
+                span: binary_expr.lhs.span(),
+            });
         }
 
-        if self.panicking {
-            self.synchronize();
+        if op == TokenKind::Or {
+            return self.or(binary_expr);
         }
 
-        self.leave();
-    }
-
-    fn statement(&mut self) {
-        self.enter("statement");
-
-        match self.current.kind {
-            TokenKind::Assert => {
-                self.assert_statement();
-            }
-            TokenKind::Print => {
-                self.print_statement();
-            }
-            TokenKind::If => {
-                self.if_statement();
-            }
-            TokenKind::While => {
-                self.while_statement();
-            }
-            TokenKind::LeftBrace => {
-                self.begin_scope();
-                self.block();
-                self.end_scope();
-            }
-            _ => {
-                self.expression_statement();
-            }
+        if op == TokenKind::And {
+            return self.and(binary_expr);
         }
 
-        self.leave();
+        // normal binary operations with eagerly evaluated operands
+
+        self.expression(&binary_expr.lhs)?;
+        self.expression(&binary_expr.rhs)?;
+
+        let span = binary_expr.span();
+        match op {
+            TokenKind::BangEqual => {
+                self.chunk.emit(OpCode::Equal, span);
+                self.chunk.emit(OpCode::Not, span);
+            }
+            TokenKind::EqualEqual => {
+                self.chunk.emit(OpCode::Equal, span);
+            }
+            TokenKind::Greater => {
+                self.chunk.emit(OpCode::Greater, span);
+            }
+            TokenKind::GreaterEqual => {
+                self.chunk.emit(OpCode::Less, span);
+                self.chunk.emit(OpCode::Not, span);
+            }
+            TokenKind::Less => {
+                self.chunk.emit(OpCode::Less, span);
+            }
+            TokenKind::LessEqual => {
+                self.chunk.emit(OpCode::Greater, span);
+                self.chunk.emit(OpCode::Not, span);
+            }
+            TokenKind::Plus => {
+                self.chunk.emit(OpCode::Add, span);
+            }
+            TokenKind::Minus => {
+                self.chunk.emit(OpCode::Subtract, span);
+            }
+            TokenKind::Star => {
+                self.chunk.emit(OpCode::Multiply, span);
+            }
+            TokenKind::Slash => {
+                self.chunk.emit(OpCode::Divide, span);
+            }
+            _ => unreachable!()
+        }
+        Ok(())
     }
 
-    /// <expr> )
-    fn grouping(&mut self, _: bool) {
-        self.enter("grouping");
+    fn and(&mut self, binary_expr: &BinaryExpr) -> Result {
+        self.expression(&binary_expr.lhs)?;
 
-        self.expression();
-        self.consume(TokenKind::RightParen);
+        // if lhs is false, short-circuit, jump over rhs
+        // span both lhs and the `and` operator
+        let span = FreeSpan::join(binary_expr.lhs.span(), binary_expr.operator.span);
+        let end_jump = self.chunk.emit(OpCode::JumpIfFalse { offset: DUMMY }, span);
 
-        self.leave();
+        // pop lhs result, span of the `and` operator
+        self.chunk.emit(OpCode::Pop, binary_expr.operator.span);
+        self.expression(&binary_expr.rhs)?;
+
+        self.chunk.patch_jump(end_jump);
+        Ok(())
     }
 
-    /// <op> <expr>
-    fn unary(&mut self, _: bool) {
-        self.enter("unary");
+    fn or(&mut self, binary_expr: &BinaryExpr) -> Result {
+        self.expression(&binary_expr.lhs)?;
 
-        let operator = self.previous.kind;
-        self.parse_precedence(Precedence::UNARY);
-        match operator {
-            TokenKind::Bang     => emit!(self, Not),
-            TokenKind::Minus    => emit!(self, Negate),
-            _ => unreachable!(),
-        };
+        // if lhs is true, short-circuit, jump over rhs
+        // span both lhs and the `or` operator
+        let span = FreeSpan::join(binary_expr.lhs.span(), binary_expr.operator.span);
+        let end_jump = self.chunk.emit(OpCode::JumpIfTrue { offset: DUMMY }, span);
 
-        self.leave();
+        // pop lhs result, span of the `or` operator
+        self.chunk.emit(OpCode::Pop, binary_expr.operator.span);
+        self.expression(&binary_expr.rhs)?;
+
+        self.chunk.patch_jump(end_jump);
+        Ok(())
     }
 
-    /// <op> <expr>
-    fn binary(&mut self, _: bool) {
-        self.enter("binary");
+    fn unary_expr(&mut self, unary_expr: &UnaryExpr) -> Result {
+        let op = unary_expr.operator.kind;
 
-        let operator = self.previous.kind;
-        let rule = parser_rule(operator);
-        self.parse_precedence(rule.precedence + 1);
+        self.expression(&unary_expr.expr)?;
 
-        match operator {
-            TokenKind::BangEqual    => emit!(self, Equal, Not),
-            TokenKind::EqualEqual   => emit!(self, Equal),
-            TokenKind::Greater      => emit!(self, Greater),
-            TokenKind::GreaterEqual => emit!(self, Less, Not),
-            TokenKind::Less         => emit!(self, Less),
-            TokenKind::LessEqual    => emit!(self, Greater, Not),
-            TokenKind::Plus         => emit!(self, Add),
-            TokenKind::Minus        => emit!(self, Subtract),
-            TokenKind::Star         => emit!(self, Multiply),
-            TokenKind::Slash        => emit!(self, Divide),
-            _ => unreachable!(),
-        };
+        let span = unary_expr.span();
+        match op {
+            TokenKind::Bang => {
+                self.chunk.emit(OpCode::Not, span);
+            }
+            TokenKind::Minus => {
+                self.chunk.emit(OpCode::Negate, span);
+            }
+            _ => unreachable!()
+        }
 
-        self.leave();
+        Ok(())
     }
 
-    /// and <expr>
-    fn and(&mut self, _: bool) {
-        self.enter("and");
-
-        let end_jump = emit!(self, JumpIfFalse { offset: DUMMY });
-        emit!(self, Pop);
-        self.parse_precedence(Precedence::AND);
-        self.patch_jump(end_jump);
-
-        self.leave();
+    fn field_expr(&mut self, _field_expr: &FieldExpr) -> Result {
+        todo!()
     }
 
-    /// or <expr>
-    fn or(&mut self, _: bool) {
-        self.enter("or");
-
-        let end_jump = emit!(self, JumpIfTrue { offset: DUMMY });
-        emit!(self, Pop);
-        self.parse_precedence(Precedence::OR);
-        self.patch_jump(end_jump);
-
-        self.leave();
+    fn call_expr(&mut self, _call_expr: &CallExpr) -> Result {
+        todo!()
     }
 
-    /// <number>
-    fn number(&mut self, _: bool) {
-        self.enter("number");
+    fn primary_expr(&mut self, primary_expr: &PrimaryExpr) -> Result {
+        let op = primary_expr.token.kind;
+        let span = primary_expr.span();
 
-        let span = self.previous.span.anchor(self.lex.source());
-        let slice = span.as_str();
+        match op {
+            TokenKind::Nil => {
+                self.chunk.emit(OpCode::Nil, span);
+            }
+            TokenKind::True => {
+                self.chunk.emit(OpCode::True, span);
+            }
+            TokenKind::False => {
+                self.chunk.emit(OpCode::False, span);
+            }
+            TokenKind::This => {
+                todo!()
+            }
+            TokenKind::Super => {
+                todo!()
+            }
+            TokenKind::Number => {
+                self.number(primary_expr)?;
+            }
+            TokenKind::String => {
+                self.string(primary_expr)?;
+            }
+            TokenKind::Identifier => {
+                self.identifier(primary_expr)?;
+            }
+            _ => unreachable!()
+        }
+        Ok(())
+    }
+
+    fn number(&mut self, primary: &PrimaryExpr) -> Result {
+        let span = primary.token.span;
+        let slice = span.anchor(self.source).as_str();
         match slice.parse() {
             Ok(float) => {
-                emit!(self, Constant { constant: Value::new_number(float) });
+                let value = Value::new_number(float);
+                let key = self.chunk.insert_constant(value);
+                self.chunk.emit(OpCode::Constant { key }, span);
             }
             Err(cause) => {
-                let token = slice.to_owned();
-                self.error(self.previous.span, ParserErrorKind::InvalidNumberLiteral {
-                    token,
-                    cause,
-                });
+                return Err(Error::InvalidNumberLiteral { cause, span });
             }
         }
-
-        self.leave();
+        Ok(())
     }
 
-    /// " <string> "
-    fn string(&mut self, _: bool) {
-        self.enter("string");
-
-        let span = self.previous.span.anchor(self.lex.source());
-        let slice = span.as_str()
+    fn string(&mut self, primary: &PrimaryExpr) -> Result {
+        let span = primary.token.span;
+        let slice = span.anchor(self.source).as_str()
             .strip_prefix('"').unwrap()
             .strip_suffix('"').unwrap();
-        let string = RoxString::new(slice);
-
-        emit!(self, Constant { constant: Value::new_object(string) });
-
-        self.leave();
+        let string = ObjString::new(slice);
+        let value = Value::new_object(string);
+        let key = self.chunk.insert_constant(value);
+        self.chunk.emit(OpCode::Constant { key }, span);
+        Ok(())
     }
 
-    /// <ident>
-    fn variable(&mut self, can_assign: bool) {
-        self.enter("variable");
-
-        if let Some(index) = self.resolve_local(self.previous) {
-            if can_assign && self.current.kind == TokenKind::Equal {
-                self.advance();
-                self.expression();
-                emit!(self, SetLocal { index });
-            } else {
-                emit!(self, GetLocal { index });
-            }
+    fn identifier(&mut self, primary: &PrimaryExpr) -> Result {
+        let ident = Identifier { token: primary.token };
+        if let Some(slot) = self.resolve_local(ident) {
+            self.chunk.emit(OpCode::GetLocal { slot }, ident.span());
         } else {
-            let name = self.identifier_constant(self.previous);
-            let name = Value::new_object(name);
-
-            if can_assign && self.current.kind == TokenKind::Equal {
-                self.advance();
-                self.expression();
-                emit!(self, SetGlobal { constant: name });
-            } else {
-                emit!(self, GetGlobal { constant: name });
-            }
-        };
-
-        self.leave();
-    }
-
-    /// nil | true | false
-    fn literal(&mut self, _: bool) {
-        self.enter("literal");
-
-        match self.previous.kind {
-            TokenKind::Nil      => emit!(self, Nil),
-            TokenKind::True     => emit!(self, True),
-            TokenKind::False    => emit!(self, False),
-            _ => unreachable!(),
-        };
-
-        self.leave();
-    }
-}
-
-mod precedence {
-    use std::ops::Add;
-
-    #[derive(PartialEq, Eq, PartialOrd, Ord)]
-    pub struct Precedence(u8);
-
-    /// Helper macro for defining Precedence `const`s with ascending values
-    macro_rules! precedence {
-        ( $( $ops:ident ),+ $(,)? ) => {
-            impl Precedence {
-                precedence!( @(0u8) $($ops)* );
-            }
-        };
-        ( @($n:expr) ) => {};
-        ( @($n:expr) $op:ident $( $ops:ident )* ) => {
-            pub const $op: Precedence = Precedence($n);
-            precedence!( @($n + 1u8) $($ops)* );
-        };
-    }
-
-    impl Add<u8> for Precedence {
-        type Output = Precedence;
-
-        fn add(self, rhs: u8) -> Self::Output {
-            Precedence(self.0 + rhs)
+            let name_key = self.identifier_constant(ident);
+            self.chunk.emit(OpCode::GetGlobal { name_key }, ident.span());
         }
-    }
-
-    precedence! {
-        NONE,
-        ASSIGNMENT,
-        OR,
-        AND,
-        EQUALITY,
-        COMPARISON,
-        TERM,
-        FACTOR,
-        UNARY,
-        _CALL,
-        _PRIMARY,
-    }
-}
-use precedence::Precedence;
-
-struct ParserRule<'ctx, 'src> {
-    prefix: Option<fn(&mut Parser<'ctx, 'src>, bool)>,
-    infix: Option<fn(&mut Parser<'ctx, 'src>, bool)>,
-    precedence: Precedence,
-}
-
-fn parser_rule<'ctx, 'src>(kind: TokenKind) -> ParserRule<'ctx, 'src> {
-    macro_rules! parser_rules {
-        ( $( $kind:ident $prefix:tt $infix:tt $precedence:tt ),* $(,)? ) => {
-            match kind {
-                $(
-                    TokenKind::$kind => ParserRule {
-                        prefix: parser_rules!( @fn $prefix ),
-                        infix: parser_rules!( @fn $infix ),
-                        precedence: parser_rules!( @prec $precedence ),
-                    },
-                )*
-            }
-        };
-
-        ( @fn _ ) => { None };
-        ( @fn $fn:ident ) => { Some(Parser::$fn) };
-
-        ( @prec _ ) => { Precedence::NONE };
-        ( @prec $prec:ident ) => { Precedence::$prec };
-    }
-
-    parser_rules! {
-        LeftParen       grouping    _           _,
-        RightParen      _           _           _,
-        LeftBrace       _           _           _,
-        RightBrace      _           _           _,
-        Comma           _           _           _,
-        Dot             _           _           _,
-        Minus           unary       binary      TERM,
-        Plus            _           binary      TERM,
-        Semicolon       _           _           _,
-        Slash           _           binary      FACTOR,
-        Star            _           binary      FACTOR,
-        Bang            unary       _           _,
-        BangEqual       _           _           _,
-        Equal           _           _           _,
-        EqualEqual      _           binary      EQUALITY,
-        Greater         _           binary      COMPARISON,
-        GreaterEqual    _           binary      COMPARISON,
-        Less            _           binary      COMPARISON,
-        LessEqual       _           binary      COMPARISON,
-        Identifier      variable    _           _,
-        String          string      _           _,
-        Number          number      _           _,
-        And             _           and         AND,
-        Assert          _           _           _,
-        Class           _           _           _,
-        Else            _           _           _,
-        False           literal     _           _,
-        For             _           _           _,
-        Fun             _           _           _,
-        If              _           _           _,
-        Nil             literal     _           _,
-        Or              _           or          OR,
-        Print           _           _           _,
-        Return          _           _           _,
-        Super           _           _           _,
-        This            _           _           _,
-        True            literal     _           _,
-        Var             _           _           _,
-        While           _           _           _,
-        Error           _           _           _,
-        Eof             _           _           _,
+        Ok(())
     }
 }

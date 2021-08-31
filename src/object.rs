@@ -6,6 +6,7 @@ use std::ops::Deref;
 use std::ptr;
 use std::sync::atomic::{AtomicPtr, Ordering};
 
+
 /// Helper macro for unsafe initialization of Object types
 macro_rules! init_object {
     ( $self_ty:ident {
@@ -43,6 +44,7 @@ macro_rules! init_object {
         }
     }};
 }
+
 
 /// Helper macro for mostly safely implementing the unsafe Object trait
 ///
@@ -98,6 +100,7 @@ impl Alloc {
 
 static GLOBAL_ALLOC: Alloc = Alloc::new();
 
+
 /// # Safety
 /// `Self` and the trait implementation must uphold the following invariants.
 ///
@@ -136,6 +139,7 @@ impl<O: Object> Clone for ObjectRef<O> {
     }
 }
 impl<O: Object> Copy for ObjectRef<O> {}
+
 
 pub struct ObjectVtable {
     /// Must be the result of calling `std::any::TypeId::of::<Self>()` in [`Object`] trait impl.

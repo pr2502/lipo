@@ -25,25 +25,44 @@ pub struct Chunk {
     spans: Vec<FreeSpan>,
 }
 
-pub struct DebugChunk<'code, 'src> {
-    source: &'src str,
-    chunk: &'code Chunk,
+impl Chunk {
+    pub fn opcodes(&self) -> impl Iterator<Item = OpCode> + '_ {
+        let mut code = self.code.as_slice();
+        iter::from_fn(move || {
+            let (opcode, rest) = OpCode::decode(code)?;
+            code = rest;
+            Some(opcode)
+        })
+    }
+
+    pub fn code(&self) -> &[u8] {
+        &self.code
+    }
+}
+
+
+#[derive(Clone, Copy, Debug)]
+pub struct PatchPlace {
+    position: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct LoopPoint {
+    position: usize,
 }
 
 impl Chunk {
-    pub fn write(&mut self, opcode: OpCode, span: FreeSpan) -> usize {
-        let before = self.code.len();
+    pub fn emit(&mut self, opcode: OpCode, span: FreeSpan) -> Option<PatchPlace> {
+        let position = self.code.len();
         opcode.encode(&mut self.code);
-        let bytes = self.code.len() - before;
-        for _ in 0..bytes {
-            // FIXME this is an extremely wasteful way of storing the debug information, make
-            // something a bit better
-            self.spans.push(span);
-        }
-        before
+        self.spans.push(span);
+        matches!(opcode, OpCode::Jump { .. } | OpCode::JumpIfTrue { .. } | OpCode::JumpIfFalse { .. })
+            .then(|| PatchPlace { position })
     }
 
-    pub fn patch_jump(&mut self, position: usize) {
+    pub fn patch_jump(&mut self, place: Option<PatchPlace>) {
+        let PatchPlace { position } = place.expect("tried to patch an unpatchable instruction");
+
         // Check that the position really points to a placeholder JUMP* instruction
         assert_matches!(
             self.code[position..][..3],
@@ -67,30 +86,76 @@ impl Chunk {
         self.code[position+2] = y;
     }
 
-    pub fn insert_constant(&mut self, value: Value) -> u16 {
-        let (index, _) = self.constants.insert_full(value);
-        index.try_into().expect("constant pool size limit reached")
+    pub fn loop_point(&self) -> LoopPoint {
+        LoopPoint {
+            position: self.code.len(),
+        }
     }
 
-    pub fn get_constant(&self, index: u16) -> Option<Value> {
+    pub fn emit_loop(&mut self, loop_point: LoopPoint, span: FreeSpan) {
+        let LoopPoint { position } = loop_point;
+
+        // LOOP offset is subtracted after the IP has been advanced past it.
+        // Add 3 for the encoded size.
+        let old_ip = self.code.len() + 3;
+
+        // We want to set the IP back to where `loop_point` has been created.
+        let new_ip = position;
+
+        // We want `new_ip = old_ip - offset`.
+        let offset = (old_ip - new_ip).try_into()
+            .expect("loop body too large");
+
+        self.emit(OpCode::Loop { offset }, span);
+    }
+}
+
+
+#[derive(Clone, Copy, PartialEq)]
+pub struct ConstKey {
+    index: u16,
+}
+
+impl ConstKey {
+    pub fn to_le_bytes(self) -> [u8; 2] {
+        self.index.to_le_bytes()
+    }
+
+    pub fn from_le_bytes(bytes: [u8; 2]) -> ConstKey {
+        ConstKey {
+            index: u16::from_le_bytes(bytes),
+        }
+    }
+}
+
+impl Debug for ConstKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "#{}", self.index)
+    }
+}
+
+impl Chunk {
+    pub fn insert_constant(&mut self, value: Value) -> ConstKey {
+        let (index, _) = self.constants.insert_full(value);
+        let index = index.try_into().expect("constant pool size limit reached");
+        ConstKey { index }
+    }
+
+    pub fn get_constant(&self, key: ConstKey) -> Option<Value> {
+        let ConstKey { index } = key;
         self.constants.get_index(index as usize).copied()
     }
+}
 
-    pub fn opcodes(&self) -> impl Iterator<Item = OpCode> + '_ {
-        let mut code = self.code.as_slice();
-        iter::from_fn(move || {
-            let (opcode, rest) = OpCode::decode(code)?;
-            code = rest;
-            Some(opcode)
-        })
-    }
 
+pub struct DebugChunk<'code, 'src> {
+    source: &'src str,
+    chunk: &'code Chunk,
+}
+
+impl Chunk {
     pub fn debug<'src>(&self, source: &'src str) -> DebugChunk<'_, 'src> {
         DebugChunk { chunk: self, source }
-    }
-
-    pub fn code(&self) -> &[u8] {
-        &self.code
     }
 }
 
@@ -103,6 +168,9 @@ impl<'code, 'src> DebugChunk<'code, 'src> {
 
 impl<'code, 'src> Debug for DebugChunk<'code, 'src> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        const RED: &str = "\x1B[31m";
+        const RESET: &str = "\x1B[m";
+
         let mut prev_line = 0;
         writeln!(f, "Chunk {{")?;
         for (opcode, span) in self.chunk.opcodes().zip(self.spans()) {
@@ -113,27 +181,12 @@ impl<'code, 'src> Debug for DebugChunk<'code, 'src> {
             } else {
                 write!(f, "   |  ")?;
             };
-            write!(f, "  {:?}", opcode)?;
-            match opcode {
-                OpCode::Constant { index } => {
-                    if let Some(value) = self.chunk.get_constant(index) {
-                        write!(f, "\t; {:?}", value)?;
-                    } else {
-                        write!(f, "\t; missing constant index={}", index)?;
-                    }
-                }
-                OpCode::DefGlobal { index } |
-                OpCode::GetGlobal { index } |
-                OpCode::SetGlobal { index } => {
-                    if let Some(value) = self.chunk.get_constant(index) {
-                        write!(f, "\t; var {:?}", value)?;
-                    } else {
-                        write!(f, "\t; missing constant index={}", index)?;
-                    }
-                }
-                _ => {}
+            let opcodefmt = format!("{:?}", opcode);
+            if let Some((before, span, after)) = span.line_parts() {
+                writeln!(f, "  {:<32} |  {}{}{}{}{}", opcodefmt, before, RED, span, RESET, after)?;
+            } else {
+                writeln!(f, "  {    } |", opcodefmt)?;
             }
-            writeln!(f)?;
         }
         writeln!(f, "}}")
     }

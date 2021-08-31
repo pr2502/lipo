@@ -1,3 +1,5 @@
+use crate::chunk::ConstKey;
+
 
 /// Helper macro for defining u8 `const`s with unique values
 macro_rules! opcodes {
@@ -16,16 +18,16 @@ macro_rules! opcodes {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum OpCode {
-    Constant { index: u16 }, // indexes into the chunk constant pool
+    Constant { key: ConstKey },
     Nil,
     True,
     False,
     Pop,
-    GetLocal { index: u16 }, // indexes into the stack
-    SetLocal { index: u16 }, // indexes into the stack
-    GetGlobal { index: u16 }, // indexes into the chunk constant pool
-    DefGlobal { index: u16 }, // indexes into the chunk constant pool
-    SetGlobal { index: u16 }, // indexes into the chunk constant pool
+    GetLocal { slot: u16 },
+    SetLocal { slot: u16 },
+    GetGlobal { name_key: ConstKey },
+    DefGlobal { name_key: ConstKey },
+    SetGlobal { name_key: ConstKey },
     Equal,
     Greater,
     Less,
@@ -77,26 +79,26 @@ impl OpCode {
     pub fn decode(code: &[u8]) -> Option<(OpCode, &[u8])> {
         Some(match code {
             [Self::CONSTANT, x, y, rest @ .. ]  => {
-                (OpCode::Constant { index: u16::from_le_bytes([*x, *y]) }, rest)
+                (OpCode::Constant { key: ConstKey::from_le_bytes([*x, *y]) }, rest)
             }
             [Self::NIL, rest @ .. ]       => (OpCode::Nil, rest),
             [Self::TRUE, rest @ .. ]      => (OpCode::True, rest),
             [Self::FALSE, rest @ .. ]     => (OpCode::False, rest),
             [Self::POP, rest @ .. ]       => (OpCode::Pop, rest),
             [Self::GET_LOCAL, x, y, rest @ .. ] => {
-                (OpCode::GetLocal { index: u16::from_le_bytes([*x, *y]) }, rest)
+                (OpCode::GetLocal { slot: u16::from_le_bytes([*x, *y]) }, rest)
             }
             [Self::SET_LOCAL, x, y, rest @ .. ] => {
-                (OpCode::SetLocal { index: u16::from_le_bytes([*x, *y]) }, rest)
+                (OpCode::SetLocal { slot: u16::from_le_bytes([*x, *y]) }, rest)
             }
             [Self::GET_GLOBAL, x, y, rest @ .. ] => {
-                (OpCode::GetGlobal { index: u16::from_le_bytes([*x, *y]) }, rest)
+                (OpCode::GetGlobal { name_key: ConstKey::from_le_bytes([*x, *y]) }, rest)
             }
             [Self::DEF_GLOBAL, x, y, rest @ .. ] => {
-                (OpCode::DefGlobal { index: u16::from_le_bytes([*x, *y]) }, rest)
+                (OpCode::DefGlobal { name_key: ConstKey::from_le_bytes([*x, *y]) }, rest)
             }
             [Self::SET_GLOBAL, x, y, rest @ .. ] => {
-                (OpCode::SetGlobal { index: u16::from_le_bytes([*x, *y]) }, rest)
+                (OpCode::SetGlobal { name_key: ConstKey::from_le_bytes([*x, *y]) }, rest)
             }
             [Self::EQUAL, rest @ .. ]     => (OpCode::Equal, rest),
             [Self::GREATER, rest @ .. ]   => (OpCode::Greater, rest),
@@ -129,12 +131,14 @@ impl OpCode {
     pub fn encode(self, code: &mut Vec<u8>) {
         code.push(self.tag());
         match self {
-            OpCode::Constant { index: u16_arg } |
-            OpCode::GetLocal { index: u16_arg } |
-            OpCode::SetLocal { index: u16_arg } |
-            OpCode::GetGlobal { index: u16_arg } |
-            OpCode::DefGlobal { index: u16_arg } |
-            OpCode::SetGlobal { index: u16_arg } |
+            OpCode::Constant { key: key_arg } |
+            OpCode::GetGlobal { name_key: key_arg } |
+            OpCode::DefGlobal { name_key: key_arg } |
+            OpCode::SetGlobal { name_key: key_arg } => {
+                code.extend(key_arg.to_le_bytes());
+            }
+            OpCode::GetLocal { slot: u16_arg } |
+            OpCode::SetLocal { slot: u16_arg } |
             OpCode::Jump { offset: u16_arg } |
             OpCode::JumpIfTrue { offset: u16_arg } |
             OpCode::JumpIfFalse { offset: u16_arg } |

@@ -1,5 +1,4 @@
-use crate::chunk::Chunk;
-use crate::default;
+use crate::chunk::{Chunk, ConstKey};
 use crate::object::string::String as RoxString;
 use crate::object::ObjectRef;
 use crate::opcode::OpCode;
@@ -7,6 +6,7 @@ use crate::span::Span;
 use crate::value::Value;
 use fxhash::FxHashMap as HashMap;
 use log::{debug, trace};
+
 
 pub struct VM<'code, 'src> {
     source: &'src str,
@@ -28,8 +28,8 @@ pub enum VmError<'src> {
 #[derive(Debug)]
 pub enum CodeError {
     UnexpectedEndOfCode,
-    InvalidConstantIndex(u16),
-    InvalidStackIndex(u16),
+    InvalidConstantKey(ConstKey),
+    InvalidStackSlot(u16),
     PopEmptyStack,
 }
 
@@ -46,8 +46,8 @@ impl<'code, 'src> VM<'code, 'src> {
             source,
             chunk,
             ip: chunk.code(),
-            stack: default(),
-            globals: default(),
+            stack: Vec::default(),
+            globals: HashMap::default(),
         }
     }
 
@@ -67,10 +67,23 @@ impl<'code, 'src> VM<'code, 'src> {
     }
 
     fn get_span(&self, offset: usize) -> Span<'src> {
+        let code = self.chunk.code();
+        let mut scan = code;
+        let mut span_idx = 0;
+        loop {
+            let scan_offset = (scan.as_ptr() as usize) - (code.as_ptr() as usize);
+            if scan_offset == offset {
+                break span_idx;
+            }
+            let (_, next) = OpCode::decode(scan).expect("invalid code");
+            scan = next;
+            span_idx += 1;
+        };
+
         self.chunk
             .debug(self.source)
             .spans()
-            .nth(offset)
+            .nth(span_idx)
             .expect("missing span information")
     }
 
@@ -85,16 +98,16 @@ impl<'code, 'src> VM<'code, 'src> {
             trace!("decode {:04}: {:?}", offset, opcode);
             self.ip = next;
             match opcode {
-                OpCode::Constant { index } => self.op_constant(index)?,
+                OpCode::Constant { key } => self.op_constant(key)?,
                 OpCode::Nil => self.op_nil()?,
                 OpCode::True => self.op_true()?,
                 OpCode::False => self.op_false()?,
                 OpCode::Pop => self.op_pop()?,
-                OpCode::GetLocal { index } => self.op_get_local(index)?,
-                OpCode::SetLocal { index } => self.op_set_local(index)?,
-                OpCode::GetGlobal { index } => self.op_get_global(index, offset)?,
-                OpCode::DefGlobal { index } => self.op_def_global(index)?,
-                OpCode::SetGlobal { index } => self.op_set_global(index, offset)?,
+                OpCode::GetLocal { slot } => self.op_get_local(slot)?,
+                OpCode::SetLocal { slot } => self.op_set_local(slot)?,
+                OpCode::GetGlobal { name_key } => self.op_get_global(name_key, offset)?,
+                OpCode::DefGlobal { name_key } => self.op_def_global(name_key)?,
+                OpCode::SetGlobal { name_key } => self.op_set_global(name_key, offset)?,
                 OpCode::Equal => self.op_equal()?,
                 OpCode::Greater => self.op_greater(offset)?,
                 OpCode::Less => self.op_less(offset)?,
@@ -123,9 +136,9 @@ impl<'code, 'src> VM<'code, 'src> {
     ////////////////////////////////////////
     // instruction implementation
 
-    fn op_constant(&mut self, index: u16) -> Result<(), VmError<'src>> {
-        let constant = self.chunk.get_constant(index)
-            .ok_or(VmError::CompileError(CodeError::InvalidConstantIndex(index)))?;
+    fn op_constant(&mut self, key: ConstKey) -> Result<(), VmError<'src>> {
+        let constant = self.chunk.get_constant(key)
+            .ok_or(VmError::CompileError(CodeError::InvalidConstantKey(key)))?;
         trace!("constant {:?}", &constant);
         self.push(constant);
         Ok(())
@@ -151,25 +164,25 @@ impl<'code, 'src> VM<'code, 'src> {
         Ok(())
     }
 
-    fn op_get_local(&mut self, index: u16) -> Result<(), VmError<'src>> {
-        let value = *self.stack.get(index as usize)
-            .ok_or(VmError::CompileError(CodeError::InvalidStackIndex(index)))?;
+    fn op_get_local(&mut self, slot: u16) -> Result<(), VmError<'src>> {
+        let value = *self.stack.get(slot as usize)
+            .ok_or(VmError::CompileError(CodeError::InvalidStackSlot(slot)))?;
         self.push(value);
         Ok(())
     }
 
-    fn op_set_local(&mut self, index: u16) -> Result<(), VmError<'src>> {
+    fn op_set_local(&mut self, slot: u16) -> Result<(), VmError<'src>> {
         let value = self.peek()?;
-        let slot = self.stack.get_mut(index as usize)
-            .ok_or(VmError::CompileError(CodeError::InvalidStackIndex(index)))?;
+        let slot = self.stack.get_mut(slot as usize)
+            .ok_or(VmError::CompileError(CodeError::InvalidStackSlot(slot)))?;
         *slot = value;
         Ok(())
     }
 
-    fn op_get_global(&mut self, index: u16, offset: usize) -> Result<(), VmError<'src>> {
-        let name = self.chunk.get_constant(index)
+    fn op_get_global(&mut self, key: ConstKey, offset: usize) -> Result<(), VmError<'src>> {
+        let name = self.chunk.get_constant(key)
             .and_then(Value::downcast::<RoxString>)
-            .ok_or(VmError::CompileError(CodeError::InvalidConstantIndex(index)))?;
+            .ok_or(VmError::CompileError(CodeError::InvalidConstantKey(key)))?;
         let value = *self.globals.get(&name)
             .ok_or_else(|| VmError::RuntimeError {
                 span: self.get_span(offset),
@@ -179,20 +192,20 @@ impl<'code, 'src> VM<'code, 'src> {
         Ok(())
     }
 
-    fn op_def_global(&mut self, index: u16) -> Result<(), VmError<'src>> {
-        let name = self.chunk.get_constant(index)
+    fn op_def_global(&mut self, key: ConstKey) -> Result<(), VmError<'src>> {
+        let name = self.chunk.get_constant(key)
             .and_then(Value::downcast::<RoxString>)
-            .ok_or(VmError::CompileError(CodeError::InvalidConstantIndex(index)))?;
+            .ok_or(VmError::CompileError(CodeError::InvalidConstantKey(key)))?;
         let value = self.pop()?;
         trace!("define global variable name {:?}", name);
         self.globals.insert(name, value);
         Ok(())
     }
 
-    fn op_set_global(&mut self, index: u16, offset: usize) -> Result<(), VmError<'src>> {
-        let name = self.chunk.get_constant(index)
+    fn op_set_global(&mut self, key: ConstKey, offset: usize) -> Result<(), VmError<'src>> {
+        let name = self.chunk.get_constant(key)
             .and_then(Value::downcast::<RoxString>)
-            .ok_or(VmError::CompileError(CodeError::InvalidConstantIndex(index)))?;
+            .ok_or(VmError::CompileError(CodeError::InvalidConstantKey(key)))?;
         let value = self.peek()?;
         trace!("define global variable name {:?}", name);
         if self.globals.insert(name, value).is_none() {
