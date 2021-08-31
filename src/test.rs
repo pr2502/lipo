@@ -1,4 +1,5 @@
 use crate::compiler::compile;
+use crate::fmt::SourceDebug;
 use crate::parser::parse;
 use crate::vm::{RuntimeErrorKind, VmError, VM};
 
@@ -16,14 +17,13 @@ macro_rules! run {
         init();
 
         let src = $code;
+        println!("{}", src);
 
         let ast = parse(src).unwrap();
+        println!("{:#?}", ast.as_slice().wrap(src));
+
         let chunk = compile(src, ast).unwrap();
-        {
-            let chunk = chunk.debug(src);
-            println!("{}", src);
-            println!("{:?}", chunk);
-        }
+        println!("{:?}", chunk.wrap(src));
 
         let vm = VM::new(&chunk, src);
         let res = vm.run();
@@ -63,8 +63,8 @@ fn print() {
 #[test]
 fn global() {
     run!("
-        var a;
-        var b = 2;
+        let a;
+        let b = 2;
         print b;
         b = 3;
         print b;
@@ -74,9 +74,9 @@ fn global() {
 #[test]
 fn locals() {
     run!("{
-        var a = 1;
+        let a = 1;
         {
-            var a = a;
+            let a = a;
             print a;
         }
     }");
@@ -97,7 +97,7 @@ fn ifs() {
 #[test]
 fn ifelse() {
     run!("
-        var a;
+        let mut a;
         if nil {
             assert false;
         } else {
@@ -106,7 +106,7 @@ fn ifelse() {
         assert a;
     ");
     run!("
-        var b;
+        let b;
         if true {
             b = true;
         } else {
@@ -125,7 +125,7 @@ fn andor() {
 #[test]
 fn whileloop() {
     run!("{
-        var a = 10;
+        let mut a = 10;
         while a > 0 {
             print a;
             a = a - 1;

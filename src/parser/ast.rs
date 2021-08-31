@@ -14,20 +14,20 @@ mod fmt;
 mod spanned;
 
 
-pub type Program = Vec<Declaration>;
+pub type Program = Vec<Item>;
 
-// Declarations
+// Items
 
-pub enum Declaration {
-    Class(ClassDecl),
-    Fun(FunDecl),
-    Var(VarDecl),
+pub enum Item {
+    Class(ClassItem),
+    Fun(FunItem),
+    Let(LetItem),
     Statement(Statement),
 }
 
-pub struct ClassDecl {
+pub struct ClassItem {
     pub class_tok: Token,
-    pub ident: Identifier,
+    pub name: Identifier,
     pub inherit: Option<ClassInherit>,
     pub open_brace: Token,
     pub methods: Vec<Function>,
@@ -36,10 +36,10 @@ pub struct ClassDecl {
 
 pub struct ClassInherit {
     pub less_tok: Token,
-    pub ident: Identifier,
+    pub name: Identifier,
 }
 
-pub struct FunDecl {
+pub struct FunItem {
     pub fun_tok: Token,
     pub function: Function,
 }
@@ -51,14 +51,15 @@ pub struct Function {
     pub body: Block,
 }
 
-pub struct VarDecl {
-    pub var_tok: Token,
-    pub ident: Identifier,
-    pub init: Option<VarInit>,
+pub struct LetItem {
+    pub let_tok: Token,
+    pub mut_tok: Option<Token>,
+    pub name: Identifier,
+    pub init: Option<LetInit>,
     pub semicolon_tok: Token,
 }
 
-pub struct VarInit {
+pub struct LetInit {
     pub equal_tok: Token,
     pub expr: Expression,
 }
@@ -83,21 +84,10 @@ pub struct ExprStmt {
 
 pub struct ForStmt {
     pub for_tok: Token,
-    pub left_paren_tok: Token,
-    pub init: ForInit,
-    pub cond: Option<Expression>,
-    pub semicolon_tok: Token,
-    pub incr: Option<Expression>,
-    pub right_paren_tok: Token,
-    pub body: Box<Statement>,
-}
-
-pub enum ForInit {
-    Var(VarDecl),
-    Stmt(ExprStmt),
-    Empty {
-        semicolon_tok: Token,
-    }
+    pub elem: Identifier,
+    pub in_tok: Token,
+    pub iter: Expression,
+    pub body: Block,
 }
 
 pub struct IfStmt {
@@ -138,7 +128,7 @@ pub struct WhileStmt {
 
 pub struct Block {
     pub left_brace_tok: Token,
-    pub body: Vec<Declaration>,
+    pub body: Vec<Item>,
     pub right_brace_tok: Token,
 }
 
@@ -217,7 +207,7 @@ pub struct Delimited<Delim, Item> {
 
 /// Wrapper around Token
 ///
-/// Parser ensures `self.ident_tok.kind == TokenKind::Ident`.
+/// Parser ensures `self.token.kind == TokenKind::Ident`.
 #[derive(Clone, Copy)]
 pub struct Identifier {
     pub token: Token,

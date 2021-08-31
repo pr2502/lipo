@@ -75,41 +75,45 @@ impl<'src> Parser<'src> {
     fn program(&mut self) -> Result<Program> {
         let mut program = Vec::new();
         while self.peek_kind() != TokenKind::Eof {
-            let declaration = self.declaration()?;
-            program.push(declaration);
+            let item = self.item()?;
+            program.push(item);
         }
         Ok(program)
     }
 
-    fn declaration(&mut self) -> Result<Declaration> {
+    fn item(&mut self) -> Result<Item> {
         Ok(match self.peek_kind() {
-            TokenKind::Class => Declaration::Class(self.class_decl()?),
-            TokenKind::Fun => Declaration::Fun(self.fun_decl()?),
-            TokenKind::Var => Declaration::Var(self.var_decl()?),
-            _ => Declaration::Statement(self.statement()?),
+            TokenKind::Class => Item::Class(self.class_item()?),
+            TokenKind::Fun => Item::Fun(self.fun_item()?),
+            TokenKind::Let => Item::Let(self.let_item()?),
+            _ => Item::Statement(self.statement()?),
         })
     }
 
-    fn class_decl(&mut self) -> Result<ClassDecl> {
+    fn class_item(&mut self) -> Result<ClassItem> {
         todo!()
     }
 
-    fn fun_decl(&mut self) -> Result<FunDecl> {
+    fn fun_item(&mut self) -> Result<FunItem> {
         todo!()
     }
 
-    fn var_decl(&mut self) -> Result<VarDecl> {
-        let var_tok = self.expect_next(TokenKind::Var)?;
-        let ident = self.ident()?;
+    fn let_item(&mut self) -> Result<LetItem> {
+        let let_tok = self.expect_next(TokenKind::Let)?;
+        let mut_tok = self.match_peek(TokenKind::Mut);
+        if mut_tok.is_some() {
+            self.lexer.next2();
+        }
+        let name = self.name()?;
         let init = if let Some(equal_tok) = self.match_peek(TokenKind::Equal) {
             self.lexer.next2();
             let expr = self.expression()?;
-            Some(VarInit { equal_tok, expr })
+            Some(LetInit { equal_tok, expr })
         } else {
             None
         };
         let semicolon_tok = self.expect_next(TokenKind::Semicolon)?;
-        Ok(VarDecl { var_tok, ident, init, semicolon_tok })
+        Ok(LetItem { let_tok, mut_tok, name, init, semicolon_tok })
     }
 
     fn statement(&mut self) -> Result<Statement> {
@@ -175,8 +179,8 @@ impl<'src> Parser<'src> {
         let left_brace_tok = self.expect_next(TokenKind::LeftBrace)?;
         let mut body = Vec::new();
         while !matches!(self.peek_kind(), TokenKind::RightBrace | TokenKind::Eof) {
-            let declaration = self.declaration()?;
-            body.push(declaration);
+            let item = self.item()?;
+            body.push(item);
         }
         let right_brace_tok = self.expect_next(TokenKind::RightBrace)?;
         Ok(Block { left_brace_tok, body, right_brace_tok })
@@ -297,7 +301,7 @@ impl<'src> Parser<'src> {
         Ok(lhs)
     }
 
-    fn ident(&mut self) -> Result<Identifier> {
+    fn name(&mut self) -> Result<Identifier> {
         let token = self.expect_next(TokenKind::Identifier)?;
         Ok(Identifier { token })
     }

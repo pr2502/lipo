@@ -44,6 +44,7 @@ pub enum TokenKind {
     #[token("for")] For,
     #[token("fun")] Fun,
     #[token("if")] If,
+    #[token("mut")] Mut,
     #[token("nil")] Nil,
     #[token("or")] Or,
     #[token("print")] Print,
@@ -51,7 +52,7 @@ pub enum TokenKind {
     #[token("super")] Super,
     #[token("this")] This,
     #[token("true")] True,
-    #[token("var")] Var,
+    #[token("let")] Let,
     #[token("while")] While,
 
     Eof,

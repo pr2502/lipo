@@ -80,11 +80,10 @@ impl<'code, 'src> VM<'code, 'src> {
             span_idx += 1;
         };
 
-        self.chunk
-            .debug(self.source)
-            .spans()
-            .nth(span_idx)
+        self.chunk.spans()
+            .get(span_idx)
             .expect("missing span information")
+            .anchor(self.source)
     }
 
     pub fn run(mut self) -> Result<Value, VmError<'src>> {

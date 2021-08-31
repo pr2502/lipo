@@ -1,5 +1,6 @@
+use crate::fmt::SourceDebug;
 use crate::opcode::OpCode;
-use crate::span::{FreeSpan, Span};
+use crate::span::FreeSpan;
 use crate::value::Value;
 use indexmap::IndexSet;
 use std::assert_matches::assert_matches;
@@ -25,6 +26,36 @@ pub struct Chunk {
     spans: Vec<FreeSpan>,
 }
 
+impl SourceDebug for Chunk {
+    fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        const RED: &str = "\x1B[31m";
+        const RESET: &str = "\x1B[m";
+
+        let opcodes = self.opcodes();
+        let spans = self.spans.iter()
+            .map(|fs| fs.anchor(source));
+
+        let mut prev_line = 0;
+        writeln!(f, "Chunk {{")?;
+        for (opcode, span) in opcodes.zip(spans) {
+            let (line, _) = span.lines();
+            if line != prev_line {
+                prev_line = line;
+                write!(f, "{:>4}  ", line)?;
+            } else {
+                write!(f, "   |  ")?;
+            };
+            let opcodefmt = format!("{:?}", opcode);
+            if let Some((before, span, after)) = span.line_parts() {
+                writeln!(f, "  {:<32} |  {}{}{}{}{}", opcodefmt, before, RED, span, RESET, after)?;
+            } else {
+                writeln!(f, "  {    } |", opcodefmt)?;
+            }
+        }
+        writeln!(f, "}}")
+    }
+}
+
 impl Chunk {
     pub fn opcodes(&self) -> impl Iterator<Item = OpCode> + '_ {
         let mut code = self.code.as_slice();
@@ -37,6 +68,10 @@ impl Chunk {
 
     pub fn code(&self) -> &[u8] {
         &self.code
+    }
+
+    pub fn spans(&self) -> &[FreeSpan] {
+        &self.spans
     }
 }
 
@@ -144,50 +179,5 @@ impl Chunk {
     pub fn get_constant(&self, key: ConstKey) -> Option<Value> {
         let ConstKey { index } = key;
         self.constants.get_index(index as usize).copied()
-    }
-}
-
-
-pub struct DebugChunk<'code, 'src> {
-    source: &'src str,
-    chunk: &'code Chunk,
-}
-
-impl Chunk {
-    pub fn debug<'src>(&self, source: &'src str) -> DebugChunk<'_, 'src> {
-        DebugChunk { chunk: self, source }
-    }
-}
-
-impl<'code, 'src> DebugChunk<'code, 'src> {
-    pub fn spans(&self) -> impl Iterator<Item = Span<'src>> + '_ {
-        self.chunk.spans.iter()
-            .map(|fs| fs.anchor(self.source))
-    }
-}
-
-impl<'code, 'src> Debug for DebugChunk<'code, 'src> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        const RED: &str = "\x1B[31m";
-        const RESET: &str = "\x1B[m";
-
-        let mut prev_line = 0;
-        writeln!(f, "Chunk {{")?;
-        for (opcode, span) in self.chunk.opcodes().zip(self.spans()) {
-            let (line, _) = span.lines();
-            if line != prev_line {
-                prev_line = line;
-                write!(f, "{:>4}  ", line)?;
-            } else {
-                write!(f, "   |  ")?;
-            };
-            let opcodefmt = format!("{:?}", opcode);
-            if let Some((before, span, after)) = span.line_parts() {
-                writeln!(f, "  {:<32} |  {}{}{}{}{}", opcodefmt, before, RED, span, RESET, after)?;
-            } else {
-                writeln!(f, "  {    } |", opcodefmt)?;
-            }
-        }
-        writeln!(f, "}}")
     }
 }

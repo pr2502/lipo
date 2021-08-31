@@ -26,7 +26,7 @@ impl FreeSpan {
         (self.start as usize)..(self.end as usize)
     }
 
-    pub fn anchor(self, source: &str) -> Span<'_> {
+    pub fn anchor<'src>(self, source: &'src str) -> Span<'src> {
         let FreeSpan { start, end } = self;
 
         assert!(

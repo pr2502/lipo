@@ -8,24 +8,24 @@ fn join(a: FreeSpan, b: FreeSpan) -> FreeSpan {
     FreeSpan::join(a, b)
 }
 
-impl Spanned for Declaration {
+impl Spanned for Item {
     fn span(&self) -> FreeSpan {
         match self {
-            Declaration::Class(inner) => inner.span(),
-            Declaration::Fun(inner) => inner.span(),
-            Declaration::Var(inner) => inner.span(),
-            Declaration::Statement(inner) => inner.span(),
+            Item::Class(inner) => inner.span(),
+            Item::Fun(inner) => inner.span(),
+            Item::Let(inner) => inner.span(),
+            Item::Statement(inner) => inner.span(),
         }
     }
 }
 
-impl Spanned for ClassDecl {
+impl Spanned for ClassItem {
     fn span(&self) -> FreeSpan {
         join(self.class_tok.span, self.close_brace.span)
     }
 }
 
-impl Spanned for FunDecl {
+impl Spanned for FunItem {
     fn span(&self) -> FreeSpan {
         join(self.fun_tok.span, self.function.span())
     }
@@ -37,13 +37,13 @@ impl Spanned for Function {
     }
 }
 
-impl Spanned for VarDecl {
+impl Spanned for LetItem {
     fn span(&self) -> FreeSpan {
-        join(self.var_tok.span, self.semicolon_tok.span)
+        join(self.let_tok.span, self.semicolon_tok.span)
     }
 }
 
-impl Spanned for VarInit {
+impl Spanned for LetInit {
     fn span(&self) -> FreeSpan {
         join(self.equal_tok.span, self.expr.span())
     }
@@ -73,16 +73,6 @@ impl Spanned for ExprStmt {
 impl Spanned for ForStmt {
     fn span(&self) -> FreeSpan {
         join(self.for_tok.span, self.body.span())
-    }
-}
-
-impl Spanned for ForInit {
-    fn span(&self) -> FreeSpan {
-        match self {
-            ForInit::Var(inner) => inner.span(),
-            ForInit::Stmt(inner) => inner.span(),
-            ForInit::Empty { semicolon_tok } => semicolon_tok.span,
-        }
     }
 }
 

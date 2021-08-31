@@ -5,29 +5,39 @@ use crate::fmt::{debug_sexpr, SourceDebug};
 use std::fmt;
 
 
-impl SourceDebug for Declaration {
+impl SourceDebug for &[Item] {
+    fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut d = debug_sexpr(f, "Block");
+        for i in self.iter() {
+            d.atom(&i.wrap(source));
+        }
+        d.finish()
+    }
+}
+
+impl SourceDebug for Item {
     fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Declaration::Class(inner) => inner.fmt(source, f),
-            Declaration::Fun(inner) => inner.fmt(source, f),
-            Declaration::Var(inner) => inner.fmt(source, f),
-            Declaration::Statement(inner) => inner.fmt(source, f),
+            Item::Class(inner) => inner.fmt(source, f),
+            Item::Fun(inner) => inner.fmt(source, f),
+            Item::Let(inner) => inner.fmt(source, f),
+            Item::Statement(inner) => inner.fmt(source, f),
         }
     }
 }
 
-impl SourceDebug for ClassDecl {
+impl SourceDebug for ClassItem {
     fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         debug_sexpr(f, "Class")
-            .atom(&self.ident.wrap(source))
+            .atom(&self.name.wrap(source))
             .opt_kw_atom("inherit", self.inherit.as_ref()
-                .map(|inherit| inherit.ident.wrap(source)))
+                .map(|inherit| inherit.name.wrap(source)))
             // TODO methods
             .finish()
     }
 }
 
-impl SourceDebug for FunDecl {
+impl SourceDebug for FunItem {
     fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.function.fmt(source, f)
     }
@@ -43,10 +53,10 @@ impl SourceDebug for Function {
     }
 }
 
-impl SourceDebug for VarDecl {
+impl SourceDebug for LetItem {
     fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        debug_sexpr(f, "Var")
-            .atom(&self.ident.wrap(source))
+        debug_sexpr(f, "Let")
+            .atom(&self.name.wrap(source))
             // TODO expression
             .finish()
     }
@@ -122,4 +132,3 @@ impl SourceDebug for Identifier {
         f.write_str(self.token.span.anchor(source).as_str())
     }
 }
-

@@ -28,6 +28,10 @@ pub enum Error {
     InvalidAssignmentTarget {
         span: FreeSpan,
     },
+    AssignImmutableBinding {
+        let_span: FreeSpan,
+        assign_span: FreeSpan,
+    },
 }
 
 struct Emitter<'src> {
@@ -40,6 +44,8 @@ struct Emitter<'src> {
 
 struct Local {
     name: Identifier,
+    let_span: FreeSpan,
+    mutable: bool,
     depth: i32,
 }
 
@@ -54,7 +60,7 @@ pub fn compile(source: &str, ast: Program) -> std::result::Result<Chunk, Error> 
     };
 
     for d in &ast {
-        emitter.declaration(d)?
+        emitter.item(d)?
     }
 
     Ok(emitter.chunk)
@@ -69,30 +75,36 @@ impl<'src> Emitter<'src> {
         self.chunk.insert_constant(value)
     }
 
-    fn add_local(&mut self, name: Identifier) -> Result {
+    fn add_local(&mut self, let_item: &LetItem) -> Result {
         if self.locals.len() >= (u16::MAX as usize) {
-            return Err(Error::TooManyLocals { span: name.span() });
+            return Err(Error::TooManyLocals { span: let_item.name.span() });
         }
         let ident_slice = |ident: Identifier| ident.token.span.anchor(self.source).as_str();
         let shadowing = self.locals.iter()
             .rev()
             .take_while(|loc| loc.depth == self.scope_depth)
-            .find(|loc| ident_slice(loc.name) == ident_slice(name));
+            .find(|loc| ident_slice(loc.name) == ident_slice(let_item.name));
         if let Some(local) = shadowing {
             return Err(Error::Shadowing {
-                shadowing_span: name.span(),
+                shadowing_span: let_item.name.span(),
                 shadowed_span: local.name.span(),
             });
         }
-        self.locals.push(Local { name, depth: self.scope_depth });
+        self.locals.push(Local {
+            name: let_item.name,
+            let_span: let_item.span(),
+            mutable: let_item.mut_tok.is_some(),
+            depth: self.scope_depth,
+        });
         Ok(())
     }
 
-    fn resolve_local(&mut self, name: Identifier) -> Option<u16> {
+    fn resolve_local(&mut self, name: Identifier) -> Option<(u16, &Local)> {
         let ident_slice = |ident: Identifier| ident.token.span.anchor(self.source).as_str();
         self.locals.iter()
-            .rposition(|loc| ident_slice(loc.name) == ident_slice(name))
-            .map(|index| index as u16)
+            .rev().enumerate()
+            .find(|(_, loc)| ident_slice(loc.name) == ident_slice(name))
+            .map(|(slot, loc)| (slot as u16, loc))
     }
 
     fn begin_scope(&mut self) {
@@ -113,33 +125,33 @@ impl<'src> Emitter<'src> {
 }
 
 impl<'src> Emitter<'src> {
-    fn declaration(&mut self, declaration: &Declaration) -> Result {
-        match declaration {
-            Declaration::Class(class_decl) => self.class_decl(class_decl),
-            Declaration::Fun(fun_decl) => self.fun_decl(fun_decl),
-            Declaration::Var(var_decl) => self.var_decl(var_decl),
-            Declaration::Statement(stmt) => self.statement(stmt),
+    fn item(&mut self, item: &Item) -> Result {
+        match item {
+            Item::Class(class_item) => self.class_item(class_item),
+            Item::Fun(fun_item) => self.fun_item(fun_item),
+            Item::Let(let_item) => self.let_item(let_item),
+            Item::Statement(stmt) => self.statement(stmt),
         }
     }
 
-    fn class_decl(&mut self, class_decl: &ClassDecl) -> Result {
+    fn class_item(&mut self, class_item: &ClassItem) -> Result {
         Err(Error::NotYetImplemented {
             feature: "class",
-            span: class_decl.class_tok.span,
+            span: class_item.class_tok.span,
         })
     }
 
-    fn fun_decl(&mut self, fun_decl: &FunDecl) -> Result {
+    fn fun_item(&mut self, fun_item: &FunItem) -> Result {
         Err(Error::NotYetImplemented {
             feature: "function",
-            span: fun_decl.fun_tok.span,
+            span: fun_item.fun_tok.span,
         })
     }
 
-    fn var_decl(&mut self, var_decl: &VarDecl) -> Result {
-        let span = var_decl.span();
+    fn let_item(&mut self, let_item: &LetItem) -> Result {
+        let span = let_item.span();
 
-        if let Some(init) = &var_decl.init {
+        if let Some(init) = &let_item.init {
             self.expression(&init.expr)?;
         } else {
             // empty initializer, set value to Nil
@@ -148,11 +160,11 @@ impl<'src> Emitter<'src> {
 
         if self.scope_depth == 0 {
             // global variable
-            let name_key = self.identifier_constant(var_decl.ident);
+            let name_key = self.identifier_constant(let_item.name);
             self.chunk.emit(OpCode::DefGlobal { name_key }, span);
         } else {
             // local variable
-            self.add_local(var_decl.ident)?;
+            self.add_local(let_item)?;
         }
 
         Ok(())
@@ -242,8 +254,8 @@ impl<'src> Emitter<'src> {
 
     fn block(&mut self, block: &Block) -> Result {
         self.begin_scope();
-        for d in &block.body {
-            self.declaration(d)?;
+        for i in &block.body {
+            self.item(i)?;
         }
         self.end_scope(block.right_brace_tok.span);
         Ok(())
@@ -269,7 +281,13 @@ impl<'src> Emitter<'src> {
                 if primary.token.kind == TokenKind::Identifier {
                     let ident = Identifier { token: primary.token };
                     self.expression(&binary_expr.rhs)?;
-                    if let Some(slot) = self.resolve_local(ident) {
+                    if let Some((slot, local)) = self.resolve_local(ident) {
+                        if !local.mutable {
+                            return Err(Error::AssignImmutableBinding {
+                                let_span: local.let_span,
+                                assign_span: binary_expr.span(),
+                            });
+                        }
                         self.chunk.emit(OpCode::SetLocal { slot }, binary_expr.span());
                     } else {
                         let name_key = self.identifier_constant(ident);
@@ -460,7 +478,7 @@ impl<'src> Emitter<'src> {
 
     fn identifier(&mut self, primary: &PrimaryExpr) -> Result {
         let ident = Identifier { token: primary.token };
-        if let Some(slot) = self.resolve_local(ident) {
+        if let Some((slot, _)) = self.resolve_local(ident) {
             self.chunk.emit(OpCode::GetLocal { slot }, ident.span());
         } else {
             let name_key = self.identifier_constant(ident);
