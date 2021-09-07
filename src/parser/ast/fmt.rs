@@ -2,7 +2,6 @@
 
 use super::*;
 use crate::fmt::SourceDebug;
-use crate::lexer::TokenKind;
 use std::fmt;
 
 
@@ -18,7 +17,7 @@ impl SourceDebug for Item {
     fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Item::Class(inner) => inner.fmt(source, f),
-            Item::Fun(inner) => inner.fmt(source, f),
+            Item::Fn(inner) => inner.fmt(source, f),
             Item::Let(inner) => inner.fmt(source, f),
             Item::Statement(inner) => inner.fmt(source, f),
         }
@@ -37,7 +36,7 @@ impl SourceDebug for ClassItem {
     }
 }
 
-impl SourceDebug for FunItem {
+impl SourceDebug for FnItem {
     fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.function.fmt(source, f)
     }
@@ -53,6 +52,16 @@ impl SourceDebug for Function {
     }
 }
 
+impl SourceDebug for FnParam {
+    fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.mut_tok.is_some() {
+            write!(f, "Mut({:?})", self.name.wrap(source))
+        } else {
+            self.name.fmt(source, f)
+        }
+    }
+}
+
 impl SourceDebug for LetItem {
     fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut w = if self.mut_tok.is_some() {
@@ -63,8 +72,6 @@ impl SourceDebug for LetItem {
         w.field(&self.name.wrap(source));
         if let Some(init) = &self.init {
             w.field(&init.expr.wrap(source));
-        } else {
-            w.field(&TokenKind::Nil);
         }
         w.finish()
     }
@@ -185,7 +192,11 @@ impl SourceDebug for UnaryExpr {
 
 impl SourceDebug for GroupExpr {
     fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.expr.fmt(source, f)
+        if let Some(expr) = self.expr.as_ref() {
+            expr.fmt(source, f)
+        } else {
+            f.write_str("Unit")
+        }
     }
 }
 

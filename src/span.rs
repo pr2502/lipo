@@ -26,6 +26,7 @@ impl FreeSpan {
         (self.start as usize)..(self.end as usize)
     }
 
+    #[allow(clippy::needless_lifetimes)] // we want to name the lifetime a meaningful name
     pub fn anchor<'src>(self, source: &'src str) -> Span<'src> {
         let FreeSpan { start, end } = self;
 
@@ -98,14 +99,13 @@ impl<'src> Span<'src> {
         let Range { start, end } = self.range();
 
         let before = &self.source[..start];
-        let before = if before.ends_with("\n") {
+        let before = if before.ends_with('\n') {
             // `str::lines` ignores the trailing newline, if we don't special case it here
             // we get the previous line instead
             ""
         } else {
             before.lines()
-                .rev()
-                .next()
+                .next_back()
                 .unwrap_or("")
         };
         let after = self.source[end..]
@@ -253,7 +253,11 @@ dolor sit",
         let sp = span("1\n1", 0..2);
         //             ^^^
         assert_eq!(sp.columns(), (1, 1));
+    }
 
+    #[cfg_attr(not(feature = "full-unicode"), ignore)]
+    #[test]
+    fn test_columns_unicode() {
         // Single emoji is a double-width character and gets properly counted as such.
         let sp = span("👩", 0..4);
         //             ^^
@@ -270,6 +274,5 @@ dolor sit",
         //             ^^ (supposed to underline the single "woman scientist" emoji, your text
         //                 editor rendering might not reflect that)
         assert_eq!(sp.columns(), (1, 4));
-
     }
 }

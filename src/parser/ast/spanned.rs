@@ -12,7 +12,7 @@ impl Spanned for Item {
     fn span(&self) -> FreeSpan {
         match self {
             Item::Class(inner) => inner.span(),
-            Item::Fun(inner) => inner.span(),
+            Item::Fn(inner) => inner.span(),
             Item::Let(inner) => inner.span(),
             Item::Statement(inner) => inner.span(),
         }
@@ -25,9 +25,9 @@ impl Spanned for ClassItem {
     }
 }
 
-impl Spanned for FunItem {
+impl Spanned for FnItem {
     fn span(&self) -> FreeSpan {
-        join(self.fun_tok.span, self.function.span())
+        join(self.fn_tok.span, self.function.span())
     }
 }
 

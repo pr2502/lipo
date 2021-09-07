@@ -18,6 +18,10 @@ pub enum Error {
         found: Token,
         expected: TokenKind,
     },
+    UnexpectedToken2 {
+        found: Token,
+        expected: &'static [TokenKind],
+    },
     ExpectedExpressionStart {
         found: Token,
     },
@@ -46,7 +50,7 @@ pub fn parse(src: &str) -> Result<Program> {
 // Utility functions for parsing
 impl<'src> Parser<'src> {
     fn expect_next(&mut self, kind: TokenKind) -> Result<Token> {
-        let token = self.lexer.next2();
+        let token = self.lexer.next();
         if token.kind == kind {
             Ok(token)
         } else {
@@ -85,7 +89,7 @@ impl<'src> Parser<'src> {
         // TODO recovery
         Ok(match self.peek_kind() {
             TokenKind::Class => Item::Class(self.class_item()?),
-            TokenKind::Fun => Item::Fun(self.fun_item()?),
+            TokenKind::Fn => Item::Fn(self.fn_item()?),
             TokenKind::Let => Item::Let(self.let_item()?),
             _ => Item::Statement(self.statement()?),
         })
@@ -95,20 +99,50 @@ impl<'src> Parser<'src> {
         todo!()
     }
 
-    fn fun_item(&mut self) -> Result<FunItem> {
-        todo!()
+    fn fn_item(&mut self) -> Result<FnItem> {
+        let fn_tok = self.expect_next(TokenKind::Fn)?;
+        let function = self.function()?;
+        Ok(FnItem { fn_tok, function })
+    }
+
+    fn function(&mut self) -> Result<Function> {
+        let name = self.name()?;
+        let left_paren_tok = self.expect_next(TokenKind::LeftParen)?;
+        let mut parameters = Delimited::default();
+        while !matches!(self.peek_kind(), TokenKind::Eof | TokenKind::RightParen) {
+            let mut_tok = self.match_peek(TokenKind::Mut);
+            if mut_tok.is_some() {
+                self.lexer.next();
+            }
+            let name = self.name()?;
+            parameters.items.push(FnParam { mut_tok, name });
+
+            match self.peek_kind() {
+                TokenKind::RightParen => break,
+                TokenKind::Comma => {
+                    parameters.delim.push(self.lexer.next());
+                }
+                _ => return Err(Error::UnexpectedToken2 {
+                    found: self.lexer.next(),
+                    expected: &[TokenKind::Comma, TokenKind::RightParen],
+                })
+            }
+        }
+        let right_paren_tok = self.expect_next(TokenKind::RightParen)?;
+        let body = self.block()?;
+        Ok(Function { name, left_paren_tok, parameters, right_paren_tok, body })
     }
 
     fn let_item(&mut self) -> Result<LetItem> {
         let let_tok = self.expect_next(TokenKind::Let)?;
         let (mut_tok, rec_tok) = match self.peek_kind() {
-            TokenKind::Mut => (Some(self.lexer.next2()), None),
-            TokenKind::Rec => (None, Some(self.lexer.next2())),
+            TokenKind::Mut => (Some(self.lexer.next()), None),
+            TokenKind::Rec => (None, Some(self.lexer.next())),
             _ => (None, None),
         };
         let name = self.name()?;
         let init = if let Some(equal_tok) = self.match_peek(TokenKind::Equal) {
-            self.lexer.next2();
+            self.lexer.next();
             let expr = self.expression()?;
             Some(LetInit { equal_tok, expr })
         } else {
@@ -141,7 +175,7 @@ impl<'src> Parser<'src> {
         let pred = self.expression()?;
         let body = self.block()?;
         let else_branch = if let Some(else_tok) = self.match_peek(TokenKind::Else) {
-            self.lexer.next2();
+            self.lexer.next();
             let body = self.block()?;
             Some(ElseBranch { else_tok, body })
         } else {
@@ -201,17 +235,18 @@ impl<'src> Parser<'src> {
 
     fn expr_bp(&mut self, min_bp: u8) -> Result<Expression> {
         let mut lhs = {
-            let token = self.lexer.next2();
+            let token = self.lexer.next();
             match token.kind {
                 TokenKind::LeftParen => {
                     let left_paren_tok = token;
-                    let expr = self.expr_bp(0)?;
+                    let expr = if self.match_peek(TokenKind::RightParen).is_some() {
+                        // allow an empty group `( )`
+                        None
+                    } else {
+                        Some(Box::new(self.expr_bp(0)?))
+                    };
                     let right_paren_tok = self.expect_next(TokenKind::RightParen)?;
-                    Expression::Group(GroupExpr {
-                        left_paren_tok,
-                        expr: Box::new(expr),
-                        right_paren_tok,
-                    })
+                    Expression::Group(GroupExpr { left_paren_tok, expr, right_paren_tok })
                 }
                 TokenKind::Minus |
                 TokenKind::Not => {
@@ -222,7 +257,6 @@ impl<'src> Parser<'src> {
                         expr: Box::new(expr),
                     })
                 }
-                TokenKind::Nil |
                 TokenKind::True |
                 TokenKind::False |
                 TokenKind::This |
@@ -286,7 +320,7 @@ impl<'src> Parser<'src> {
                     break;
                 }
 
-                self.lexer.next2(); // throw away the peeked operator token
+                self.lexer.next(); // throw away the peeked operator token
 
                 let rhs = self.expr_bp(r_bp)?;
                 lhs = Expression::Binary(BinaryExpr {

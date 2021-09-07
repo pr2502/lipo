@@ -19,7 +19,7 @@ macro_rules! opcodes {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum OpCode {
     Constant { key: ConstKey },
-    Nil,
+    Unit,
     True,
     False,
     Pop,
@@ -48,7 +48,7 @@ pub enum OpCode {
 
 opcodes! {
     CONSTANT,
-    NIL,
+    UNIT,
     TRUE,
     FALSE,
     POP,
@@ -81,7 +81,7 @@ impl OpCode {
             [Self::CONSTANT, x, y, rest @ .. ]  => {
                 (OpCode::Constant { key: ConstKey::from_le_bytes([*x, *y]) }, rest)
             }
-            [Self::NIL, rest @ .. ]       => (OpCode::Nil, rest),
+            [Self::UNIT, rest @ .. ]      => (OpCode::Unit, rest),
             [Self::TRUE, rest @ .. ]      => (OpCode::True, rest),
             [Self::FALSE, rest @ .. ]     => (OpCode::False, rest),
             [Self::POP, rest @ .. ]       => (OpCode::Pop, rest),
@@ -152,7 +152,7 @@ impl OpCode {
     pub const fn tag(self) -> u8 {
         match self {
             OpCode::Constant { .. }     => Self::CONSTANT,
-            OpCode::Nil                 => Self::NIL,
+            OpCode::Unit                => Self::UNIT,
             OpCode::True                => Self::TRUE,
             OpCode::False               => Self::FALSE,
             OpCode::Pop                 => Self::POP,

@@ -41,10 +41,9 @@ pub enum TokenKind {
     #[token("else")] Else,
     #[token("false")] False,
     #[token("for")] For,
-    #[token("fun")] Fun,
+    #[token("fn")] Fn,
     #[token("if")] If,
     #[token("mut")] Mut,
-    #[token("nil")] Nil,
     #[token("not")] Not,
     #[token("or")] Or,
     #[token("print")] Print,
@@ -91,6 +90,7 @@ impl<'src> Lexer<'src> {
         Lexer { current, inner }
     }
 
+    /// Returns the current token
     pub fn peek(&self) -> Token {
         Token {
             kind: self.current,
@@ -98,15 +98,11 @@ impl<'src> Lexer<'src> {
         }
     }
 
-    #[allow(clippy::should_implement_trait)]
+    /// Return the current token and advance the lexer
+    #[allow(clippy::should_implement_trait)] // Iterator returns an Option we always return a Token
     pub fn next(&mut self) -> Token {
-        self.current = self.inner.next().unwrap_or(TokenKind::Eof);
-        self.peek()
-    }
-
-    pub fn next2(&mut self) -> Token {
         let last = self.peek();
-        self.next();
+        self.current = self.inner.next().unwrap_or(TokenKind::Eof);
         last
     }
 

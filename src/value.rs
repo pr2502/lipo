@@ -14,14 +14,14 @@ mod repr;
 
 /// Functionality required for Value representations
 trait ValueReprInternal {
-    fn new_nil() -> Self;
+    fn new_unit() -> Self;
     fn new_bool(b: bool) -> Self;
-    fn new_number(f: f64) -> Self;
+    fn new_float(f: f64) -> Self;
     fn new_object(o: ObjectRefAny) -> Self;
 
-    fn is_nil(&self) -> bool;
+    fn is_unit(&self) -> bool;
     fn to_bool(self) -> Option<bool>;
-    fn to_number(self) -> Option<f64>;
+    fn to_float(self) -> Option<f64>;
     fn to_object(self) -> Option<ObjectRefAny>;
 }
 
@@ -33,9 +33,9 @@ pub struct Value {
 
 
 impl Value {
-    pub fn new_nil() -> Self {
+    pub fn new_unit() -> Self {
         Value {
-            repr: repr::ValueRepr::new_nil()
+            repr: repr::ValueRepr::new_unit()
         }
     }
 
@@ -45,9 +45,9 @@ impl Value {
         }
     }
 
-    pub fn new_number(n: f64) -> Self {
+    pub fn new_float(n: f64) -> Self {
         Value {
-            repr: repr::ValueRepr::new_number(n),
+            repr: repr::ValueRepr::new_float(n),
         }
     }
 
@@ -63,8 +63,8 @@ impl Value {
 }
 
 impl Value {
-    pub fn is_nil(&self) -> bool {
-        self.repr.is_nil()
+    pub fn is_unit(&self) -> bool {
+        self.repr.is_unit()
     }
 
     pub fn to_bool(self) -> Option<bool> {
@@ -72,11 +72,11 @@ impl Value {
     }
 
     pub fn is_falsy(&self) -> bool {
-        self.is_nil() || matches!(self.to_bool(), Some(false))
+        self.is_unit() || matches!(self.to_bool(), Some(false))
     }
 
-    pub fn to_number(self) -> Option<f64> {
-        self.repr.to_number()
+    pub fn to_float(self) -> Option<f64> {
+        self.repr.to_float()
     }
 
     pub fn to_object(self) -> Option<ObjectRefAny> {
@@ -91,11 +91,11 @@ impl Value {
 
 impl Debug for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.is_nil() {
-            write!(f, "nil")
+        if self.is_unit() {
+            write!(f, "()")
         } else if let Some(b) = self.to_bool() {
             b.fmt(f)
-        } else if let Some(n) = self.to_number() {
+        } else if let Some(n) = self.to_float() {
             n.fmt(f)
         } else if let Some(o) = self.to_object() {
             o.fmt(f)
@@ -107,11 +107,11 @@ impl Debug for Value {
 
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
-        if self.is_nil() && other.is_nil() {
+        if self.is_unit() && other.is_unit() {
             true
         } else if let (Some(lhs), Some(rhs)) = (self.to_bool(), other.to_bool()) {
             lhs == rhs
-        } else if let (Some(lhs), Some(rhs)) = (self.to_number(), other.to_number()) {
+        } else if let (Some(lhs), Some(rhs)) = (self.to_float(), other.to_float()) {
             (lhs - rhs).abs() <= f64::EPSILON
         } else if let (Some(lhs), Some(rhs)) = (self.to_object(), other.to_object()) {
             lhs == rhs
@@ -130,7 +130,7 @@ impl Hash for Value {
     {
         if let Some(b) = self.to_bool() {
             state.write_u8(b as u8)
-        } else if let Some(n) = self.to_number() {
+        } else if let Some(n) = self.to_float() {
             state.write_u64(n.to_bits())
         } else if let Some(o) = self.to_object() {
             o.hash(state)

@@ -3,31 +3,31 @@ use crate::object::ObjectRefAny;
 
 #[derive(Clone, Copy)]
 pub(super) enum ValueRepr {
-    Nil,
+    Unit,
     Bool(bool),
-    Number(f64),
+    Float(f64),
     Object(ObjectRefAny),
 }
 
 impl super::ValueReprInternal for ValueRepr {
-    fn new_nil() -> Self {
-        ValueRepr::Nil
+    fn new_unit() -> Self {
+        ValueRepr::Unit
     }
 
     fn new_bool(b: bool) -> Self {
         ValueRepr::Bool(b)
     }
 
-    fn new_number(n: f64) -> Self {
-        ValueRepr::Number(n)
+    fn new_float(n: f64) -> Self {
+        ValueRepr::Float(n)
     }
 
     fn new_object(o: ObjectRefAny) -> Self {
         ValueRepr::Object(o)
     }
 
-    fn is_nil(&self) -> bool {
-        matches!(self, ValueRepr::Nil)
+    fn is_unit(&self) -> bool {
+        matches!(self, ValueRepr::Unit)
     }
 
     fn to_bool(self) -> Option<bool> {
@@ -37,9 +37,9 @@ impl super::ValueReprInternal for ValueRepr {
         }
     }
 
-    fn to_number(self) -> Option<f64> {
+    fn to_float(self) -> Option<f64> {
         match self {
-            ValueRepr::Number(n) => Some(n),
+            ValueRepr::Float(n) => Some(n),
             _ => None,
         }
     }

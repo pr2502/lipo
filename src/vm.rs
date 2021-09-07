@@ -91,14 +91,14 @@ impl<'code, 'src> VM<'code, 'src> {
             let offset = (self.ip.as_ptr() as usize) - (self.chunk.code().as_ptr() as usize);
             let (opcode, next) = match OpCode::decode(self.ip) {
                 Some(res) => res,
-                None => return Ok(Value::new_nil()),
+                None => return Ok(Value::new_unit()),
             };
             trace!("stack {:?}", &self.stack);
             trace!("decode {:04}: {:?}", offset, opcode);
             self.ip = next;
             match opcode {
                 OpCode::Constant { key } => self.op_constant(key)?,
-                OpCode::Nil => self.op_nil()?,
+                OpCode::Unit => self.op_unit()?,
                 OpCode::True => self.op_true()?,
                 OpCode::False => self.op_false()?,
                 OpCode::Pop => self.op_pop()?,
@@ -143,8 +143,8 @@ impl<'code, 'src> VM<'code, 'src> {
         Ok(())
     }
 
-    fn op_nil(&mut self) -> Result<(), VmError<'src>> {
-        self.push(Value::new_nil());
+    fn op_unit(&mut self) -> Result<(), VmError<'src>> {
+        self.push(Value::new_unit());
         Ok(())
     }
 
@@ -227,7 +227,7 @@ impl<'code, 'src> VM<'code, 'src> {
     fn op_greater(&mut self, offset: usize) -> Result<(), VmError<'src>> {
         let rhs = self.pop()?;
         let lhs = self.pop()?;
-        let result = match (lhs.to_number(), rhs.to_number()) {
+        let result = match (lhs.to_float(), rhs.to_float()) {
             (Some(lhs), Some(rhs)) => Value::new_bool(lhs > rhs),
             _ => return Err(VmError::RuntimeError {
                 span: self.get_span(offset),
@@ -241,7 +241,7 @@ impl<'code, 'src> VM<'code, 'src> {
     fn op_less(&mut self, offset: usize) -> Result<(), VmError<'src>> {
         let rhs = self.pop()?;
         let lhs = self.pop()?;
-        let result = match (lhs.to_number(), rhs.to_number()) {
+        let result = match (lhs.to_float(), rhs.to_float()) {
             (Some(lhs), Some(rhs)) => Value::new_bool(lhs < rhs),
             _ => return Err(VmError::RuntimeError {
                 span: self.get_span(offset),
@@ -255,8 +255,8 @@ impl<'code, 'src> VM<'code, 'src> {
     fn op_add(&mut self, offset: usize) -> Result<(), VmError<'src>> {
         let rhs = self.pop()?;
         let lhs = self.pop()?;
-        let result = if let (Some(lhs), Some(rhs)) = (lhs.to_number(), rhs.to_number()) {
-            Value::new_number(lhs + rhs)
+        let result = if let (Some(lhs), Some(rhs)) = (lhs.to_float(), rhs.to_float()) {
+            Value::new_float(lhs + rhs)
         } else if let (Some(lhs), Some(rhs)) = (lhs.downcast::<RoxString>(), rhs.downcast::<RoxString>()) {
             let sum = lhs.as_str().to_string() + rhs.as_str();
             Value::new_object(RoxString::new_owned(sum.into_boxed_str()))
@@ -273,8 +273,8 @@ impl<'code, 'src> VM<'code, 'src> {
     fn op_subtract(&mut self, offset: usize) -> Result<(), VmError<'src>> {
         let rhs = self.pop()?;
         let lhs = self.pop()?;
-        let result = match (lhs.to_number(), rhs.to_number()) {
-            (Some(lhs), Some(rhs)) => Value::new_number(lhs - rhs),
+        let result = match (lhs.to_float(), rhs.to_float()) {
+            (Some(lhs), Some(rhs)) => Value::new_float(lhs - rhs),
             _ => return Err(VmError::RuntimeError {
                 span: self.get_span(offset),
                 kind: RuntimeErrorKind::TypeError("subtraction only supported on Numbers"),
@@ -287,8 +287,8 @@ impl<'code, 'src> VM<'code, 'src> {
     fn op_multiply(&mut self, offset: usize) -> Result<(), VmError<'src>> {
         let rhs = self.pop()?;
         let lhs = self.pop()?;
-        let result = match (lhs.to_number(), rhs.to_number()) {
-            (Some(lhs), Some(rhs)) => Value::new_number(lhs * rhs),
+        let result = match (lhs.to_float(), rhs.to_float()) {
+            (Some(lhs), Some(rhs)) => Value::new_float(lhs * rhs),
             _ => return Err(VmError::RuntimeError {
                 span: self.get_span(offset),
                 kind: RuntimeErrorKind::TypeError("multiplication only supported on Numbers"),
@@ -301,8 +301,8 @@ impl<'code, 'src> VM<'code, 'src> {
     fn op_divide(&mut self, offset: usize) -> Result<(), VmError<'src>> {
         let rhs = self.pop()?;
         let lhs = self.pop()?;
-        let result = match (lhs.to_number(), rhs.to_number()) {
-            (Some(lhs), Some(rhs)) => Value::new_number(lhs / rhs),
+        let result = match (lhs.to_float(), rhs.to_float()) {
+            (Some(lhs), Some(rhs)) => Value::new_float(lhs / rhs),
             _ => return Err(VmError::RuntimeError {
                 span: self.get_span(offset),
                 kind: RuntimeErrorKind::TypeError("division only supported on Numbers"),
@@ -321,8 +321,8 @@ impl<'code, 'src> VM<'code, 'src> {
 
     fn op_negate(&mut self, offset: usize) -> Result<(), VmError<'src>> {
         let value = self.pop()?;
-        let value = value.to_number()
-            .map(|n| Value::new_number(-n))
+        let value = value.to_float()
+            .map(|n| Value::new_float(-n))
             .ok_or_else(|| VmError::RuntimeError {
                 span: self.get_span(offset),
                 kind: RuntimeErrorKind::TypeError("negation only supported on Numbers"),

@@ -20,7 +20,7 @@ pub type Program = Vec<Item>;
 
 pub enum Item {
     Class(ClassItem),
-    Fun(FunItem),
+    Fn(FnItem),
     Let(LetItem),
     Statement(Statement),
 }
@@ -39,16 +39,22 @@ pub struct ClassInherit {
     pub name: Identifier,
 }
 
-pub struct FunItem {
-    pub fun_tok: Token,
+pub struct FnItem {
+    pub fn_tok: Token,
     pub function: Function,
 }
 
 pub struct Function {
     pub name: Identifier,
     pub left_paren_tok: Token,
-    pub parameters: Delimited<Token, Identifier>,
+    pub parameters: Delimited<Token, FnParam>,
+    pub right_paren_tok: Token,
     pub body: Block,
+}
+
+pub struct FnParam {
+    pub mut_tok: Option<Token>,
+    pub name: Identifier,
 }
 
 pub struct LetItem {
@@ -176,7 +182,7 @@ pub struct FieldExpr {
 
 pub struct GroupExpr {
     pub left_paren_tok: Token,
-    pub expr: Box<Expression>,
+    pub expr: Option<Box<Expression>>,
     pub right_paren_tok: Token,
 }
 
@@ -204,6 +210,15 @@ pub struct PrimaryExpr {
 pub struct Delimited<Delim, Item> {
     pub items: Vec<Item>,
     pub delim: Vec<Delim>,
+}
+
+impl<D, I> Default for Delimited<D, I> {
+    fn default() -> Self {
+        Delimited {
+            items: Vec::default(),
+            delim: Vec::default(),
+        }
+    }
 }
 
 /// Wrapper around Token

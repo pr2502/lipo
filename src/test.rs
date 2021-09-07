@@ -30,7 +30,7 @@ macro_rules! run {
         dbg!(&res);
         std::assert_matches::assert_matches!(res, $($tt)*);
     }};
-    ( $code:literal ) => { run!( $code, Ok(v) if v.is_nil() ) };
+    ( $code:literal ) => { run!( $code, Ok(v) if v.is_unit() ) };
 }
 
 #[test]
@@ -43,7 +43,7 @@ fn type_error() {
 
 #[test]
 fn weird_expr() {
-    run!("assert not (5 - 4 > 3 * 2 == not nil);");
+    run!("assert not (5 - 4 > 3 * 2 == not ());");
 }
 
 #[test]
@@ -85,7 +85,7 @@ fn locals() {
 #[test]
 fn ifs() {
     run!("
-        if nil {
+        if () {
             assert false;
         }
         if true {
@@ -98,7 +98,7 @@ fn ifs() {
 fn ifelse() {
     run!("
         let mut a;
-        if nil {
+        if () {
             assert false;
         } else {
             a = true;
@@ -131,4 +131,12 @@ fn whileloop() {
             a = a - 1;
         }
     }");
+}
+
+#[test]
+fn function() {
+    run!("
+        fn foo(a, mut b) {
+        }
+    ")
 }

@@ -10,10 +10,6 @@ use std::num::ParseFloatError;
 
 #[derive(Debug)]
 pub enum Error {
-    NotYetImplemented {
-        feature: &'static str,
-        span: FreeSpan,
-    },
     TooManyLocals {
         span: FreeSpan,
     },
@@ -128,24 +124,18 @@ impl<'src> Emitter<'src> {
     fn item(&mut self, item: &Item) -> Result {
         match item {
             Item::Class(class_item) => self.class_item(class_item),
-            Item::Fun(fun_item) => self.fun_item(fun_item),
+            Item::Fn(fn_item) => self.fn_item(fn_item),
             Item::Let(let_item) => self.let_item(let_item),
             Item::Statement(stmt) => self.statement(stmt),
         }
     }
 
-    fn class_item(&mut self, class_item: &ClassItem) -> Result {
-        Err(Error::NotYetImplemented {
-            feature: "class",
-            span: class_item.class_tok.span,
-        })
+    fn class_item(&mut self, _class_item: &ClassItem) -> Result {
+        todo!("class")
     }
 
-    fn fun_item(&mut self, fun_item: &FunItem) -> Result {
-        Err(Error::NotYetImplemented {
-            feature: "function",
-            span: fun_item.fun_tok.span,
-        })
+    fn fn_item(&mut self, _fun_item: &FnItem) -> Result {
+        todo!("function")
     }
 
     fn let_item(&mut self, let_item: &LetItem) -> Result {
@@ -154,8 +144,8 @@ impl<'src> Emitter<'src> {
         if let Some(init) = &let_item.init {
             self.expression(&init.expr)?;
         } else {
-            // empty initializer, set value to Nil
-            self.chunk.emit(OpCode::Nil, span);
+            // empty initializer, set value to Unit
+            self.chunk.emit(OpCode::Unit, span);
         }
 
         if self.scope_depth == 0 {
@@ -266,7 +256,7 @@ impl<'src> Emitter<'src> {
             Expression::Binary(binary_expr) => self.binary_expr(binary_expr),
             Expression::Unary(unary_expr) => self.unary_expr(unary_expr),
             Expression::Field(field_expr) => self.field_expr(field_expr),
-            Expression::Group(group_expr) => self.expression(&*group_expr.expr),
+            Expression::Group(group_expr) => self.group_expr(group_expr),
             Expression::Call(call_expr) => self.call_expr(call_expr),
             Expression::Primary(primary_expr) => self.primary_expr(primary_expr),
         }
@@ -410,6 +400,15 @@ impl<'src> Emitter<'src> {
         todo!()
     }
 
+    fn group_expr(&mut self, group_expr: &GroupExpr) -> Result {
+        if let Some(expr) = group_expr.expr.as_ref() {
+            self.expression(expr)
+        } else {
+            self.chunk.emit(OpCode::Unit, group_expr.span());
+            Ok(())
+        }
+    }
+
     fn call_expr(&mut self, _call_expr: &CallExpr) -> Result {
         todo!()
     }
@@ -419,9 +418,9 @@ impl<'src> Emitter<'src> {
         let span = primary_expr.span();
 
         match op {
-            TokenKind::Nil => {
-                self.chunk.emit(OpCode::Nil, span);
-            }
+            // TokenKind::Nil => {
+            //     self.chunk.emit(OpCode::Nil, span);
+            // }
             TokenKind::True => {
                 self.chunk.emit(OpCode::True, span);
             }
@@ -435,7 +434,7 @@ impl<'src> Emitter<'src> {
                 todo!()
             }
             TokenKind::Number => {
-                self.number(primary_expr)?;
+                self.float(primary_expr)?;
             }
             TokenKind::String => {
                 self.string(primary_expr)?;
@@ -448,12 +447,12 @@ impl<'src> Emitter<'src> {
         Ok(())
     }
 
-    fn number(&mut self, primary: &PrimaryExpr) -> Result {
+    fn float(&mut self, primary: &PrimaryExpr) -> Result {
         let span = primary.token.span;
         let slice = span.anchor(self.source).as_str();
         match slice.parse() {
             Ok(float) => {
-                let value = Value::new_number(float);
+                let value = Value::new_float(float);
                 let key = self.chunk.insert_constant(value);
                 self.chunk.emit(OpCode::Constant { key }, span);
             }
