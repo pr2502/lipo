@@ -11,14 +11,14 @@ use std::iter;
 
 /// Emmited bytecode Chunk
 #[derive(Default)]
-pub struct Chunk {
+pub struct Chunk<'alloc> {
     /// Packed bytecode opcodes
     code: Vec<u8>,
 
     /// Constant pool
     ///
     /// Chunk may contain up to `u16::MAX` unique constants.
-    constants: IndexSet<Value>,
+    constants: IndexSet<Value<'alloc>>,
 
     /// Opcode origin spans
     ///
@@ -26,7 +26,7 @@ pub struct Chunk {
     spans: Vec<FreeSpan>,
 }
 
-impl SourceDebug for Chunk {
+impl<'alloc> SourceDebug for Chunk<'alloc> {
     fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         const RED: &str = "\x1B[31m";
         const RESET: &str = "\x1B[m";
@@ -56,7 +56,7 @@ impl SourceDebug for Chunk {
     }
 }
 
-impl Chunk {
+impl<'alloc> Chunk<'alloc> {
     pub fn opcodes(&self) -> impl Iterator<Item = OpCode> + '_ {
         let mut code = self.code.as_slice();
         iter::from_fn(move || {
@@ -73,6 +73,10 @@ impl Chunk {
     pub fn spans(&self) -> &[FreeSpan] {
         &self.spans
     }
+
+    pub fn constants(&self) -> impl Iterator<Item = &Value<'alloc>> {
+        self.constants.iter()
+    }
 }
 
 
@@ -86,7 +90,7 @@ pub struct LoopPoint {
     position: usize,
 }
 
-impl Chunk {
+impl<'alloc> Chunk<'alloc> {
     pub fn emit(&mut self, opcode: OpCode, span: FreeSpan) -> Option<PatchPlace> {
         let position = self.code.len();
         opcode.encode(&mut self.code);
@@ -169,14 +173,14 @@ impl Debug for ConstKey {
     }
 }
 
-impl Chunk {
-    pub fn insert_constant(&mut self, value: Value) -> ConstKey {
+impl<'alloc> Chunk<'alloc> {
+    pub fn insert_constant(&mut self, value: Value<'alloc>) -> ConstKey {
         let (index, _) = self.constants.insert_full(value);
         let index = index.try_into().expect("constant pool size limit reached");
         ConstKey { index }
     }
 
-    pub fn get_constant(&self, key: ConstKey) -> Option<Value> {
+    pub fn get_constant(&self, key: ConstKey) -> Option<Value<'alloc>> {
         let ConstKey { index } = key;
         self.constants.get_index(index as usize).copied()
     }

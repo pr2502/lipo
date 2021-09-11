@@ -4,6 +4,13 @@
 #![feature(new_uninit)]
 #![feature(option_result_unwrap_unchecked)]
 
+// spooky scary specialization
+#![allow(incomplete_features)]
+#![feature(specialization)]
+
+// use RFC 2585 right away, don't way for it to get enabled by default
+#![deny(unsafe_op_in_unsafe_fn)]
+
 pub mod chunk;
 pub mod compiler;
 pub mod fmt;

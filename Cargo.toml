@@ -1,5 +1,3 @@
-cargo-features = ["edition2021"]
-
 [package]
 name = "rox"
 version = "0.1.0"
@@ -16,7 +14,11 @@ unicode-width = { version = "0.1.8", optional = true }
 default = ["full-unicode"]
 
 full-unicode = ["unicode-width"]
-nan-boxing = []
+
+# GC stress testing
+# Runs garbage collection on every interpreter cycle. This is super slow but
+# should uncover bugs in the GC faster, hopefully.
+gc-stress = []
 
 [dev-dependencies]
 pretty_env_logger = "0.4.0"

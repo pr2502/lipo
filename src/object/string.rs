@@ -1,13 +1,10 @@
-use crate::object::{ObjectHeader, ObjectRef};
+use crate::object::{Alloc, Object, ObjectRef, Trace};
 use std::fmt::{self, Debug};
 use std::hash::{Hash, Hasher};
 
 
-#[repr(C)]
+derive_Object!(String);
 pub struct String {
-    /// ObjectHeader
-    header: ObjectHeader,
-
     /// `fxhash::hash` of the `String`'s chars
     hash: usize,
 
@@ -15,31 +12,20 @@ pub struct String {
     chars: Box<str>,
 }
 
-impl_Object! { for String {
-    fn debug_fmt(this, f) {
-        Debug::fmt(&*this, f)
+unsafe impl Trace for String {
+    fn mark(&self) {
+        // nop
     }
-
-    fn eq(this, other) {
-        other.downcast::<String>()
-            .map(|other| PartialEq::eq(&*this, &*other))
-            .unwrap_or(false)
-    }
-
-    fn hash(this, hasher) {
-        let mut hasher = hasher;
-        this.hash(&mut hasher);
-    }
-}}
+}
 
 impl String {
-    pub fn new(string: &str) -> ObjectRef<String> {
-        String::new_owned(string.into())
+    pub fn new<'alloc>(string: &str, alloc: &'alloc Alloc) -> ObjectRef<'alloc, String> {
+        String::new_owned(string.into(), alloc)
     }
 
-    pub fn new_owned(chars: Box<str>) -> ObjectRef<String> {
+    pub fn new_owned<'alloc>(chars: Box<str>, alloc: &'alloc Alloc) -> ObjectRef<'alloc, String> {
         let hash = fxhash::hash(chars.as_bytes());
-        init_object!(String { hash, chars })
+        Object::init(String { hash, chars }, alloc)
     }
 
     pub fn as_str(&self) -> &str {
@@ -64,5 +50,12 @@ impl Eq for String {}
 impl Hash for String {
     fn hash<H: Hasher>(&self, state: &mut H) {
         state.write_usize(self.hash);
+    }
+}
+
+impl super::ObjectHashCode for String {
+    fn hash_code(&self) -> usize {
+        // PERF avoid rehashing the cached hash in the default ObjectHashCode implementation
+        self.hash
     }
 }

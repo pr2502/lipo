@@ -74,15 +74,6 @@ pub struct Lexer<'src> {
     current: TokenKind,
 }
 
-impl Default for Token {
-    fn default() -> Token {
-        Token {
-            kind: TokenKind::Error,
-            span: FreeSpan::default(),
-        }
-    }
-}
-
 impl<'src> Lexer<'src> {
     pub fn new(source: &'src str) -> Lexer<'src> {
         let mut inner = logos::Lexer::new(source);
@@ -98,7 +89,7 @@ impl<'src> Lexer<'src> {
         }
     }
 
-    /// Return the current token and advance the lexer
+    /// Returns the current token and advance the lexer
     #[allow(clippy::should_implement_trait)] // Iterator returns an Option we always return a Token
     pub fn next(&mut self) -> Token {
         let last = self.peek();

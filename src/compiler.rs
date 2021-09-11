@@ -1,6 +1,7 @@
 use crate::chunk::{Chunk, ConstKey};
 use crate::lexer::TokenKind;
 use crate::object::string::String as ObjString;
+use crate::object::Alloc;
 use crate::opcode::OpCode;
 use crate::parser::ast::*;
 use crate::span::{FreeSpan, Spanned};
@@ -30,9 +31,10 @@ pub enum Error {
     },
 }
 
-struct Emitter<'src> {
+struct Emitter<'src, 'alloc> {
     source: &'src str,
-    chunk: Chunk,
+    alloc: &'alloc Alloc,
+    chunk: Chunk<'alloc>,
 
     locals: Vec<Local>,
     scope_depth: i32,
@@ -47,9 +49,10 @@ struct Local {
 
 type Result = std::result::Result<(), Error>;
 
-pub fn compile(source: &str, ast: Program) -> std::result::Result<Chunk, Error> {
+pub fn compile<'alloc>(source: &str, ast: Program, alloc: &'alloc Alloc) -> std::result::Result<Chunk<'alloc>, Error> {
     let mut emitter = Emitter {
         source,
+        alloc,
         chunk: Chunk::default(),
         locals: Vec::default(),
         scope_depth: 0,
@@ -64,10 +67,10 @@ pub fn compile(source: &str, ast: Program) -> std::result::Result<Chunk, Error> 
 
 const DUMMY: u16 = u16::MAX;
 
-impl<'src> Emitter<'src> {
+impl<'src, 'alloc> Emitter<'src, 'alloc> {
     fn identifier_constant(&mut self, ident: Identifier) -> ConstKey {
         let span_str = ident.token.span.anchor(self.source).as_str();
-        let value = Value::new_object(ObjString::new(span_str));
+        let value = Value::new_object(ObjString::new(span_str, self.alloc));
         self.chunk.insert_constant(value)
     }
 
@@ -120,7 +123,7 @@ impl<'src> Emitter<'src> {
     }
 }
 
-impl<'src> Emitter<'src> {
+impl<'src, 'alloc> Emitter<'src, 'alloc> {
     fn item(&mut self, item: &Item) -> Result {
         match item {
             Item::Class(class_item) => self.class_item(class_item),
@@ -418,9 +421,6 @@ impl<'src> Emitter<'src> {
         let span = primary_expr.span();
 
         match op {
-            // TokenKind::Nil => {
-            //     self.chunk.emit(OpCode::Nil, span);
-            // }
             TokenKind::True => {
                 self.chunk.emit(OpCode::True, span);
             }
@@ -468,7 +468,7 @@ impl<'src> Emitter<'src> {
         let slice = span.anchor(self.source).as_str()
             .strip_prefix('"').unwrap()
             .strip_suffix('"').unwrap();
-        let string = ObjString::new(slice);
+        let string = ObjString::new(slice, self.alloc);
         let value = Value::new_object(string);
         let key = self.chunk.insert_constant(value);
         self.chunk.emit(OpCode::Constant { key }, span);

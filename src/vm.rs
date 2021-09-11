@@ -1,6 +1,6 @@
 use crate::chunk::{Chunk, ConstKey};
-use crate::object::string::String as RoxString;
-use crate::object::ObjectRef;
+use crate::object::string::String as ObjString;
+use crate::object::{Alloc, ObjectRef, Trace};
 use crate::opcode::OpCode;
 use crate::span::Span;
 use crate::value::Value;
@@ -8,12 +8,13 @@ use fxhash::FxHashMap as HashMap;
 use log::{debug, trace};
 
 
-pub struct VM<'code, 'src> {
+pub struct VM<'code, 'src, 'alloc> {
     source: &'src str,
-    chunk: &'code Chunk,
+    chunk: &'code Chunk<'alloc>,
+    alloc: &'alloc Alloc,
     ip: &'code [u8],
-    stack: Vec<Value>,
-    globals: HashMap<ObjectRef<RoxString>, Value>,
+    stack: Vec<Value<'alloc>>,
+    globals: HashMap<ObjectRef<'alloc, ObjString>, Value<'alloc>>,
 }
 
 #[derive(Debug)]
@@ -40,29 +41,30 @@ pub enum RuntimeErrorKind {
     UndefinedGlobalVariable(String),
 }
 
-impl<'code, 'src> VM<'code, 'src> {
-    pub fn new(chunk: &'code Chunk, source: &'src str) -> VM<'code, 'src> {
+impl<'code, 'src, 'alloc> VM<'code, 'src, 'alloc> {
+    pub fn new(chunk: &'code Chunk<'alloc>, source: &'src str, alloc: &'alloc Alloc) -> VM<'code, 'src, 'alloc> {
         VM {
             source,
             chunk,
+            alloc,
             ip: chunk.code(),
             stack: Vec::default(),
             globals: HashMap::default(),
         }
     }
 
-    fn pop(&mut self) -> Result<Value, VmError<'src>> {
+    fn pop(&mut self) -> Result<Value<'alloc>, VmError<'src>> {
         self.stack.pop()
             .ok_or(VmError::CompileError(CodeError::PopEmptyStack))
     }
 
-    fn peek(&mut self) -> Result<Value, VmError<'src>> {
+    fn peek(&mut self) -> Result<Value<'alloc>, VmError<'src>> {
         self.stack.last()
             .copied()
             .ok_or(VmError::CompileError(CodeError::PopEmptyStack))
     }
 
-    fn push(&mut self, value: Value) {
+    fn push(&mut self, value: Value<'alloc>) {
         self.stack.push(value);
     }
 
@@ -86,8 +88,20 @@ impl<'code, 'src> VM<'code, 'src> {
             .anchor(self.source)
     }
 
-    pub fn run(mut self) -> Result<Value, VmError<'src>> {
+    fn gc(&mut self) {
+        self.stack.iter().for_each(Trace::mark);
+        self.globals.iter().for_each(|(key, val)| { key.mark(); val.mark() });
+        self.chunk.constants().for_each(Trace::mark);
+
+        // SAFETY we've marked all the roots
+        unsafe { self.alloc.sweep(); }
+    }
+
+    pub fn run(mut self) -> Result<Value<'alloc>, VmError<'src>> {
         loop {
+            #[cfg(feature = "gc-stress")]
+            self.gc();
+
             let offset = (self.ip.as_ptr() as usize) - (self.chunk.code().as_ptr() as usize);
             let (opcode, next) = match OpCode::decode(self.ip) {
                 Some(res) => res,
@@ -180,7 +194,7 @@ impl<'code, 'src> VM<'code, 'src> {
 
     fn op_get_global(&mut self, key: ConstKey, offset: usize) -> Result<(), VmError<'src>> {
         let name = self.chunk.get_constant(key)
-            .and_then(Value::downcast::<RoxString>)
+            .and_then(Value::downcast::<ObjString>)
             .ok_or(VmError::CompileError(CodeError::InvalidConstantKey(key)))?;
         let value = *self.globals.get(&name)
             .ok_or_else(|| VmError::RuntimeError {
@@ -193,7 +207,7 @@ impl<'code, 'src> VM<'code, 'src> {
 
     fn op_def_global(&mut self, key: ConstKey) -> Result<(), VmError<'src>> {
         let name = self.chunk.get_constant(key)
-            .and_then(Value::downcast::<RoxString>)
+            .and_then(Value::downcast::<ObjString>)
             .ok_or(VmError::CompileError(CodeError::InvalidConstantKey(key)))?;
         let value = self.pop()?;
         trace!("define global variable name {:?}", name);
@@ -203,7 +217,7 @@ impl<'code, 'src> VM<'code, 'src> {
 
     fn op_set_global(&mut self, key: ConstKey, offset: usize) -> Result<(), VmError<'src>> {
         let name = self.chunk.get_constant(key)
-            .and_then(Value::downcast::<RoxString>)
+            .and_then(Value::downcast::<ObjString>)
             .ok_or(VmError::CompileError(CodeError::InvalidConstantKey(key)))?;
         let value = self.peek()?;
         trace!("define global variable name {:?}", name);
@@ -257,9 +271,9 @@ impl<'code, 'src> VM<'code, 'src> {
         let lhs = self.pop()?;
         let result = if let (Some(lhs), Some(rhs)) = (lhs.to_float(), rhs.to_float()) {
             Value::new_float(lhs + rhs)
-        } else if let (Some(lhs), Some(rhs)) = (lhs.downcast::<RoxString>(), rhs.downcast::<RoxString>()) {
+        } else if let (Some(lhs), Some(rhs)) = (lhs.downcast::<ObjString>(), rhs.downcast::<ObjString>()) {
             let sum = lhs.as_str().to_string() + rhs.as_str();
-            Value::new_object(RoxString::new_owned(sum.into_boxed_str()))
+            Value::new_object(ObjString::new_owned(sum.into_boxed_str(), self.alloc))
         } else {
             return Err(VmError::RuntimeError {
                 span: self.get_span(offset),

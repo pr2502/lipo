@@ -1,40 +1,29 @@
 use crate::chunk::Chunk;
-use crate::object::{ObjectHeader, ObjectRef};
+use crate::object::{Alloc, Object, ObjectRef, Trace};
 use std::fmt::{self, Debug};
 
 
-#[repr(C)]
-pub struct Function {
-    /// ObjectHeader
-    header: ObjectHeader,
-
-    pub(crate) chunk: Chunk,
+derive_Object!(['alloc] Function<'alloc>);
+pub struct Function<'alloc> {
+    pub(crate) _chunk: Chunk<'alloc>,
     pub(crate) name: Box<str>,
-    pub(crate) arity: u32,
+    pub(crate) _arity: u32,
 }
 
-impl_Object! { for Function {
-    fn debug_fmt(this, f) {
-        Debug::fmt(&*this, f)
+unsafe impl<'alloc> Trace for Function<'alloc> {
+    fn mark(&self) {
+        // nop
     }
+}
 
-    fn eq(_this, _other) {
-        false // nop impl
-    }
-
-    fn hash(_this, _hasher) -> () {
-        // nop impl
-    }
-}}
-
-impl Function {
-    pub fn new(chunk: Chunk, arity: u32, name: &str) -> ObjectRef<Function> {
+impl<'alloc> Function<'alloc> {
+    pub fn new(_chunk: Chunk<'alloc>, _arity: u32, name: &str, alloc: &'alloc Alloc) -> ObjectRef<'alloc, Function<'alloc>> {
         let name = name.into();
-        init_object!(Function { chunk, name, arity })
+        Object::init(Function { _chunk, name, _arity }, alloc)
     }
 }
 
-impl Debug for Function {
+impl<'alloc> Debug for Function<'alloc> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Function({})", self.name)
     }

@@ -1,5 +1,6 @@
 use crate::compiler::compile;
 use crate::fmt::SourceDebug;
+use crate::object::Alloc;
 use crate::parser::parse;
 use crate::vm::{RuntimeErrorKind, VmError, VM};
 
@@ -16,16 +17,18 @@ macro_rules! run {
     ( $code:literal, $($tt:tt)* ) => {{
         init();
 
+        let alloc = Alloc::new();
+
         let src = $code;
         println!("src:\n{}\n", src);
 
         let ast = parse(src).unwrap();
         println!("ast:\n{:#?}\n", ast.as_slice().wrap(src));
 
-        let chunk = compile(src, ast).unwrap();
+        let chunk = compile(src, ast, &alloc).unwrap();
         println!("{:?}", chunk.wrap(src));
 
-        let vm = VM::new(&chunk, src);
+        let vm = VM::new(&chunk, src, &alloc);
         let res = vm.run();
         dbg!(&res);
         std::assert_matches::assert_matches!(res, $($tt)*);
@@ -49,6 +52,7 @@ fn weird_expr() {
 #[test]
 fn strings_ops() {
     run!(r#"assert "string" == "string";"#);
+    run!(r#"assert "string1" /= "string2";"#);
     run!(r#"assert "foo" + "bar" == "foobar";"#);
 }
 
@@ -133,6 +137,7 @@ fn whileloop() {
     }");
 }
 
+#[ignore = "not yet implemented"]
 #[test]
 fn function() {
     run!("

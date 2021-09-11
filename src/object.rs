@@ -1,84 +1,82 @@
-use std::any::{Any, TypeId};
+use crate::value::Value;
 use std::fmt::{self, Debug};
 use std::hash::{Hash, Hasher};
-use std::mem::MaybeUninit;
+use std::marker::PhantomData;
 use std::ops::Deref;
-use std::ptr;
-use std::sync::atomic::{AtomicPtr, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+use std::{mem, ptr};
 
 
-/// Helper macro for unsafe initialization of Object types
-macro_rules! init_object {
-    ( $self_ty:ident {
-        $( $field_name:ident ),* $(,)?
-    } ) => {{
-        let mut uninit = ::std::boxed::Box::<$self_ty>::new_uninit();
-
-        // check that all fields except the `header` are initialized
-        { let $self_ty { header: _, $($field_name: _),* }; };
-
-        // check that the `header` field is at offset 0
-        assert_eq!(
-            // SAFETY we never read the uninitialized data behind the pointer
-            unsafe { ::std::ptr::addr_of!((*uninit.as_ptr()).header) },
-            uninit.as_ptr() as *const ObjectHeader,
-            "`header` field must be the first field in the struct",
-        );
-
-        // check that `header` field is of type ObjectHeader
-        fn _check_header_type(this: &$self_ty) -> &$crate::object::ObjectHeader {
-            &this.header
-        }
-
-        // SAFETY
-        //  - we checked that all fields except for header are initialized
-        //  - we checked that header is the first field
-        //  - we checked that header is of type ObjectHeader
-        unsafe {
-            let ptr = uninit.as_mut_ptr();
-            $(
-                ::std::ptr::addr_of_mut!((*ptr).$field_name)
-                    .write($field_name);
-            )*
-            $crate::object::ObjectHeader::init(uninit)
-        }
-    }};
-}
-
-
-/// Helper macro for mostly safely implementing the unsafe Object trait
-///
-/// User still needs to ensure:
-/// - `$object_ty` is marked `#[repr(C)]`
-///
-/// This macro ensures:
-/// - `vtable.typeid` matches the type the trait is impld for (`$object_ty`)
-/// - `vtable` return value is a unique static
-macro_rules! impl_Object {
-    ( for $object_ty:ty {
-        $(
-            fn $fn_name:ident ( $this:ident $(, $arg:ident $(: $arg_ty:ty)?)* $(,)? ) $(-> $fn_ret:ty)? { $($body:tt)* }
-        )*
-    } ) => {
-        unsafe impl $crate::object::Object for $object_ty {
+/// Helper macro for implementing the Object trait
+//
+// TODO wrap this in a derive macro
+#[macro_export]
+macro_rules! derive_Object {
+    ( [$($param:tt)*] $object_ty:ty ) => {
+        unsafe impl<$($param)*> $crate::object::sealed::DynObject for $object_ty {
+            // VTABLE is generated based on the traits automatically implemented for `Object`s
             fn vtable() -> &'static $crate::object::ObjectVtable {
-                static VTABLE: $crate::object::ObjectVtable
-                    = $crate::object::ObjectVtable {
-                        typeid: ::std::any::TypeId::of::<$object_ty>(),
-                        $(
-                            $fn_name: |this, $($arg $(: $arg_ty)?),*| $(-> $fn_ret)? {
-                                match unsafe { $crate::object::ObjectRefAny::downcast::<$object_ty>(this).unwrap_unchecked() } {
-                                    $this => {
-                                        $($body)*
-                                    }
-                                }
-                            }
-                        ),*
-                    };
+
+                fn downcast_unchecked<'alloc>(this: $crate::object::ObjectRefAny<'alloc>)
+                    -> $crate::object::ObjectRef<'alloc, $object_ty>
+                {
+                    debug_assert!(this.is::<$object_ty>(), "incorrect receiver type");
+
+                    // SAFETY within the context of this function, all receivers must be
+                    // of type `$object_ty`
+                    unsafe { this.downcast::<$object_ty>().unwrap_unchecked() }
+                }
+
+                // SAFETY `downcast_unchecked` must only be called on the receivers which are
+                // guaranteed to be type `$object_ty` because the function is picked from _their_
+                // vtable
+                static VTABLE: $crate::object::ObjectVtable = $crate::object::ObjectVtable {
+                    _typename: ::std::stringify!($object_ty),
+                    drop: |this| $crate::object::derive_drop(downcast_unchecked(this)),
+                    mark: |this| $crate::object::derive_mark(downcast_unchecked(this)),
+                    debug_fmt: |this, f| $crate::object::derive_debug_fmt(downcast_unchecked(this), f),
+                    partial_eq: |this, other| $crate::object::derive_partial_eq(downcast_unchecked(this), other),
+                    hash_code: |this| $crate::object::derive_hash_code(downcast_unchecked(this)),
+                };
                 &VTABLE
             }
         }
+
+        impl<$($param)*> $crate::object::Object for $object_ty {}
     };
+
+    ( $object_ty:ty ) => { derive_Object!([] $object_ty); };
+}
+
+fn derive_drop<O: Object>(this: ObjectRef<'static, O>) {
+    let ObjectRef { _alloc, ptr } = this;
+    // SAFETY GC should only be calling this when the object is unreachable
+    unsafe { Alloc::dealloc(ptr) }
+}
+
+fn derive_mark<'alloc, O: Object>(this: ObjectRef<'alloc, O>) {
+    this.mark();
+    <O as Trace>::mark(&*this);
+}
+
+fn derive_debug_fmt<'alloc, O: Object>(this: ObjectRef<'alloc, O>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    <O as Debug>::fmt(&*this, f)
+}
+
+fn derive_partial_eq<'alloc, O: Object>(this: ObjectRef<'alloc, O>, other: ObjectRefAny<'alloc>) -> bool {
+    if !<O as ObjectPartialEq>::supported() {
+        todo!("type error: type $object_ty doesn't support equality");
+    }
+
+    if let Some(other) = other.downcast::<O>() {
+        <O as ObjectPartialEq>::eq(&*this, other)
+    } else {
+        todo!("type error: rhs type doesn't match");
+    }
+}
+
+fn derive_hash_code<'alloc, O: Object>(this: ObjectRef<'alloc, O>) -> usize {
+    <O as ObjectHashCode>::hash_code(&*this)
 }
 
 
@@ -86,85 +84,415 @@ pub mod function;
 pub mod string;
 
 
-struct Alloc {
-    alloc_list: AtomicPtr<ObjectHeader>,
+////////////////////////////////////////////////////////////////////////////////
+// Alloc/GC
+
+pub struct Alloc {
+    head: AtomicPtr<ObjectHeader>,
 }
 
 impl Alloc {
-    const fn new() -> Alloc {
+    pub const fn new() -> Alloc {
         Alloc {
-            alloc_list: AtomicPtr::new(ptr::null_mut()),
+            head: AtomicPtr::new(ptr::null_mut()),
+        }
+    }
+
+    fn take_iter(&self) -> impl Iterator<Item = *mut ObjectHeader> {
+        struct Iter(*mut ObjectHeader);
+
+        impl Iterator for Iter {
+            type Item = *mut ObjectHeader;
+
+            fn next(&mut self) -> Option<Self::Item> {
+                if self.0.is_null() {
+                    return None;
+                }
+
+                // SAFETY `Alloc::insert_atomic` maintains that `next` pointer
+                // is either valid or null
+                let current = unsafe { &*self.0 };
+
+                // Relaxed doesn't race because we own the list while iterating.
+                let next = current.next.load(Ordering::Relaxed);
+
+                Some(mem::replace(&mut self.0, next))
+            }
+        }
+
+        // SeqCst is probably not necessary but it can't hurt. After this all the other accesses
+        // can be Relaxed because from this point no other thread can access the list, we own it.
+        let list = self.head.swap(ptr::null_mut(), Ordering::SeqCst);
+
+        Iter(list)
+    }
+
+    /// # Safety
+    /// `ptr` must point to a valid ObjectHeader object
+    unsafe fn insert_atomic(
+        &self,
+        // object to insert at the beginning
+        ptr: *mut ObjectHeader,
+        // next pointer of the last object to be inserted (can also be the one behind ptr)
+        next: &AtomicPtr<ObjectHeader>,
+    ) {
+        let insert: ObjectRefAny<'static> = unsafe { ObjectRefAny::from_ptr(ptr) };
+        eprintln!("insert {:?} {:?}", insert, insert.ptr);
+
+        let mut old_head = self.head.load(Ordering::Acquire);
+
+        loop {
+            next.store(old_head, Ordering::Release);
+            match self.head.compare_exchange_weak(old_head, ptr, Ordering::AcqRel, Ordering::Acquire) {
+                Ok(_) => break,
+                Err(new_head) => {
+                    old_head = new_head;
+                }
+            }
+        }
+    }
+
+    /// Allocate new object and track it
+    fn alloc<'alloc, O: Object>(&'alloc self, wrap: Box<ObjectWrap<O>>) -> ObjectRef<'alloc, O> {
+        let obj = ObjectRef {
+            _alloc: PhantomData, // 'alloc - in return type
+            ptr: Box::into_raw(wrap),
+        };
+        // SAFETY ptr is valid because we obtained it from safe ObjectRef belonging to this Alloc
+        unsafe { self.insert_atomic(obj.upcast().ptr, &obj.upcast().header().next); }
+        obj
+    }
+
+    /// Deallocate a previously allocated object
+    ///
+    /// # Safety
+    /// `ptr` must originate from a previous call to `Alloc::alloc` on the same `Alloc` instance.
+    unsafe fn dealloc<O: Object>(ptr: *mut ObjectWrap<O>) {
+        // SAFETY ptr was created from a `Box<ObjectWrap<O>>` in `Alloc::alloc`
+        let _drop = unsafe { Box::from_raw(ptr) };
+    }
+
+    /// Collect unmarked objects
+    ///
+    /// # Safety
+    /// Every reachable object must have been marked prior to calling this function. This function
+    /// will unmark objects as it traverses the heap so objects have to be re-marked before every
+    /// call to `sweep`.
+    pub unsafe fn sweep(&self) {
+        // Extracts the next field from a `*mut ObjectHeader`
+        let header = |ptr: *mut ObjectHeader| {
+            // SAFETY must audit uses of the lambda
+            unsafe { &*ptr }
+        };
+
+        // Linked list of objects left after collection
+        let mut retain_head = ptr::null_mut::<ObjectHeader>();
+        let mut retain_tail = ptr::null_mut();
+
+        // Store object into the retain list.
+        let mut retain = |ptr: *mut ObjectHeader| {
+            assert!(!ptr.is_null(), "cannot retain nullptr");
+
+            if retain_head.is_null() {
+                // insert first element
+                retain_head = ptr;
+                retain_tail = ptr;
+            } else {
+                // SAFETY tail was set in the other branch
+                header(retain_tail).next.store(ptr, Ordering::Relaxed);
+                retain_tail = ptr;
+            }
+        };
+
+        for object in self.take_iter() {
+            // SAFETY iterator only yields non-null pointers
+            if header(object).mark.swap(false, Ordering::Relaxed) {
+                // object is marked, keeping
+                retain(object);
+            } else {
+                // unmarked object, dropping
+
+                // SAFETY object is not null so it must be valid `
+                let to_drop: ObjectRefAny<'static> = unsafe { ObjectRefAny::from_ptr(object) };
+
+                // SAFETY Object behind `current` will can never be used again
+                let ObjectVtable { drop, .. } = to_drop.vtable();
+                unsafe { drop(to_drop) }
+            }
+        }
+
+        if !retain_head.is_null() {
+            // some objects were left after collection, insert them back into the alloc list
+
+            // SAFETY reinserting only items from the list which were not dropped
+            unsafe { self.insert_atomic(retain_head, &header(retain_tail).next); }
         }
     }
 }
 
-static GLOBAL_ALLOC: Alloc = Alloc::new();
+impl Drop for Alloc {
+    /// Deallocates all objects registered to this `Alloc`
+    fn drop(&mut self) {
+        for object in self.take_iter() {
+            // SAFETY `Alloc::alloc` maintains a linked list, ptr either points to a valid object
+            // or is null and we checked for null.
+            //
+            // We use 'static lifetime here because we don't have any name for 'self or similar,
+            // this object reference is valid until we drop it here.
+            let object: ObjectRefAny<'static> = unsafe { ObjectRefAny::from_ptr(object) };
+
+            let ObjectVtable { drop, .. } = object.vtable();
+            // SAFETY Object behind `current` will can never be used again
+            unsafe { drop(object) }
+        }
+    }
+}
 
 
-/// # Safety
-/// `Self` and the trait implementation must uphold the following invariants.
+pub unsafe trait Trace {
+    fn mark(&self);
+}
+
+unsafe impl<'alloc> Trace for ObjectRefAny<'alloc> {
+    fn mark(&self) {
+        let prev_marked = self.header().mark.swap(true, Ordering::Relaxed);
+        if !prev_marked {
+            // if the object wasn't marked previously mark recursively all it's children
+            let ObjectVtable { mark, .. } = self.vtable();
+            mark(*self);
+        }
+    }
+}
+
+unsafe impl<'alloc> Trace for Value<'alloc> {
+    fn mark(&self) {
+        if let Some(o) = self.to_object() {
+            o.mark();
+        }
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Object traits
+
+pub trait Object: sealed::DynObject {
+    fn init<'alloc>(this: Self, alloc: &'alloc Alloc) -> ObjectRef<'alloc, Self> {
+        alloc.alloc(Box::new(ObjectWrap {
+            header: ObjectHeader {
+                vtable: Self::vtable(),
+                next: AtomicPtr::new(ptr::null_mut()),
+                mark: AtomicBool::new(false),
+            },
+            inner: this,
+        }))
+    }
+}
+
+mod sealed {
+    use super::*;
+
+    /// Private implementation details of the [`super::Object`] trait.
+    ///
+    /// # Safety
+    /// `vtable` must be a unique static constant and must be filled correctly. See the
+    /// [`ObjectVtable`] documentation and comments.
+    pub unsafe trait DynObject: Trace + Debug + Sized {
+        fn vtable() -> &'static ObjectVtable;
+    }
+}
+
+
+pub trait ObjectPartialEq: Object {
+    /// Returns whether equality is supported for type
+    fn supported() -> bool;
+
+    /// Returns true if types are equal, panics if type doesn't support equality
+    fn eq(&self, rhs: ObjectRef<'_, Self>) -> bool;
+}
+
+impl<O> ObjectPartialEq for O
+where
+    O: Object,
+{
+    default fn supported() -> bool {
+        false
+    }
+
+    default fn eq(&self, rhs: ObjectRef<'_, O>) -> bool {
+        let _ = rhs;
+        unimplemented!()
+    }
+}
+
+impl<O> ObjectPartialEq for O
+where
+    O: Object,
+    O: PartialEq<O>,
+{
+    default fn supported() -> bool {
+        true
+    }
+
+    default fn eq(&self, rhs: ObjectRef<'_, O>) -> bool {
+        &*self == &*rhs
+    }
+}
+
+
+trait ObjectHashCode: Object {
+    /// Returns whether hashing is supported for type
+    fn supported() -> bool;
+
+    /// Returns the object fxhash::hash, panics if type doesn't support hashing
+    fn hash_code(&self) -> usize;
+}
+
+impl<O> ObjectHashCode for O
+where
+    O: Object,
+{
+    default fn supported() -> bool {
+        false
+    }
+
+    default fn hash_code(&self) -> usize {
+        unimplemented!()
+    }
+}
+
+impl<O> ObjectHashCode for O
+where
+    O: Object,
+    O: Hash,
+{
+    default fn supported() -> bool {
+        true
+    }
+
+    default fn hash_code(&self) -> usize {
+        fxhash::hash(self)
+    }
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+// Object repr
+
+/// Internal wrapper for object header and user data.
 ///
-/// - `Self` must be marked `#[repr(C)]` and its first field must be of type [`ObjectHeader`].
-/// - `vtable.typeid` must be the result of calling `std::any::TypeId::of::<Self>()`
-/// - `vtable` each implementation must return a reference to a unique ObjectVtable, and the return
-///    value must never change
-pub unsafe trait Object: 'static + Any + Debug {
-    fn vtable() -> &'static ObjectVtable;
-
-    fn header(&mut self) -> &mut ObjectHeader {
-        // SAFETY Both `Self` and `ObjectHeader` are `#[repr(C)]` and ObjectHeader is the first
-        // field of `Self`. This is guaranteed by the implementor of the unsafe trait.
-        unsafe {
-            let ptr = self as *mut Self as *mut ObjectHeader;
-            &mut *ptr
-        }
-    }
+/// `#[repr(C)]` ensures that casting between `*mut ObjectHeader` and `*mut ObjectWrap<O>` is safe
+/// as long as the type `O` matches.
+#[repr(C)]
+struct ObjectWrap<O: Object> {
+    header: ObjectHeader,
+    inner: O,
 }
 
+/// Header stores the vtable pointer and a intrusive linked list for GC.
+pub(crate) struct ObjectHeader {
+    vtable: &'static ObjectVtable,
+    next: AtomicPtr<ObjectHeader>,
+    mark: AtomicBool,
+}
+
+/// Type erased reference to a garbage collected Object
 #[derive(Clone, Copy)]
-pub struct ObjectRefAny {
-    pub(crate) ptr: *mut ObjectHeader,
+pub struct ObjectRefAny<'alloc> {
+    _alloc: PhantomData<&'alloc ()>,
+    ptr: *mut ObjectHeader,
 }
 
-pub struct ObjectRef<O: Object> {
-    pub(crate) ptr: *mut O,
+/// Reference to a garbage collected Object
+pub struct ObjectRef<'alloc, O: Object> {
+    _alloc: PhantomData<&'alloc ()>,
+    ptr: *mut ObjectWrap<O>,
 }
 
 // Implement `Clone` and `Copy` manually, because deriving them inherits the `Clone+Copy`
 // properties of the concrete `O` but `ObjectRef` is meant to be `Clone+Copy` for any `O: Object`
 // regardless of whether `O` is `Clone` or `Copy`.
-impl<O: Object> Clone for ObjectRef<O> {
+impl<'alloc, O: Object> Clone for ObjectRef<'alloc, O> {
     fn clone(&self) -> Self {
         *self
     }
 }
-impl<O: Object> Copy for ObjectRef<O> {}
+impl<'alloc, O: Object> Copy for ObjectRef<'alloc, O> {}
 
 
 pub struct ObjectVtable {
-    /// Must be the result of calling `std::any::TypeId::of::<Self>()` in [`Object`] trait impl.
-    pub typeid: TypeId,
+    /// String representation for the type, used for debugging
+    _typename: &'static str,
 
-    /// First argument is always of type `Self`, this can be safely assumed.
-    pub debug_fmt: fn(ObjectRefAny, &mut fmt::Formatter<'_>) -> fmt::Result,
+    /// Deallocate Object, dispatch for [`Alloc::dealloc`]
+    ///
+    /// # Safety
+    /// After calling `drop` the object behind `this` gets freed and cannot be used via this or any
+    /// other reference.
+    drop: unsafe fn(
+        // this: Self
+        ObjectRefAny<'static>,
+    ),
 
-    /// First argument is always of type `Self`, this can be safely assumed. Second argument can be
-    /// of any type.
-    pub eq: fn(ObjectRefAny, ObjectRefAny) -> bool,
+    /// Mark Object as reachable, dispatch for [`Trace::mark`]
+    mark: fn(
+        // this: Self
+        ObjectRefAny,
+    ),
 
-    /// First argument is always of type `Self`, this can be safely assumed.
-    pub hash: fn(ObjectRefAny, &mut dyn Hasher),
+    /// Format Object using the [`std::fmt::Debug`] formatter.
+    debug_fmt: fn(
+        // this: Self
+        ObjectRefAny,
+        // f: debug formatter from std
+        &mut fmt::Formatter<'_>
+    ) -> fmt::Result,
+
+    /// Compare Objects for equality, dispatch for [`ObjectPartialEq::partial_eq`]
+    // TODO panics if equality is not supported or the rhs type doesn't match,
+    // maybe return a Result<bool, TypeError> or Option<Result<bool, TypeError>>
+    partial_eq: fn(
+        // this: Self
+        ObjectRefAny,
+        // rhs: Any
+        ObjectRefAny,
+    ) -> bool,
+
+    /// Get Object hash code, dispatch for [`ObjectHashCode::hash_code`]
+    // TODO panics if hashing is not supported,
+    // maybe return an Option<usize>
+    hash_code: fn(
+        // this: Self
+        ObjectRefAny,
+    ) -> usize,
 }
 
-impl<O: Object> ObjectRef<O> {
-    pub fn upcast(self) -> ObjectRefAny {
-        ObjectRefAny { ptr: self.ptr as *mut ObjectHeader }
+impl<'alloc, O: Object> ObjectRef<'alloc, O> {
+    pub fn upcast(self) -> ObjectRefAny<'alloc> {
+        // SAFETY upcasting an ObjectRef is always safe, lifetime is maintained
+        unsafe {
+            ObjectRefAny::from_ptr(self.ptr as _)
+        }
     }
 }
 
-impl ObjectRefAny {
+impl<'alloc> ObjectRefAny<'alloc> {
+    pub(crate) fn as_ptr(self) -> *mut ObjectHeader {
+        self.ptr
+    }
+
+    pub(crate) unsafe fn from_ptr(ptr: *mut ObjectHeader) -> ObjectRefAny<'alloc> {
+        ObjectRefAny {
+            _alloc: PhantomData, // 'alloc - in return type
+            ptr,
+        }
+    }
+
     fn header(&self) -> &ObjectHeader {
         unsafe { &*self.ptr }
+    }
+
+    fn vtable(&self) -> &ObjectVtable {
+        self.header().vtable
     }
 
     pub fn is<O: Object>(&self) -> bool {
@@ -172,125 +500,72 @@ impl ObjectRefAny {
         // equal if and only if the vtable pointers are equal.
         //
         // So here we compare the vtable pointers directly to save two dereferences.
-        let ptr = |vtable| vtable as *const ObjectVtable as usize;
-        ptr(self.header().vtable) == ptr(O::vtable())
+        ptr::eq(
+            self.header().vtable as *const _,
+            O::vtable() as *const _,
+        )
     }
 
-    pub fn downcast<O: Object>(self) -> Option<ObjectRef<O>> {
+    pub fn downcast<O: Object>(self) -> Option<ObjectRef<'alloc, O>> {
         if self.is::<O>() {
             // SAFETY Just checked the type tag matches.
-            Some(ObjectRef { ptr: self.ptr as *mut O })
+            Some(ObjectRef {
+                _alloc: self._alloc,
+                ptr: self.ptr as *mut ObjectWrap<O>,
+            })
         } else {
             None
         }
     }
 }
 
-impl Debug for ObjectRefAny {
+impl<'alloc> Debug for ObjectRefAny<'alloc> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let ObjectVtable { debug_fmt, .. } = unsafe { (*self.ptr).vtable };
+        let ObjectVtable { debug_fmt, .. } = self.vtable();
         debug_fmt(*self, f)
     }
 }
 
-impl PartialEq for ObjectRefAny {
+impl<'alloc> PartialEq for ObjectRefAny<'alloc> {
     fn eq(&self, other: &Self) -> bool {
-        let ObjectVtable { eq, .. } = unsafe { (*self.ptr).vtable };
-        eq(*self, *other)
+        let ObjectVtable { partial_eq, .. } = self.vtable();
+        partial_eq(*self, *other)
     }
 }
 
-impl Hash for ObjectRefAny {
+impl<'alloc> Hash for ObjectRefAny<'alloc> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        let ObjectVtable { hash, .. } = unsafe { (*self.ptr).vtable };
-        hash(*self, state)
+        let ObjectVtable { hash_code, .. } = self.vtable();
+        let code = hash_code(*self);
+        state.write_usize(code);
     }
 }
 
-impl<O: Object> Deref for ObjectRef<O> {
+impl<'alloc, O: Object> Deref for ObjectRef<'alloc, O> {
     type Target = O;
     fn deref(&self) -> &Self::Target {
         // SAFETY GC ensures the pointer stays valid.
         //        We never give mutable access to the value.
-        unsafe { &*self.ptr }
+        unsafe { &(*self.ptr).inner }
     }
 }
 
-impl<O: Object + Debug> Debug for ObjectRef<O> {
+impl<'alloc, O: Object + Debug> Debug for ObjectRef<'alloc, O> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         <O as Debug>::fmt(&*self, f)
     }
 }
 
-impl<O: Object + PartialEq> PartialEq for ObjectRef<O> {
+impl<'alloc, O: Object + PartialEq> PartialEq for ObjectRef<'alloc, O> {
     fn eq(&self, other: &Self) -> bool {
         <O as PartialEq>::eq(&*self, &*other)
     }
 }
 
-impl<O: Object + Eq> Eq for ObjectRef<O> {}
+impl<'alloc, O: Object + Eq> Eq for ObjectRef<'alloc, O> {}
 
-impl<O: Object + Hash> Hash for ObjectRef<O> {
+impl<'alloc, O: Object + Hash> Hash for ObjectRef<'alloc, O> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         <O as Hash>::hash(&*self, state)
     }
-}
-
-
-// Deliberately not Clone
-#[repr(C)]
-pub struct ObjectHeader {
-    vtable: &'static ObjectVtable,
-    next: AtomicPtr<ObjectHeader>,
-}
-
-impl ObjectHeader {
-    /// Initialized uninitialized ObjectHeader.
-    ///
-    /// Links the underlying object into the global alloc list.
-    ///
-    /// # Safety
-    /// `this` must be all initialized by the caller except for the header.
-    pub unsafe fn init<O: Object>(mut this: Box<MaybeUninit<O>>) -> ObjectRef<O> {
-        let header = this.as_mut_ptr() as *mut ObjectHeader;
-        header.write(ObjectHeader {
-            vtable: O::vtable(),
-            next: AtomicPtr::new(ptr::null_mut()),
-        });
-        // SAFETY caller initialized everything but the header, now the whole object is initialized
-        let mut this = this.assume_init();
-
-        atomic_prepend(&GLOBAL_ALLOC.alloc_list, header, &this.header().next);
-
-        ObjectRef { ptr: Box::into_raw(this) }
-    }
-}
-
-fn atomic_prepend<P>(
-    list_head: &AtomicPtr<P>,
-    item: *mut P,
-    item_next: &AtomicPtr<P>,
-) {
-    let mut head = list_head.load(Ordering::Acquire);
-
-    loop {
-        item_next.store(head, Ordering::Release);
-        match list_head.compare_exchange_weak(head, item, Ordering::AcqRel, Ordering::Acquire) {
-            Ok(_) => break,
-            Err(new_head) => {
-                head = new_head;
-            }
-        }
-    }
-}
-
-#[cfg(test)]
-#[test]
-fn header_size() {
-    use std::mem::size_of;
-
-    assert_eq!(
-        size_of::<ObjectHeader>(),
-        size_of::<(usize, usize)>(),
-    );
 }
