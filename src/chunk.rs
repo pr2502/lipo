@@ -1,4 +1,5 @@
-use crate::fmt::SourceDebug;
+use crate::object::string::String;
+use crate::object::{Trace, ObjectRef};
 use crate::opcode::OpCode;
 use crate::span::FreeSpan;
 use crate::value::Value;
@@ -9,8 +10,8 @@ use std::fmt::{self, Debug};
 use std::iter;
 
 
+derive_Object!(['alloc] Chunk<'alloc>);
 /// Emmited bytecode Chunk
-#[derive(Default)]
 pub struct Chunk<'alloc> {
     /// Packed bytecode opcodes
     code: Vec<u8>,
@@ -20,43 +21,74 @@ pub struct Chunk<'alloc> {
     /// Chunk may contain up to `u16::MAX` unique constants.
     constants: IndexSet<Value<'alloc>>,
 
+    /// Source code
+    source: ObjectRef<'alloc, String>,
+
     /// Opcode origin spans
     ///
-    /// Indexed by bytes in `code`. Free spans are anchored against `source`.
+    /// One span per instruction in `code`. Free spans are anchored against `source`.
     spans: Vec<FreeSpan>,
 }
 
-impl<'alloc> SourceDebug for Chunk<'alloc> {
-    fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+unsafe impl<'alloc> Trace for Chunk<'alloc> {
+    fn mark(&self) {
+        self.source.mark();
+        self.constants().for_each(Trace::mark);
+    }
+}
+
+impl<'alloc> Debug for Chunk<'alloc> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         const RED: &str = "\x1B[31m";
         const RESET: &str = "\x1B[m";
 
+        writeln!(f, "Chunk {{")?;
+
+        if !self.constants.is_empty() {
+            writeln!(f, "constants:")?;
+            for (index, val) in self.constants.iter().enumerate() {
+                writeln!(f, "#{:<3} {:?}", index, val)?;
+            }
+            writeln!(f)?;
+        }
+
+
+        writeln!(f, "code:")?;
         let opcodes = self.opcodes();
         let spans = self.spans.iter()
-            .map(|fs| fs.anchor(source));
-
+            .map(|fs| fs.anchor(&self.source));
         let mut prev_line = 0;
-        writeln!(f, "Chunk {{")?;
         for (opcode, span) in opcodes.zip(spans) {
             let (line, _) = span.lines();
             if line != prev_line {
                 prev_line = line;
-                write!(f, "{:>4}  ", line)?;
+                write!(f, "{:>4}", line)?;
             } else {
-                write!(f, "   |  ")?;
+                write!(f, "   |")?;
             };
             let opcodefmt = format!("{:?}", opcode);
+            write!(f, "    {:<32} |", opcodefmt)?;
             if let Some((before, span, after)) = span.line_parts() {
-                writeln!(f, "  {:<32} |  {}{}{}{}{}", opcodefmt, before, RED, span, RESET, after)?;
+                writeln!(f, "  {}{}{}{}{}", before, RED, span, RESET, after)?;
             } else {
-                writeln!(f, "  {    } |", opcodefmt)?;
+                writeln!(f)?;
             }
         }
+
         writeln!(f, "}}")
     }
 }
 
 impl<'alloc> Chunk<'alloc> {
+    pub fn new(source: ObjectRef<'alloc, String>) -> Chunk<'alloc> {
+        Chunk {
+            code: Vec::new(),
+            constants: IndexSet::new(),
+            source,
+            spans: Vec::new(),
+        }
+    }
+
     pub fn opcodes(&self) -> impl Iterator<Item = OpCode> + '_ {
         let mut code = self.code.as_slice();
         iter::from_fn(move || {
@@ -70,6 +102,10 @@ impl<'alloc> Chunk<'alloc> {
         &self.code
     }
 
+    pub fn source(&self) -> ObjectRef<'alloc, String> {
+        self.source
+    }
+
     pub fn spans(&self) -> &[FreeSpan] {
         &self.spans
     }
@@ -80,13 +116,15 @@ impl<'alloc> Chunk<'alloc> {
 }
 
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug)]
 pub struct PatchPlace {
+    /// Byte offset of the start of the instruction into the code vector
     position: usize,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug)]
 pub struct LoopPoint {
+    /// Byte offset of the start of the instruction into the code vector
     position: usize,
 }
 
@@ -95,7 +133,8 @@ impl<'alloc> Chunk<'alloc> {
         let position = self.code.len();
         opcode.encode(&mut self.code);
         self.spans.push(span);
-        matches!(opcode, OpCode::Jump { .. } | OpCode::JumpIfTrue { .. } | OpCode::JumpIfFalse { .. })
+
+        matches!(opcode.tag(), OpCode::JUMP | OpCode::JUMP_IF_TRUE | OpCode::JUMP_IF_FALSE)
             .then(|| PatchPlace { position })
     }
 
@@ -106,6 +145,7 @@ impl<'alloc> Chunk<'alloc> {
         assert_matches!(
             self.code[position..][..3],
             [OpCode::JUMP | OpCode::JUMP_IF_TRUE | OpCode::JUMP_IF_FALSE, 0xFF, 0xFF],
+            "invalid PatchPlace",
         );
 
         // JUMP* is patched to jump forward right after the code that's meant to be
@@ -152,6 +192,7 @@ impl<'alloc> Chunk<'alloc> {
 
 #[derive(Clone, Copy, PartialEq)]
 pub struct ConstKey {
+    /// Index into the constant pool
     index: u16,
 }
 

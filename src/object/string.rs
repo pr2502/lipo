@@ -1,6 +1,7 @@
 use crate::object::{Alloc, Object, ObjectRef, Trace};
-use std::fmt::{self, Debug};
+use std::fmt::{self, Debug, Display};
 use std::hash::{Hash, Hasher};
+use std::ops::Deref;
 
 
 derive_Object!(String);
@@ -35,7 +36,20 @@ impl String {
 
 impl Debug for String {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.chars.fmt(f)
+        Debug::fmt(self.as_str(), f)
+    }
+}
+
+impl Display for String {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        Display::fmt(self.as_str(), f)
+    }
+}
+
+impl Deref for String {
+    type Target = str;
+    fn deref(&self) -> &Self::Target {
+        self.as_str()
     }
 }
 

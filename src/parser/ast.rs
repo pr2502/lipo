@@ -8,13 +8,18 @@
 //! [Appendix I]: https://craftinginterpreters.com/appendix-i.html
 
 use crate::lexer::Token;
+use crate::object::ObjectRef;
+use crate::object::string::String;
 
 
 mod fmt;
 mod spanned;
 
 
-pub type Program = Vec<Item>;
+pub struct AST<'alloc> {
+    pub source: ObjectRef<'alloc, String>,
+    pub items: Vec<Item>,
+}
 
 // Items
 

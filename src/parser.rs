@@ -1,4 +1,6 @@
 use crate::lexer::{Lexer, Token, TokenKind};
+use crate::object::string::String;
+use crate::object::ObjectRef;
 use std::num::ParseFloatError;
 
 
@@ -41,10 +43,19 @@ struct Parser<'src> {
 
 type Result<T> = std::result::Result<T, Error>;
 
-pub fn parse(src: &str) -> Result<Program> {
-    Parser {
-        lexer: Lexer::new(src),
-    }.program()
+pub fn parse<'alloc>(source: ObjectRef<'alloc, String>) -> Result<AST> {
+    let mut parser = Parser {
+        lexer: Lexer::new(&source),
+    };
+    let mut items = Vec::new();
+    while parser.peek_kind() != TokenKind::Eof {
+        let item = parser.item()?;
+        items.push(item);
+    }
+    Ok(AST {
+        source,
+        items,
+    })
 }
 
 // Utility functions for parsing
@@ -76,15 +87,6 @@ impl<'src> Parser<'src> {
 }
 
 impl<'src> Parser<'src> {
-    fn program(&mut self) -> Result<Program> {
-        let mut program = Vec::new();
-        while self.peek_kind() != TokenKind::Eof {
-            let item = self.item()?;
-            program.push(item);
-        }
-        Ok(program)
-    }
-
     fn item(&mut self) -> Result<Item> {
         // TODO recovery
         Ok(match self.peek_kind() {

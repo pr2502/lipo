@@ -1,7 +1,7 @@
 use crate::chunk::{Chunk, ConstKey};
 use crate::lexer::TokenKind;
-use crate::object::string::String as ObjString;
-use crate::object::Alloc;
+use crate::object::string::String;
+use crate::object::{Alloc, ObjectRef};
 use crate::opcode::OpCode;
 use crate::parser::ast::*;
 use crate::span::{FreeSpan, Spanned};
@@ -31,8 +31,8 @@ pub enum Error {
     },
 }
 
-struct Emitter<'src, 'alloc> {
-    source: &'src str,
+struct Emitter<'alloc> {
+    source: ObjectRef<'alloc, String>,
     alloc: &'alloc Alloc,
     chunk: Chunk<'alloc>,
 
@@ -49,16 +49,16 @@ struct Local {
 
 type Result = std::result::Result<(), Error>;
 
-pub fn compile<'alloc>(source: &str, ast: Program, alloc: &'alloc Alloc) -> std::result::Result<Chunk<'alloc>, Error> {
+pub fn compile<'alloc>(ast: AST<'alloc>, alloc: &'alloc Alloc) -> std::result::Result<Chunk<'alloc>, Error> {
     let mut emitter = Emitter {
-        source,
+        source: ast.source,
         alloc,
-        chunk: Chunk::default(),
+        chunk: Chunk::new(ast.source),
         locals: Vec::default(),
         scope_depth: 0,
     };
 
-    for d in &ast {
+    for d in &ast.items {
         emitter.item(d)?
     }
 
@@ -67,10 +67,10 @@ pub fn compile<'alloc>(source: &str, ast: Program, alloc: &'alloc Alloc) -> std:
 
 const DUMMY: u16 = u16::MAX;
 
-impl<'src, 'alloc> Emitter<'src, 'alloc> {
+impl<'alloc> Emitter<'alloc> {
     fn identifier_constant(&mut self, ident: Identifier) -> ConstKey {
-        let span_str = ident.token.span.anchor(self.source).as_str();
-        let value = Value::new_object(ObjString::new(span_str, self.alloc));
+        let span_str = ident.token.span.anchor(&self.source).as_str();
+        let value = Value::new_object(String::new(span_str, self.alloc));
         self.chunk.insert_constant(value)
     }
 
@@ -78,7 +78,7 @@ impl<'src, 'alloc> Emitter<'src, 'alloc> {
         if self.locals.len() >= (u16::MAX as usize) {
             return Err(Error::TooManyLocals { span: let_item.name.span() });
         }
-        let ident_slice = |ident: Identifier| ident.token.span.anchor(self.source).as_str();
+        let ident_slice = |ident: Identifier| ident.token.span.anchor(&self.source).as_str();
         let shadowing = self.locals.iter()
             .rev()
             .take_while(|loc| loc.depth == self.scope_depth)
@@ -99,7 +99,7 @@ impl<'src, 'alloc> Emitter<'src, 'alloc> {
     }
 
     fn resolve_local(&mut self, name: Identifier) -> Option<(u16, &Local)> {
-        let ident_slice = |ident: Identifier| ident.token.span.anchor(self.source).as_str();
+        let ident_slice = |ident: Identifier| ident.token.span.anchor(&self.source).as_str();
         self.locals.iter()
             .rev().enumerate()
             .find(|(_, loc)| ident_slice(loc.name) == ident_slice(name))
@@ -123,7 +123,7 @@ impl<'src, 'alloc> Emitter<'src, 'alloc> {
     }
 }
 
-impl<'src, 'alloc> Emitter<'src, 'alloc> {
+impl<'alloc> Emitter<'alloc> {
     fn item(&mut self, item: &Item) -> Result {
         match item {
             Item::Class(class_item) => self.class_item(class_item),
@@ -449,7 +449,7 @@ impl<'src, 'alloc> Emitter<'src, 'alloc> {
 
     fn float(&mut self, primary: &PrimaryExpr) -> Result {
         let span = primary.token.span;
-        let slice = span.anchor(self.source).as_str();
+        let slice = span.anchor(&self.source).as_str();
         match slice.parse() {
             Ok(float) => {
                 let value = Value::new_float(float);
@@ -465,10 +465,10 @@ impl<'src, 'alloc> Emitter<'src, 'alloc> {
 
     fn string(&mut self, primary: &PrimaryExpr) -> Result {
         let span = primary.token.span;
-        let slice = span.anchor(self.source).as_str()
+        let slice = span.anchor(&self.source).as_str()
             .strip_prefix('"').unwrap()
             .strip_suffix('"').unwrap();
-        let string = ObjString::new(slice, self.alloc);
+        let string = String::new(slice, self.alloc);
         let value = Value::new_object(string);
         let key = self.chunk.insert_constant(value);
         self.chunk.emit(OpCode::Constant { key }, span);

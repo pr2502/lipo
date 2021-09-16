@@ -2,8 +2,14 @@
 
 use super::*;
 use crate::fmt::SourceDebug;
-use std::fmt;
+use std::fmt::{self, Debug};
 
+
+impl<'alloc> Debug for AST<'alloc> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.items.as_slice().wrap(&self.source).fmt(f)
+    }
+}
 
 impl<T: SourceDebug> SourceDebug for &[T] {
     fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {

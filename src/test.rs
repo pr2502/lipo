@@ -1,5 +1,5 @@
 use crate::compiler::compile;
-use crate::fmt::SourceDebug;
+use crate::object::string::String;
 use crate::object::Alloc;
 use crate::parser::parse;
 use crate::vm::{RuntimeErrorKind, VmError, VM};
@@ -19,16 +19,16 @@ macro_rules! run {
 
         let alloc = Alloc::new();
 
-        let src = $code;
-        println!("src:\n{}\n", src);
+        let src = String::new($code, &alloc);
+        println!("src:\n{}\n", src.as_str());
 
         let ast = parse(src).unwrap();
-        println!("ast:\n{:#?}\n", ast.as_slice().wrap(src));
+        println!("ast:\n{:#?}\n", &ast);
 
-        let chunk = compile(src, ast, &alloc).unwrap();
-        println!("{:?}", chunk.wrap(src));
+        let chunk = compile(ast, &alloc).unwrap();
+        println!("{:?}", &chunk);
 
-        let vm = VM::new(&chunk, src, &alloc);
+        let vm = VM::new(&chunk, &alloc);
         let res = vm.run();
         dbg!(&res);
         std::assert_matches::assert_matches!(res, $($tt)*);

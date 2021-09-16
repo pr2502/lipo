@@ -13,7 +13,7 @@ use std::{mem, ptr};
 #[macro_export]
 macro_rules! derive_Object {
     ( [$($param:tt)*] $object_ty:ty ) => {
-        unsafe impl<$($param)*> $crate::object::sealed::DynObject for $object_ty {
+        unsafe impl<$($param)*> $crate::object::DynObject for $object_ty {
             // VTABLE is generated based on the traits automatically implemented for `Object`s
             fn vtable() -> &'static $crate::object::ObjectVtable {
 
@@ -48,22 +48,22 @@ macro_rules! derive_Object {
     ( $object_ty:ty ) => { derive_Object!([] $object_ty); };
 }
 
-fn derive_drop<O: Object>(this: ObjectRef<'static, O>) {
+pub fn derive_drop<O: Object>(this: ObjectRef<'static, O>) {
     let ObjectRef { _alloc, ptr } = this;
     // SAFETY GC should only be calling this when the object is unreachable
     unsafe { Alloc::dealloc(ptr) }
 }
 
-fn derive_mark<'alloc, O: Object>(this: ObjectRef<'alloc, O>) {
+pub fn derive_mark<'alloc, O: Object>(this: ObjectRef<'alloc, O>) {
     this.mark();
     <O as Trace>::mark(&*this);
 }
 
-fn derive_debug_fmt<'alloc, O: Object>(this: ObjectRef<'alloc, O>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+pub fn derive_debug_fmt<'alloc, O: Object>(this: ObjectRef<'alloc, O>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     <O as Debug>::fmt(&*this, f)
 }
 
-fn derive_partial_eq<'alloc, O: Object>(this: ObjectRef<'alloc, O>, other: ObjectRefAny<'alloc>) -> bool {
+pub fn derive_partial_eq<'alloc, O: Object>(this: ObjectRef<'alloc, O>, other: ObjectRefAny<'alloc>) -> bool {
     if !<O as ObjectPartialEq>::supported() {
         todo!("type error: type $object_ty doesn't support equality");
     }
@@ -75,7 +75,7 @@ fn derive_partial_eq<'alloc, O: Object>(this: ObjectRef<'alloc, O>, other: Objec
     }
 }
 
-fn derive_hash_code<'alloc, O: Object>(this: ObjectRef<'alloc, O>) -> usize {
+pub fn derive_hash_code<'alloc, O: Object>(this: ObjectRef<'alloc, O>) -> usize {
     <O as ObjectHashCode>::hash_code(&*this)
 }
 
@@ -133,12 +133,9 @@ impl Alloc {
         &self,
         // object to insert at the beginning
         ptr: *mut ObjectHeader,
-        // next pointer of the last object to be inserted (can also be the one behind ptr)
+        // the `next` pointer of the last object to be inserted
         next: &AtomicPtr<ObjectHeader>,
     ) {
-        let insert: ObjectRefAny<'static> = unsafe { ObjectRefAny::from_ptr(ptr) };
-        eprintln!("insert {:?} {:?}", insert, insert.ptr);
-
         let mut old_head = self.head.load(Ordering::Acquire);
 
         loop {
@@ -215,6 +212,8 @@ impl Alloc {
                 // SAFETY object is not null so it must be valid `
                 let to_drop: ObjectRefAny<'static> = unsafe { ObjectRefAny::from_ptr(object) };
 
+                log::info!("collecting Obj@{:?} {:?}", to_drop.ptr, &to_drop);
+
                 // SAFETY Object behind `current` will can never be used again
                 let ObjectVtable { drop, .. } = to_drop.vtable();
                 unsafe { drop(to_drop) }
@@ -264,6 +263,15 @@ unsafe impl<'alloc> Trace for ObjectRefAny<'alloc> {
     }
 }
 
+unsafe impl<'alloc, O: Object> Trace for ObjectRef<'alloc, O> {
+    fn mark(&self) {
+        let prev_marked = self.upcast().header().mark.swap(true, Ordering::Relaxed);
+        if !prev_marked {
+            self.deref().mark();
+        }
+    }
+}
+
 unsafe impl<'alloc> Trace for Value<'alloc> {
     fn mark(&self) {
         if let Some(o) = self.to_object() {
@@ -272,10 +280,11 @@ unsafe impl<'alloc> Trace for Value<'alloc> {
     }
 }
 
+
 ////////////////////////////////////////////////////////////////////////////////
 // Object traits
 
-pub trait Object: sealed::DynObject {
+pub trait Object: DynObject {
     fn init<'alloc>(this: Self, alloc: &'alloc Alloc) -> ObjectRef<'alloc, Self> {
         alloc.alloc(Box::new(ObjectWrap {
             header: ObjectHeader {
@@ -288,17 +297,14 @@ pub trait Object: sealed::DynObject {
     }
 }
 
-mod sealed {
-    use super::*;
 
-    /// Private implementation details of the [`super::Object`] trait.
-    ///
-    /// # Safety
-    /// `vtable` must be a unique static constant and must be filled correctly. See the
-    /// [`ObjectVtable`] documentation and comments.
-    pub unsafe trait DynObject: Trace + Debug + Sized {
-        fn vtable() -> &'static ObjectVtable;
-    }
+/// Private implementation details of the [`Object`] trait.
+///
+/// # Safety
+/// `vtable` must be a unique static constant and must be filled correctly. See the
+/// [`ObjectVtable`] documentation and comments.
+pub unsafe trait DynObject: Trace + Debug + Sized {
+    fn vtable() -> &'static ObjectVtable;
 }
 
 
@@ -421,26 +427,26 @@ impl<'alloc, O: Object> Copy for ObjectRef<'alloc, O> {}
 
 pub struct ObjectVtable {
     /// String representation for the type, used for debugging
-    _typename: &'static str,
+    pub _typename: &'static str,
 
     /// Deallocate Object, dispatch for [`Alloc::dealloc`]
     ///
     /// # Safety
     /// After calling `drop` the object behind `this` gets freed and cannot be used via this or any
     /// other reference.
-    drop: unsafe fn(
+    pub drop: unsafe fn(
         // this: Self
         ObjectRefAny<'static>,
     ),
 
     /// Mark Object as reachable, dispatch for [`Trace::mark`]
-    mark: fn(
+    pub mark: fn(
         // this: Self
         ObjectRefAny,
     ),
 
     /// Format Object using the [`std::fmt::Debug`] formatter.
-    debug_fmt: fn(
+    pub debug_fmt: fn(
         // this: Self
         ObjectRefAny,
         // f: debug formatter from std
@@ -450,7 +456,7 @@ pub struct ObjectVtable {
     /// Compare Objects for equality, dispatch for [`ObjectPartialEq::partial_eq`]
     // TODO panics if equality is not supported or the rhs type doesn't match,
     // maybe return a Result<bool, TypeError> or Option<Result<bool, TypeError>>
-    partial_eq: fn(
+    pub partial_eq: fn(
         // this: Self
         ObjectRefAny,
         // rhs: Any
@@ -460,7 +466,7 @@ pub struct ObjectVtable {
     /// Get Object hash code, dispatch for [`ObjectHashCode::hash_code`]
     // TODO panics if hashing is not supported,
     // maybe return an Option<usize>
-    hash_code: fn(
+    pub hash_code: fn(
         // this: Self
         ObjectRefAny,
     ) -> usize,
