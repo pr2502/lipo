@@ -15,7 +15,7 @@ macro_rules! derive_Object {
     ( [$($param:tt)*] $object_ty:ty ) => {
         unsafe impl<$($param)*> $crate::object::DynObject for $object_ty {
             // VTABLE is generated based on the traits automatically implemented for `Object`s
-            fn vtable() -> &'static $crate::object::ObjectVtable {
+            fn __vtable() -> &'static $crate::object::ObjectVtable {
 
                 fn downcast_unchecked<'alloc>(this: $crate::object::ObjectRefAny<'alloc>)
                     -> $crate::object::ObjectRef<'alloc, $object_ty>
@@ -32,11 +32,11 @@ macro_rules! derive_Object {
                 // vtable
                 static VTABLE: $crate::object::ObjectVtable = $crate::object::ObjectVtable {
                     _typename: ::std::stringify!($object_ty),
-                    drop: |this| $crate::object::derive_drop(downcast_unchecked(this)),
-                    mark: |this| $crate::object::derive_mark(downcast_unchecked(this)),
-                    debug_fmt: |this, f| $crate::object::derive_debug_fmt(downcast_unchecked(this), f),
-                    partial_eq: |this, other| $crate::object::derive_partial_eq(downcast_unchecked(this), other),
-                    hash_code: |this| $crate::object::derive_hash_code(downcast_unchecked(this)),
+                    drop: |this| $crate::object::__derive_drop(downcast_unchecked(this)),
+                    mark: |this| $crate::object::__derive_mark(downcast_unchecked(this)),
+                    debug_fmt: |this, f| $crate::object::__derive_debug_fmt(downcast_unchecked(this), f),
+                    partial_eq: |this, other| $crate::object::__derive_partial_eq(downcast_unchecked(this), other),
+                    hash_code: |this| $crate::object::__derive_hash_code(downcast_unchecked(this)),
                 };
                 &VTABLE
             }
@@ -48,22 +48,26 @@ macro_rules! derive_Object {
     ( $object_ty:ty ) => { derive_Object!([] $object_ty); };
 }
 
-pub fn derive_drop<O: Object>(this: ObjectRef<'static, O>) {
+#[doc(hidden)]
+pub fn __derive_drop<O: Object>(this: ObjectRef<'static, O>) {
     let ObjectRef { _alloc, ptr } = this;
     // SAFETY GC should only be calling this when the object is unreachable
     unsafe { Alloc::dealloc(ptr) }
 }
 
-pub fn derive_mark<'alloc, O: Object>(this: ObjectRef<'alloc, O>) {
+#[doc(hidden)]
+pub fn __derive_mark<'alloc, O: Object>(this: ObjectRef<'alloc, O>) {
     this.mark();
     <O as Trace>::mark(&*this);
 }
 
-pub fn derive_debug_fmt<'alloc, O: Object>(this: ObjectRef<'alloc, O>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+#[doc(hidden)]
+pub fn __derive_debug_fmt<'alloc, O: Object>(this: ObjectRef<'alloc, O>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     <O as Debug>::fmt(&*this, f)
 }
 
-pub fn derive_partial_eq<'alloc, O: Object>(this: ObjectRef<'alloc, O>, other: ObjectRefAny<'alloc>) -> bool {
+#[doc(hidden)]
+pub fn __derive_partial_eq<'alloc, O: Object>(this: ObjectRef<'alloc, O>, other: ObjectRefAny<'alloc>) -> bool {
     if !<O as ObjectPartialEq>::supported() {
         todo!("type error: type $object_ty doesn't support equality");
     }
@@ -75,13 +79,21 @@ pub fn derive_partial_eq<'alloc, O: Object>(this: ObjectRef<'alloc, O>, other: O
     }
 }
 
-pub fn derive_hash_code<'alloc, O: Object>(this: ObjectRef<'alloc, O>) -> usize {
+#[doc(hidden)]
+pub fn __derive_hash_code<'alloc, O: Object>(this: ObjectRef<'alloc, O>) -> usize {
     <O as ObjectHashCode>::hash_code(&*this)
 }
 
 
-pub mod function;
-pub mod string;
+pub mod builtins {
+    mod function;
+    mod string;
+
+    pub use function::Function;
+    pub use string::String;
+
+    pub use crate::chunk::Chunk;
+}
 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -92,12 +104,15 @@ pub struct Alloc {
 }
 
 impl Alloc {
+    /// Create a new empty `Alloc`.
     pub const fn new() -> Alloc {
         Alloc {
             head: AtomicPtr::new(ptr::null_mut()),
         }
     }
 
+    /// Take the current head of the alloc list and return an `Iterator` over all it's
+    /// [`ObjectHeader`]s.
     fn take_iter(&self) -> impl Iterator<Item = *mut ObjectHeader> {
         struct Iter(*mut ObjectHeader);
 
@@ -120,13 +135,16 @@ impl Alloc {
             }
         }
 
-        // SeqCst is probably not necessary but it can't hurt. After this all the other accesses
-        // can be Relaxed because from this point no other thread can access the list, we own it.
-        let list = self.head.swap(ptr::null_mut(), Ordering::SeqCst);
+        // This Acquire pairs with the Release part of the AcqRel on successful exchange
+        // in [`insert_atomic`]. It ensures all writes to the list are synchronized
+        // before we iterate over it.
+        let list = self.head.swap(ptr::null_mut(), Ordering::Acquire);
 
         Iter(list)
     }
 
+    /// Prepend a list of one or more [`ObjectHeader`]s to the list managed by this Alloc.
+    ///
     /// # Safety
     /// `ptr` must point to a valid ObjectHeader object
     unsafe fn insert_atomic(
@@ -139,7 +157,12 @@ impl Alloc {
         let mut old_head = self.head.load(Ordering::Acquire);
 
         loop {
-            next.store(old_head, Ordering::Release);
+            // The next pointer is already synchronized by the Release-Acquire pair in the exchange
+            // here and in the swap in [`take_iter`].
+            next.store(old_head, Ordering::Relaxed);
+
+            // The Release part of the AcqRel on success pairs with either the Acquire on failure,
+            // the Acquire when inserting the next item(s) or with the Acquire in [`take_iter`].
             match self.head.compare_exchange_weak(old_head, ptr, Ordering::AcqRel, Ordering::Acquire) {
                 Ok(_) => break,
                 Err(new_head) => {
@@ -148,9 +171,19 @@ impl Alloc {
             }
         }
     }
+}
 
+impl Alloc {
     /// Allocate new object and track it
-    fn alloc<'alloc, O: Object>(&'alloc self, wrap: Box<ObjectWrap<O>>) -> ObjectRef<'alloc, O> {
+    fn alloc<'alloc, O: Object>(&'alloc self, inner: O) -> ObjectRef<'alloc, O> {
+        let wrap = Box::new(ObjectWrap {
+            header: ObjectHeader {
+                vtable: O::__vtable(),
+                next: AtomicPtr::new(ptr::null_mut()),
+                mark: AtomicBool::new(false),
+            },
+            inner,
+        });
         let obj = ObjectRef {
             _alloc: PhantomData, // 'alloc - in return type
             ptr: Box::into_raw(wrap),
@@ -285,26 +318,24 @@ unsafe impl<'alloc> Trace for Value<'alloc> {
 // Object traits
 
 pub trait Object: DynObject {
+    /// Moves the object to the heap and registers it in the `alloc` allocator.
+    ///
+    /// Do not override this method, use the default implementation.
     fn init<'alloc>(this: Self, alloc: &'alloc Alloc) -> ObjectRef<'alloc, Self> {
-        alloc.alloc(Box::new(ObjectWrap {
-            header: ObjectHeader {
-                vtable: Self::vtable(),
-                next: AtomicPtr::new(ptr::null_mut()),
-                mark: AtomicBool::new(false),
-            },
-            inner: this,
-        }))
+        alloc.alloc(this)
     }
 }
 
 
-/// Private implementation details of the [`Object`] trait.
+/// Custom dynamic dispatch implementation for the [`Object`] trait.
 ///
-/// # Safety
-/// `vtable` must be a unique static constant and must be filled correctly. See the
-/// [`ObjectVtable`] documentation and comments.
+/// **This trait should not be implemented manually**, use the [`derive_Object`] macro instead.
+#[doc(hidden)]
 pub unsafe trait DynObject: Trace + Debug + Sized {
-    fn vtable() -> &'static ObjectVtable;
+    /// # Safety
+    /// Must return a unique static constant and must be filled correctly.
+    /// See the [`ObjectVtable`] documentation and comments.
+    fn __vtable() -> &'static ObjectVtable;
 }
 
 
@@ -340,12 +371,12 @@ where
     }
 
     default fn eq(&self, rhs: ObjectRef<'_, O>) -> bool {
-        &*self == &*rhs
+        *self == *rhs
     }
 }
 
 
-trait ObjectHashCode: Object {
+pub trait ObjectHashCode: Object {
     /// Returns whether hashing is supported for type
     fn supported() -> bool;
 
@@ -425,6 +456,13 @@ impl<'alloc, O: Object> Clone for ObjectRef<'alloc, O> {
 impl<'alloc, O: Object> Copy for ObjectRef<'alloc, O> {}
 
 
+/// Custom [virtual method table](https://en.wikipedia.org/wiki/Virtual_method_table) for the
+/// [`DynObject`] trait.
+///
+/// For every method the first argument (usually marked as `this`) is expected to be the receiver
+/// and when called will receive upcast `ObjectRef<'_, Self>`, therefore for that argument it is
+/// safe to downcast it without checking the type tag first.
+#[doc(hidden)]
 pub struct ObjectVtable {
     /// String representation for the type, used for debugging
     pub _typename: &'static str,
@@ -433,7 +471,7 @@ pub struct ObjectVtable {
     ///
     /// # Safety
     /// After calling `drop` the object behind `this` gets freed and cannot be used via this or any
-    /// other reference.
+    /// other reference. Caller must ensure that the Object is unreachable.
     pub drop: unsafe fn(
         // this: Self
         ObjectRefAny<'static>,
@@ -453,7 +491,7 @@ pub struct ObjectVtable {
         &mut fmt::Formatter<'_>
     ) -> fmt::Result,
 
-    /// Compare Objects for equality, dispatch for [`ObjectPartialEq::partial_eq`]
+    /// Compare Objects for equality, dispatch for [`ObjectPartialEq::eq`]
     // TODO panics if equality is not supported or the rhs type doesn't match,
     // maybe return a Result<bool, TypeError> or Option<Result<bool, TypeError>>
     pub partial_eq: fn(
@@ -507,8 +545,8 @@ impl<'alloc> ObjectRefAny<'alloc> {
         //
         // So here we compare the vtable pointers directly to save two dereferences.
         ptr::eq(
-            self.header().vtable as *const _,
-            O::vtable() as *const _,
+            self.header().vtable,
+            O::__vtable(),
         )
     }
 

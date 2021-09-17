@@ -8,8 +8,8 @@
 //! [Appendix I]: https://craftinginterpreters.com/appendix-i.html
 
 use crate::lexer::Token;
+use crate::object::builtins::String;
 use crate::object::ObjectRef;
-use crate::object::string::String;
 
 
 mod fmt;

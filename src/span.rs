@@ -26,7 +26,6 @@ impl FreeSpan {
         (self.start as usize)..(self.end as usize)
     }
 
-    #[allow(clippy::needless_lifetimes)] // we want to name the lifetime a meaningful name
     pub fn anchor<'src>(self, source: &'src str) -> Span<'src> {
         let FreeSpan { start, end } = self;
 

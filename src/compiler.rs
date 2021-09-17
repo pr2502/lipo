@@ -1,6 +1,6 @@
-use crate::chunk::{Chunk, ConstKey};
+use crate::chunk::{Chunk, ChunkBuf, ConstKey};
 use crate::lexer::TokenKind;
-use crate::object::string::String;
+use crate::object::builtins::String;
 use crate::object::{Alloc, ObjectRef};
 use crate::opcode::OpCode;
 use crate::parser::ast::*;
@@ -34,7 +34,7 @@ pub enum Error {
 struct Emitter<'alloc> {
     source: ObjectRef<'alloc, String>,
     alloc: &'alloc Alloc,
-    chunk: Chunk<'alloc>,
+    chunk: ChunkBuf<'alloc>,
 
     locals: Vec<Local>,
     scope_depth: i32,
@@ -53,7 +53,7 @@ pub fn compile<'alloc>(ast: AST<'alloc>, alloc: &'alloc Alloc) -> std::result::R
     let mut emitter = Emitter {
         source: ast.source,
         alloc,
-        chunk: Chunk::new(ast.source),
+        chunk: ChunkBuf::new(ast.source),
         locals: Vec::default(),
         scope_depth: 0,
     };
@@ -65,7 +65,7 @@ pub fn compile<'alloc>(ast: AST<'alloc>, alloc: &'alloc Alloc) -> std::result::R
     emitter.chunk.emit(OpCode::Unit, ast.eof.span);
     emitter.chunk.emit(OpCode::Return, ast.eof.span);
 
-    Ok(emitter.chunk)
+    Ok(emitter.chunk.check())
 }
 
 const DUMMY: u16 = u16::MAX;

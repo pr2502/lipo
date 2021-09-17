@@ -11,6 +11,10 @@
 // use RFC 2585 right away, don't way for it to get enabled by default
 #![deny(unsafe_op_in_unsafe_fn)]
 
+// we like to give lifetimes meaningful names
+#![allow(clippy::needless_lifetimes)]
+
+
 #[macro_use]
 pub mod object;
 

@@ -1,11 +1,10 @@
 use crate::chunk::{Chunk, ConstKey};
-use crate::object::string::String;
+use crate::object::builtins::String;
 use crate::object::{Alloc, ObjectRef, Trace};
 use crate::opcode::OpCode;
 use crate::span::FreeSpan;
 use crate::value::Value;
 use fxhash::FxHashMap as HashMap;
-use std::hint;
 
 
 pub struct VM<'code, 'alloc> {
@@ -28,8 +27,6 @@ pub enum VmError<'alloc> {
 
 #[derive(Debug)]
 pub enum CodeError {
-    UnexpectedEndOfCode,
-    InvalidConstantKey(ConstKey),
     InvalidStackSlot(u16),
     PopEmptyStack,
 }
@@ -43,7 +40,6 @@ pub enum RuntimeErrorKind {
 
 impl<'code, 'alloc> VM<'code, 'alloc> {
     pub fn new(chunk: &'code Chunk<'alloc>, alloc: &'alloc Alloc) -> VM<'code, 'alloc> {
-        chunk.check();
         VM {
             chunk,
             alloc,
@@ -68,26 +64,34 @@ impl<'code, 'alloc> VM<'code, 'alloc> {
         self.stack.push(value);
     }
 
-    fn get_span(&self, byte_offset: usize) -> FreeSpan {
-        let code = self.chunk.code();
-        let mut scan = code;
-        let mut span_idx = 0;
-        loop {
-            // NOTE Not sure this is actually technically ok, it works in practice but...
-            let scan_offset = (scan.as_ptr() as usize) - (code.as_ptr() as usize);
-            if scan_offset == byte_offset {
-                break span_idx;
-            }
-            let (_, next) = OpCode::decode(scan)
-                .unwrap(); // Chunk is checked when the VM is constructed.
-            scan = next;
-            span_idx += 1;
-        };
+    fn get_constant(&self, key: ConstKey) -> Value<'alloc> {
+        match self.chunk.get_constant(key) {
+            Some(constant) => constant,
+            None => {
+                #[cfg(debug_assertions)]
+                { unreachable!("BUG: VM encountered invalid constant key {:?}, Chunk::check is incorrect", key) }
 
-        self.chunk.spans()
-            .get(span_idx)
-            .copied()
-            .expect("missing span information")
+                // SAFETY Chunk is checked when the VM is constructed, all constant references must
+                // be valid.
+                #[cfg(not(debug_assertions))]
+                unsafe { std::hint::unreachable_unchecked() }
+            }
+        }
+    }
+
+    fn get_global_name(&self, key: ConstKey) -> ObjectRef<'alloc, String> {
+        match self.get_constant(key).downcast::<String>() {
+            Some(name) => name,
+            None => {
+                #[cfg(debug_assertions)] // TODO get type name
+                { unreachable!("BUG: VM encountered invalid constant type for {:?}, expected String found ?, Chunk::check is incorrect", key) }
+
+                // SAFETY Chunk is checked when the VM is constructed, all constant references used
+                // in DefGlobal, GetGlobal or SetGlobal OpCodes must reference a String.
+                #[cfg(not(debug_assertions))]
+                unsafe { std::hint::unreachable_unchecked() }
+            }
+        }
     }
 
     fn gc(&mut self) {
@@ -138,7 +142,7 @@ impl<'code, 'alloc> VM<'code, 'alloc> {
             let opcode = self.read_u8();
 
             match opcode {
-                OpCode::CONSTANT        => self.op_constant()?,
+                OpCode::CONSTANT        => self.op_constant(),
                 OpCode::UNIT            => self.op_unit(),
                 OpCode::TRUE            => self.op_true(),
                 OpCode::FALSE           => self.op_false(),
@@ -169,10 +173,16 @@ impl<'code, 'alloc> VM<'code, 'alloc> {
                     log::debug!("return value {:?}", &value);
                     break Ok(value);
                 }
-                // SAFETY Chunk is checked when the VM is constructed, all OpCodes must be valid.
-                // IP can only be at the start of an OpCode if every instruction consumes all of
-                // it's argument bytes.
-                _ => unsafe { hint::unreachable_unchecked() },
+                _ => {
+                    #[cfg(debug_assertions)]
+                    unreachable!("BUG: VM encountered invalid opcode {:#02X}, Chunk::check is incorrect", opcode);
+
+                    // SAFETY Chunk is checked when the VM is constructed, all OpCodes must be valid.
+                    // IP can only be at the start of an OpCode if every instruction consumes all of
+                    // it's argument bytes.
+                    #[cfg(not(debug_assertions))]
+                    unsafe { std::hint::unreachable_unchecked(); }
+                }
             }
         }
     }
@@ -180,13 +190,11 @@ impl<'code, 'alloc> VM<'code, 'alloc> {
     ////////////////////////////////////////
     // Instruction implementation
 
-    fn op_constant(&mut self) -> Result<(), VmError<'alloc>> {
+    fn op_constant(&mut self) {
         let key = self.read_const_key();
-        let constant = self.chunk.get_constant(key)
-            .ok_or(VmError::CompileError(CodeError::InvalidConstantKey(key)))?;
-        log::trace!("constant {:?}", &constant);
+
+        let constant = self.get_constant(key);
         self.push(constant);
-        Ok(())
     }
 
     fn op_unit(&mut self) {
@@ -225,13 +233,11 @@ impl<'code, 'alloc> VM<'code, 'alloc> {
 
     fn op_get_global(&mut self) -> Result<(), VmError<'alloc>> {
         let key = self.read_const_key();
-        let name = self.chunk.get_constant(key)
-            .and_then(Value::downcast::<String>)
-            .ok_or(VmError::CompileError(CodeError::InvalidConstantKey(key)))?;
+        let name = self.get_global_name(key);
         let value = *self.globals.get(&name)
             .ok_or_else(|| VmError::RuntimeError {
                 source: self.chunk.source(),
-                span: self.get_span(self.offset() - 3),
+                span: self.chunk.span(self.offset() - 3),
                 kind: RuntimeErrorKind::UndefinedGlobalVariable(name.as_str().to_string()),
             })?;
         self.push(value);
@@ -240,9 +246,7 @@ impl<'code, 'alloc> VM<'code, 'alloc> {
 
     fn op_def_global(&mut self) -> Result<(), VmError<'alloc>> {
         let key = self.read_const_key();
-        let name = self.chunk.get_constant(key)
-            .and_then(Value::downcast::<String>)
-            .ok_or(VmError::CompileError(CodeError::InvalidConstantKey(key)))?;
+        let name = self.get_global_name(key);
         let value = self.pop()?;
         log::trace!("define global variable name {:?}", name);
         self.globals.insert(name, value);
@@ -251,15 +255,13 @@ impl<'code, 'alloc> VM<'code, 'alloc> {
 
     fn op_set_global(&mut self) -> Result<(), VmError<'alloc>> {
         let key = self.read_const_key();
-        let name = self.chunk.get_constant(key)
-            .and_then(Value::downcast::<String>)
-            .ok_or(VmError::CompileError(CodeError::InvalidConstantKey(key)))?;
+        let name = self.get_global_name(key);
         let value = self.peek()?;
         log::trace!("define global variable name {:?}", name);
         if self.globals.insert(name, value).is_none() {
             return Err(VmError::RuntimeError {
                 source: self.chunk.source(),
-                span: self.get_span(self.offset() - 3),
+                span: self.chunk.span(self.offset() - 3),
                 kind: RuntimeErrorKind::UndefinedGlobalVariable(name.as_str().to_string()),
             });
         }
@@ -283,7 +285,7 @@ impl<'code, 'alloc> VM<'code, 'alloc> {
                 dbg!(lhs, rhs);
                 return Err(VmError::RuntimeError {
                     source: self.chunk.source(),
-                    span: self.get_span(self.offset() - 1),
+                    span: self.chunk.span(self.offset() - 1),
                     kind: RuntimeErrorKind::TypeError("comparison only supported on Numbers"),
                 })
             },
@@ -301,7 +303,7 @@ impl<'code, 'alloc> VM<'code, 'alloc> {
                 dbg!(lhs, rhs);
                 return Err(VmError::RuntimeError {
                     source: self.chunk.source(),
-                    span: self.get_span(self.offset() - 1),
+                    span: self.chunk.span(self.offset() - 1),
                     kind: RuntimeErrorKind::TypeError("comparison only supported on Numbers"),
                 })
             },
@@ -321,7 +323,7 @@ impl<'code, 'alloc> VM<'code, 'alloc> {
         } else {
             return Err(VmError::RuntimeError {
                 source: self.chunk.source(),
-                span: self.get_span(self.offset() - 1),
+                span: self.chunk.span(self.offset() - 1),
                 kind: RuntimeErrorKind::TypeError("addition only supported on Numbers and Strings"),
             });
         };
@@ -336,7 +338,7 @@ impl<'code, 'alloc> VM<'code, 'alloc> {
             (Some(lhs), Some(rhs)) => Value::new_float(lhs - rhs),
             _ => return Err(VmError::RuntimeError {
                 source: self.chunk.source(),
-                span: self.get_span(self.offset() - 1),
+                span: self.chunk.span(self.offset() - 1),
                 kind: RuntimeErrorKind::TypeError("subtraction only supported on Numbers"),
             }),
         };
@@ -351,7 +353,7 @@ impl<'code, 'alloc> VM<'code, 'alloc> {
             (Some(lhs), Some(rhs)) => Value::new_float(lhs * rhs),
             _ => return Err(VmError::RuntimeError {
                 source: self.chunk.source(),
-                span: self.get_span(self.offset() - 1),
+                span: self.chunk.span(self.offset() - 1),
                 kind: RuntimeErrorKind::TypeError("multiplication only supported on Numbers"),
             }),
         };
@@ -366,7 +368,7 @@ impl<'code, 'alloc> VM<'code, 'alloc> {
             (Some(lhs), Some(rhs)) => Value::new_float(lhs / rhs),
             _ => return Err(VmError::RuntimeError {
                 source: self.chunk.source(),
-                span: self.get_span(self.offset() - 1),
+                span: self.chunk.span(self.offset() - 1),
                 kind: RuntimeErrorKind::TypeError("division only supported on Numbers"),
             }),
         };
@@ -387,7 +389,7 @@ impl<'code, 'alloc> VM<'code, 'alloc> {
             .map(|n| Value::new_float(-n))
             .ok_or_else(|| VmError::RuntimeError {
                 source: self.chunk.source(),
-                span: self.get_span(self.offset() - 1),
+                span: self.chunk.span(self.offset() - 1),
                 kind: RuntimeErrorKind::TypeError("negation only supported on Numbers"),
             })?;
         self.push(value);
@@ -400,12 +402,12 @@ impl<'code, 'alloc> VM<'code, 'alloc> {
             Some(true) => {}
             Some(false) => return Err(VmError::RuntimeError {
                 source: self.chunk.source(),
-                span: self.get_span(self.offset() - 1),
+                span: self.chunk.span(self.offset() - 1),
                 kind: RuntimeErrorKind::AssertionError
             }),
             _ => return Err(VmError::RuntimeError {
                 source: self.chunk.source(),
-                span: self.get_span(self.offset() - 1),
+                span: self.chunk.span(self.offset() - 1),
                 kind: RuntimeErrorKind::TypeError("asserted expression must return a Bool"),
             }),
         }

@@ -1,5 +1,5 @@
 use crate::compiler::compile;
-use crate::object::string::String;
+use crate::object::builtins::String;
 use crate::object::Alloc;
 use crate::parser::parse;
 use crate::vm::{RuntimeErrorKind, VmError, VM};

@@ -1,5 +1,5 @@
 use crate::lexer::{Lexer, Token, TokenKind};
-use crate::object::string::String;
+use crate::object::builtins::String;
 use crate::object::ObjectRef;
 use std::num::ParseFloatError;
 

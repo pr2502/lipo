@@ -1,39 +1,86 @@
-use crate::object::string::String;
-use crate::object::{Trace, ObjectRef};
+use crate::object::builtins::String;
+use crate::object::{ObjectRef, Trace};
 use crate::opcode::OpCode;
 use crate::span::FreeSpan;
 use crate::value::Value;
-use indexmap::IndexSet;
+use fxhash::FxHashMap as HashMap;
 use std::assert_matches::assert_matches;
+use std::cmp::Ordering;
+use std::collections::hash_map::Entry;
 use std::convert::TryInto;
 use std::fmt::{self, Debug};
 use std::iter;
 
 
 derive_Object!(['alloc] Chunk<'alloc>);
-/// Emmited bytecode Chunk
+/// Bytecode Chunk
 pub struct Chunk<'alloc> {
-    /// Packed bytecode opcodes
-    code: Vec<u8>,
+    /// Packed bytecode
+    code: Box<[u8]>,
 
     /// Constant pool
     ///
     /// Chunk may contain up to `u16::MAX` unique constants.
-    constants: IndexSet<Value<'alloc>>,
+    constants: Box<[Value<'alloc>]>,
 
     /// Source code
     source: ObjectRef<'alloc, String>,
 
-    /// Opcode origin spans
-    ///
-    /// One span per instruction in `code`. Free spans are anchored against `source`.
-    spans: Vec<FreeSpan>,
+    /// Origin span for each opcode
+    spans: Box<[FreeSpan]>,
 }
+
+impl<'alloc> Chunk<'alloc> {
+    pub fn code(&self) -> &[u8] {
+        &self.code
+    }
+
+    pub fn source(&self) -> ObjectRef<'alloc, String> {
+        self.source
+    }
+
+    /// Get span from byte offset of the OpCode
+    ///
+    /// Will panic if the byte offset code incorrect.
+    pub fn span(&self, byte_offset: usize) -> FreeSpan {
+        let mut ip = &self.code[..];
+        let mut span_idx = 0;
+        assert!(byte_offset < self.code.len(), "invalid OpCode byte offset");
+        loop {
+            let scan_offset = (ip.as_ptr() as usize) - (self.code.as_ptr() as usize);
+            match Ord::cmp(&scan_offset, &byte_offset) {
+                Ordering::Less => {
+                    // Continue scanning
+                }
+                Ordering::Equal => {
+                    // Found
+                    break span_idx;
+                }
+                Ordering::Greater => {
+                    // Misaligned byte offset
+                    panic!("invalid OpCode byte offset");
+                }
+            }
+            let (_, next_ip) = OpCode::decode(ip).unwrap();
+            ip = next_ip;
+            span_idx += 1;
+        };
+
+        // TODO don't panic if debuginfo is missing
+        self.spans[span_idx]
+    }
+
+    pub fn get_constant(&self, key: ConstKey) -> Option<Value<'alloc>> {
+        let ConstKey { index } = key;
+        self.constants.get(index as usize).copied()
+    }
+}
+
 
 unsafe impl<'alloc> Trace for Chunk<'alloc> {
     fn mark(&self) {
         self.source.mark();
-        self.constants().for_each(Trace::mark);
+        self.constants.iter().for_each(Trace::mark);
     }
 }
 
@@ -54,7 +101,14 @@ impl<'alloc> Debug for Chunk<'alloc> {
 
 
         writeln!(f, "code:")?;
-        let opcodes = self.opcodes();
+        let opcodes = {
+            let mut code = &self.code[..];
+            iter::from_fn(move || {
+                let (opcode, rest) = OpCode::decode(code)?;
+                code = rest;
+                Some(opcode)
+            })
+        };
         let spans = self.spans.iter()
             .map(|fs| fs.anchor(&self.source));
         let mut prev_line = 0;
@@ -79,58 +133,58 @@ impl<'alloc> Debug for Chunk<'alloc> {
     }
 }
 
-impl<'alloc> Chunk<'alloc> {
-    pub fn new(source: ObjectRef<'alloc, String>) -> Chunk<'alloc> {
-        Chunk {
-            code: Vec::new(),
-            constants: IndexSet::new(),
+
+/// Incomplete and/or unchecked [`Chunk`].
+pub struct ChunkBuf<'alloc> {
+    /// Packed bytecode buffer
+    code: Vec<u8>,
+
+    /// Constant pool
+    constants: Vec<Value<'alloc>>,
+
+    /// Deduplicating map for constant pool
+    constant_hash: HashMap<Value<'alloc>, ConstKey>,
+
+    /// Source code
+    source: ObjectRef<'alloc, String>,
+
+    /// Origin span for each opcode
+    spans: Vec<FreeSpan>,
+}
+
+impl<'alloc> ChunkBuf<'alloc> {
+    pub fn new(source: ObjectRef<'alloc, String>) -> ChunkBuf<'alloc> {
+        ChunkBuf {
+            code: Vec::default(),
+            constants: Vec::default(),
+            constant_hash: HashMap::default(),
             source,
-            spans: Vec::new(),
+            spans: Vec::default(),
         }
     }
 
-    pub fn opcodes(&self) -> impl Iterator<Item = OpCode> + '_ {
-        let mut code = self.code.as_slice();
-        iter::from_fn(move || {
-            let (opcode, rest) = OpCode::decode(code)?;
-            code = rest;
-            Some(opcode)
-        })
-    }
-
-    pub fn code(&self) -> &[u8] {
-        &self.code
-    }
-
-    pub fn source(&self) -> ObjectRef<'alloc, String> {
-        self.source
-    }
-
-    pub fn spans(&self) -> &[FreeSpan] {
-        &self.spans
-    }
-
-    pub fn constants(&self) -> impl Iterator<Item = &Value<'alloc>> {
-        self.constants.iter()
-    }
-
-    /// Decodes the chunk opcodes one by one and asserts that:
+    /// Checks the [`ChunkBuf`] contains valid bytecode and if yes returns a [`Chunk`].
     ///
-    /// 1. all opcodes decode successfully
-    /// 2. all jumps are in bounds
-    /// 3. all jumps land on a valid opcode boundary
-    /// 4. all constants exis
-    /// 5. the last instruction in the chunk is a return
+    /// This ensures every instance of [`Chunk`] only contains only valid bytecode that is safe to
+    /// execute in an unsafe VM in [`VM::run`](crate::vm::VM::run).
     ///
-    /// If this function passes it should be safe to work with raw `ip` pointer in [`VM::run`].
+    /// Asserted invariants are:
     ///
-    /// Stack slot accesses must however still be checked for now.
+    /// 1. All opcodes decode successfully
+    /// 2. All jumps are in bounds
+    /// 3. All jumps land on a valid opcode boundary
+    /// 4. All constants exist
+    /// 5. Constants used to reference a global are of type [`String`].
+    /// 6. Chunk ends with the return opcode
+    ///
+    /// For now stack slot accesses must still be checked by the VM.
     ///
     /// # TODO
     /// - track stack effects and check stack access
-    /// - create a separate `ChunkBuf` type that is used for emitting and may be invalid
-    ///   and run a check before creating a `Chunk` and prevent invalid `Chunk`s from existing
-    pub fn check(&self) {
+    /// - track max temp-stack size so we can resize stack before calling a function and not check
+    ///   for overflow on every push
+    /// - return a Result instead of panicking
+    pub fn check(self) -> Chunk<'alloc> {
         let code = &self.code[..];
         let len = code.len();
 
@@ -138,40 +192,70 @@ impl<'alloc> Chunk<'alloc> {
         let mut jump_targets = Vec::new();
         let mut ip = code;
 
-        // dummy instruction, the only important thing is that it's NOT a OpCode::Return so that an
-        // empty code doesn't accidentally pass 5.
+        // Dummy instruction, the only important thing is that it's NOT an `OpCode::Return` so that
+        // an empty code slice doesn't accidentally pass (6).
         let mut prev_opcode = OpCode::Unit;
 
         loop {
-            let offset = (ip.as_ptr() as usize) - (code.as_ptr() as usize);
+            let before_offset = (ip.as_ptr() as usize) - (code.as_ptr() as usize);
 
-            if offset == len {
-                // assert 5.
-                assert!(prev_opcode == OpCode::Return, "last opcode must be a return");
-                break;
-            } else if offset > len {
-                unreachable!()
+            match Ord::cmp(&before_offset, &len) {
+                Ordering::Less => {
+                    // Continue decoding
+                }
+                Ordering::Equal => {
+                    // Assert 6.
+                    // Last opcode in the chunk must be a return to prevent reading past the end of
+                    // the `code` slice.
+                    assert!(prev_opcode == OpCode::Return, "last opcode must be a return");
+
+                    assert!(ip.is_empty()); // Sanity check that the offset is calculated correctly.
+
+                    // Finished decoding
+                    break;
+                }
+                Ordering::Greater => unreachable!(),
             }
 
-            valid_boundaries.push(offset);
-
-            // assert 1.
-            let (opcode, next) = OpCode::decode(ip).expect("invalid opcode");
+            // Assert 1.
+            // All opcodes must decode successfully.
+            let (opcode, next_ip) = OpCode::decode(ip).expect("invalid opcode");
             prev_opcode = opcode;
-            ip = next;
+            ip = next_ip;
 
-            let offset = (ip.as_ptr() as usize) - (code.as_ptr() as usize);
+            // The instruction was decoded successfully, it's ok to jump to it.
+            valid_boundaries.push(before_offset);
+
+            // Jump offsets are calculated relative to the IP after the instruction was decoded.
+            let after_offset = (ip.as_ptr() as usize) - (code.as_ptr() as usize);
 
             match opcode {
                 OpCode::Constant { key } |
                 OpCode::GetGlobal { name_key: key } |
                 OpCode::DefGlobal { name_key: key } |
                 OpCode::SetGlobal { name_key: key } => {
-                    // assert 4.
+                    // Assert 4.
+                    // All constants referenced by the instructions must be present in the chunk
+                    // constant pool. Because constants keys are consecutive indexes we can just
+                    // compare the length.
                     assert!(
                         (key.index as usize) < self.constants.len(),
                         "constant index out of range",
                     );
+
+                    match opcode {
+                        OpCode::GetGlobal { name_key } |
+                        OpCode::DefGlobal { name_key } |
+                        OpCode::SetGlobal { name_key } => {
+                            // Assert 5.
+                            // Constants used as a global keys are of type `String`.
+                            assert!(
+                                self.constants[name_key.index as usize].downcast::<String>().is_some(),
+                                "name_key is not of type String",
+                            );
+                        }
+                        _ => {}
+                    }
                 }
 
                 OpCode::Unit => {},
@@ -196,12 +280,12 @@ impl<'alloc> Chunk<'alloc> {
                 OpCode::Jump { offset: jump } |
                 OpCode::JumpIfTrue { offset: jump } |
                 OpCode::JumpIfFalse { offset: jump } => {
-                    let jump_to = offset.checked_add(jump as usize).expect("overflow");
+                    let jump_to = after_offset.checked_add(jump as usize).expect("overflow");
                     jump_targets.push(jump_to);
                 },
 
                 OpCode::Loop { offset: jump } => {
-                    let jump_to = offset.checked_sub(jump as usize).expect("overflow");
+                    let jump_to = after_offset.checked_sub(jump as usize).expect("overflow");
                     jump_targets.push(jump_to);
                 },
 
@@ -210,14 +294,22 @@ impl<'alloc> Chunk<'alloc> {
         }
 
         for offset in jump_targets {
-            // assert 2.
-            assert!(offset < len, "jump out of bounds");
-
-            // assert 3.
+            // Assert 2. and 3.
+            // We stored the starting offset of every decoded instruction in `valid_boundaries`,
+            // every jump must land on one of them. If not it's either out of bounds (2) or
+            // misaligned (3).
             assert!(
                 valid_boundaries.binary_search(&offset).is_ok(),
                 "jump to an invalid boundary",
             );
+        }
+
+        // Now that the ChunkBuf has been checked we can construct a Chunk
+        Chunk {
+            code: self.code.into_boxed_slice(),
+            constants: self.constants.into_boxed_slice(),
+            source: self.source,
+            spans: self.spans.into_boxed_slice(),
         }
     }
 }
@@ -235,7 +327,7 @@ pub struct LoopPoint {
     position: usize,
 }
 
-impl<'alloc> Chunk<'alloc> {
+impl<'alloc> ChunkBuf<'alloc> {
     pub fn emit(&mut self, opcode: OpCode, span: FreeSpan) -> Option<PatchPlace> {
         let position = self.code.len();
         opcode.encode(&mut self.code);
@@ -321,15 +413,20 @@ impl Debug for ConstKey {
     }
 }
 
-impl<'alloc> Chunk<'alloc> {
+impl<'alloc> ChunkBuf<'alloc> {
     pub fn insert_constant(&mut self, value: Value<'alloc>) -> ConstKey {
-        let (index, _) = self.constants.insert_full(value);
-        let index = index.try_into().expect("constant pool size limit reached");
-        ConstKey { index }
-    }
-
-    pub fn get_constant(&self, key: ConstKey) -> Option<Value<'alloc>> {
-        let ConstKey { index } = key;
-        self.constants.get_index(index as usize).copied()
+        match self.constant_hash.entry(value) {
+            Entry::Vacant(e) => {
+                let index = self.constants.len();
+                let index = index.try_into().expect("constant pool size limit reached");
+                let key = ConstKey { index };
+                self.constants.push(value);
+                e.insert(key);
+                key
+            }
+            Entry::Occupied(e) => {
+                *e.get()
+            }
+        }
     }
 }
