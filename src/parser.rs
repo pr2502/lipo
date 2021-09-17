@@ -52,9 +52,11 @@ pub fn parse<'alloc>(source: ObjectRef<'alloc, String>) -> Result<AST> {
         let item = parser.item()?;
         items.push(item);
     }
+    let eof = parser.expect_next(TokenKind::Eof)?;
     Ok(AST {
         source,
         items,
+        eof,
     })
 }
 

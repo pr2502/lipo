@@ -113,6 +113,113 @@ impl<'alloc> Chunk<'alloc> {
     pub fn constants(&self) -> impl Iterator<Item = &Value<'alloc>> {
         self.constants.iter()
     }
+
+    /// Decodes the chunk opcodes one by one and asserts that:
+    ///
+    /// 1. all opcodes decode successfully
+    /// 2. all jumps are in bounds
+    /// 3. all jumps land on a valid opcode boundary
+    /// 4. all constants exis
+    /// 5. the last instruction in the chunk is a return
+    ///
+    /// If this function passes it should be safe to work with raw `ip` pointer in [`VM::run`].
+    ///
+    /// Stack slot accesses must however still be checked for now.
+    ///
+    /// # TODO
+    /// - track stack effects and check stack access
+    /// - create a separate `ChunkBuf` type that is used for emitting and may be invalid
+    ///   and run a check before creating a `Chunk` and prevent invalid `Chunk`s from existing
+    pub fn check(&self) {
+        let code = &self.code[..];
+        let len = code.len();
+
+        let mut valid_boundaries = Vec::new();
+        let mut jump_targets = Vec::new();
+        let mut ip = code;
+
+        // dummy instruction, the only important thing is that it's NOT a OpCode::Return so that an
+        // empty code doesn't accidentally pass 5.
+        let mut prev_opcode = OpCode::Unit;
+
+        loop {
+            let offset = (ip.as_ptr() as usize) - (code.as_ptr() as usize);
+
+            if offset == len {
+                // assert 5.
+                assert!(prev_opcode == OpCode::Return, "last opcode must be a return");
+                break;
+            } else if offset > len {
+                unreachable!()
+            }
+
+            valid_boundaries.push(offset);
+
+            // assert 1.
+            let (opcode, next) = OpCode::decode(ip).expect("invalid opcode");
+            prev_opcode = opcode;
+            ip = next;
+
+            let offset = (ip.as_ptr() as usize) - (code.as_ptr() as usize);
+
+            match opcode {
+                OpCode::Constant { key } |
+                OpCode::GetGlobal { name_key: key } |
+                OpCode::DefGlobal { name_key: key } |
+                OpCode::SetGlobal { name_key: key } => {
+                    // assert 4.
+                    assert!(
+                        (key.index as usize) < self.constants.len(),
+                        "constant index out of range",
+                    );
+                }
+
+                OpCode::Unit => {},
+                OpCode::True => {},
+                OpCode::False => {},
+                OpCode::Pop => {},
+                OpCode::GetLocal { slot: _ } => {},
+                OpCode::SetLocal { slot: _ } => {},
+
+                OpCode::Equal => {},
+                OpCode::Greater => {},
+                OpCode::Less => {},
+                OpCode::Add => {},
+                OpCode::Subtract => {},
+                OpCode::Multiply => {},
+                OpCode::Divide => {},
+                OpCode::Not => {},
+                OpCode::Negate => {},
+                OpCode::Assert => {},
+                OpCode::Print => {},
+
+                OpCode::Jump { offset: jump } |
+                OpCode::JumpIfTrue { offset: jump } |
+                OpCode::JumpIfFalse { offset: jump } => {
+                    let jump_to = offset.checked_add(jump as usize).expect("overflow");
+                    jump_targets.push(jump_to);
+                },
+
+                OpCode::Loop { offset: jump } => {
+                    let jump_to = offset.checked_sub(jump as usize).expect("overflow");
+                    jump_targets.push(jump_to);
+                },
+
+                OpCode::Return => {},
+            }
+        }
+
+        for offset in jump_targets {
+            // assert 2.
+            assert!(offset < len, "jump out of bounds");
+
+            // assert 3.
+            assert!(
+                valid_boundaries.binary_search(&offset).is_ok(),
+                "jump to an invalid boundary",
+            );
+        }
+    }
 }
 
 

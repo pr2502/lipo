@@ -5,13 +5,13 @@ use crate::opcode::OpCode;
 use crate::span::FreeSpan;
 use crate::value::Value;
 use fxhash::FxHashMap as HashMap;
-use log::{debug, trace};
+use std::hint;
 
 
 pub struct VM<'code, 'alloc> {
     chunk: &'code Chunk<'alloc>,
     alloc: &'alloc Alloc,
-    ip: &'code [u8],
+    ip: *const u8,
     stack: Vec<Value<'alloc>>,
     globals: HashMap<ObjectRef<'alloc, String>, Value<'alloc>>,
 }
@@ -43,10 +43,11 @@ pub enum RuntimeErrorKind {
 
 impl<'code, 'alloc> VM<'code, 'alloc> {
     pub fn new(chunk: &'code Chunk<'alloc>, alloc: &'alloc Alloc) -> VM<'code, 'alloc> {
+        chunk.check();
         VM {
             chunk,
             alloc,
-            ip: chunk.code(),
+            ip: chunk.code().as_ptr(),
             stack: Vec::default(),
             globals: HashMap::default(),
         }
@@ -77,7 +78,8 @@ impl<'code, 'alloc> VM<'code, 'alloc> {
             if scan_offset == byte_offset {
                 break span_idx;
             }
-            let (_, next) = OpCode::decode(scan).expect("invalid code");
+            let (_, next) = OpCode::decode(scan)
+                .unwrap(); // Chunk is checked when the VM is constructed.
             scan = next;
             span_idx += 1;
         };
@@ -93,8 +95,39 @@ impl<'code, 'alloc> VM<'code, 'alloc> {
         self.globals.iter().for_each(|(key, val)| { key.mark(); val.mark() });
         self.chunk.mark();
 
-        // SAFETY we've marked all the roots
+        // SAFETY we've marked all the roots above
         unsafe { self.alloc.sweep(); }
+    }
+
+    fn offset(&self) -> usize {
+        (self.ip as usize) - (self.chunk.code().as_ptr() as usize)
+    }
+
+    fn read_u8(&mut self) -> u8 {
+        debug_assert!(
+            self.chunk.code().as_ptr_range().contains(&self.ip),
+            "BUG: ip is out of code range, Chunk::check is incorrect",
+        );
+
+        // SAFETY Chunk is checked when the VM is constructed.
+        // - every jump must be at the start of a valid instruction
+        // - the Chunk ends with a return instruction that prevents reading past the end
+        let byte = unsafe { *self.ip };
+        self.ip = unsafe { self.ip.add(1) };
+
+        byte
+    }
+
+    fn read_u16(&mut self) -> u16 {
+        let a = self.read_u8();
+        let b = self.read_u8();
+        u16::from_le_bytes([a, b])
+    }
+
+    fn read_const_key(&mut self) -> ConstKey {
+        let a = self.read_u8();
+        let b = self.read_u8();
+        ConstKey::from_le_bytes([a, b])
     }
 
     pub fn run(mut self) -> Result<Value<'alloc>, VmError<'alloc>> {
@@ -102,74 +135,70 @@ impl<'code, 'alloc> VM<'code, 'alloc> {
             #[cfg(feature = "gc-stress")]
             self.gc();
 
-            let offset = (self.ip.as_ptr() as usize) - (self.chunk.code().as_ptr() as usize);
-            let (opcode, next) = match OpCode::decode(self.ip) {
-                Some(res) => res,
-                None => return Ok(Value::new_unit()),
-            };
-            trace!("stack {:?}", &self.stack);
-            trace!("decode {:04}: {:?}", offset, opcode);
-            self.ip = next;
+            let opcode = self.read_u8();
+
             match opcode {
-                OpCode::Constant { key } => self.op_constant(key)?,
-                OpCode::Unit => self.op_unit()?,
-                OpCode::True => self.op_true()?,
-                OpCode::False => self.op_false()?,
-                OpCode::Pop => self.op_pop()?,
-                OpCode::GetLocal { slot } => self.op_get_local(slot)?,
-                OpCode::SetLocal { slot } => self.op_set_local(slot)?,
-                OpCode::GetGlobal { name_key } => self.op_get_global(name_key, offset)?,
-                OpCode::DefGlobal { name_key } => self.op_def_global(name_key)?,
-                OpCode::SetGlobal { name_key } => self.op_set_global(name_key, offset)?,
-                OpCode::Equal => self.op_equal()?,
-                OpCode::Greater => self.op_greater(offset)?,
-                OpCode::Less => self.op_less(offset)?,
-                OpCode::Add => self.op_add(offset)?,
-                OpCode::Subtract => self.op_subtract(offset)?,
-                OpCode::Multiply => self.op_multiply(offset)?,
-                OpCode::Divide => self.op_divide(offset)?,
-                OpCode::Not => self.op_not()?,
-                OpCode::Negate => self.op_negate(offset)?,
-                OpCode::Assert => self.op_assert(offset)?,
-                OpCode::Print => self.op_print()?,
-                OpCode::Jump { offset } => self.op_jump(offset)?,
-                OpCode::JumpIfTrue { offset } => self.op_jump_if_true(offset)?,
-                OpCode::JumpIfFalse { offset } => self.op_jump_if_false(offset)?,
-                OpCode::Loop { offset } => self.op_loop(offset)?,
-                OpCode::Return => {
+                OpCode::CONSTANT        => self.op_constant()?,
+                OpCode::UNIT            => self.op_unit(),
+                OpCode::TRUE            => self.op_true(),
+                OpCode::FALSE           => self.op_false(),
+                OpCode::POP             => self.op_pop()?,
+                OpCode::GET_LOCAL       => self.op_get_local()?,
+                OpCode::SET_LOCAL       => self.op_set_local()?,
+                OpCode::GET_GLOBAL      => self.op_get_global()?,
+                OpCode::DEF_GLOBAL      => self.op_def_global()?,
+                OpCode::SET_GLOBAL      => self.op_set_global()?,
+                OpCode::EQUAL           => self.op_equal()?,
+                OpCode::GREATER         => self.op_greater()?,
+                OpCode::LESS            => self.op_less()?,
+                OpCode::ADD             => self.op_add()?,
+                OpCode::SUBTRACT        => self.op_subtract()?,
+                OpCode::MULTIPLY        => self.op_multiply()?,
+                OpCode::DIVIDE          => self.op_divide()?,
+                OpCode::NOT             => self.op_not()?,
+                OpCode::NEGATE          => self.op_negate()?,
+                OpCode::ASSERT          => self.op_assert()?,
+                OpCode::PRINT           => self.op_print()?,
+                OpCode::JUMP            => self.op_jump(),
+                OpCode::JUMP_IF_TRUE    => self.op_jump_if_true()?,
+                OpCode::JUMP_IF_FALSE   => self.op_jump_if_false()?,
+                OpCode::LOOP            => self.op_loop(),
+                OpCode::RETURN          => {
                     // return is inlined because we need to break the dispatch loop (for now)
                     let value = self.pop()?;
-                    debug!("return value {:?}", &value);
+                    log::debug!("return value {:?}", &value);
                     break Ok(value);
                 }
+                // SAFETY Chunk is checked when the VM is constructed, all OpCodes must be valid.
+                // IP can only be at the start of an OpCode if every instruction consumes all of
+                // it's argument bytes.
+                _ => unsafe { hint::unreachable_unchecked() },
             }
         }
     }
 
     ////////////////////////////////////////
-    // instruction implementation
+    // Instruction implementation
 
-    fn op_constant(&mut self, key: ConstKey) -> Result<(), VmError<'alloc>> {
+    fn op_constant(&mut self) -> Result<(), VmError<'alloc>> {
+        let key = self.read_const_key();
         let constant = self.chunk.get_constant(key)
             .ok_or(VmError::CompileError(CodeError::InvalidConstantKey(key)))?;
-        trace!("constant {:?}", &constant);
+        log::trace!("constant {:?}", &constant);
         self.push(constant);
         Ok(())
     }
 
-    fn op_unit(&mut self) -> Result<(), VmError<'alloc>> {
+    fn op_unit(&mut self) {
         self.push(Value::new_unit());
-        Ok(())
     }
 
-    fn op_true(&mut self) -> Result<(), VmError<'alloc>> {
+    fn op_true(&mut self) {
         self.push(Value::new_bool(true));
-        Ok(())
     }
 
-    fn op_false(&mut self) -> Result<(), VmError<'alloc>> {
+    fn op_false(&mut self) {
         self.push(Value::new_bool(false));
-        Ok(())
     }
 
     fn op_pop(&mut self) -> Result<(), VmError<'alloc>> {
@@ -177,14 +206,16 @@ impl<'code, 'alloc> VM<'code, 'alloc> {
         Ok(())
     }
 
-    fn op_get_local(&mut self, slot: u16) -> Result<(), VmError<'alloc>> {
+    fn op_get_local(&mut self) -> Result<(), VmError<'alloc>> {
+        let slot = self.read_u16();
         let value = *self.stack.get(slot as usize)
             .ok_or(VmError::CompileError(CodeError::InvalidStackSlot(slot)))?;
         self.push(value);
         Ok(())
     }
 
-    fn op_set_local(&mut self, slot: u16) -> Result<(), VmError<'alloc>> {
+    fn op_set_local(&mut self) -> Result<(), VmError<'alloc>> {
+        let slot = self.read_u16();
         let value = self.peek()?;
         let slot = self.stack.get_mut(slot as usize)
             .ok_or(VmError::CompileError(CodeError::InvalidStackSlot(slot)))?;
@@ -192,40 +223,43 @@ impl<'code, 'alloc> VM<'code, 'alloc> {
         Ok(())
     }
 
-    fn op_get_global(&mut self, key: ConstKey, offset: usize) -> Result<(), VmError<'alloc>> {
+    fn op_get_global(&mut self) -> Result<(), VmError<'alloc>> {
+        let key = self.read_const_key();
         let name = self.chunk.get_constant(key)
             .and_then(Value::downcast::<String>)
             .ok_or(VmError::CompileError(CodeError::InvalidConstantKey(key)))?;
         let value = *self.globals.get(&name)
             .ok_or_else(|| VmError::RuntimeError {
                 source: self.chunk.source(),
-                span: self.get_span(offset),
+                span: self.get_span(self.offset() - 3),
                 kind: RuntimeErrorKind::UndefinedGlobalVariable(name.as_str().to_string()),
             })?;
         self.push(value);
         Ok(())
     }
 
-    fn op_def_global(&mut self, key: ConstKey) -> Result<(), VmError<'alloc>> {
+    fn op_def_global(&mut self) -> Result<(), VmError<'alloc>> {
+        let key = self.read_const_key();
         let name = self.chunk.get_constant(key)
             .and_then(Value::downcast::<String>)
             .ok_or(VmError::CompileError(CodeError::InvalidConstantKey(key)))?;
         let value = self.pop()?;
-        trace!("define global variable name {:?}", name);
+        log::trace!("define global variable name {:?}", name);
         self.globals.insert(name, value);
         Ok(())
     }
 
-    fn op_set_global(&mut self, key: ConstKey, offset: usize) -> Result<(), VmError<'alloc>> {
+    fn op_set_global(&mut self) -> Result<(), VmError<'alloc>> {
+        let key = self.read_const_key();
         let name = self.chunk.get_constant(key)
             .and_then(Value::downcast::<String>)
             .ok_or(VmError::CompileError(CodeError::InvalidConstantKey(key)))?;
         let value = self.peek()?;
-        trace!("define global variable name {:?}", name);
+        log::trace!("define global variable name {:?}", name);
         if self.globals.insert(name, value).is_none() {
             return Err(VmError::RuntimeError {
                 source: self.chunk.source(),
-                span: self.get_span(offset),
+                span: self.get_span(self.offset() - 3),
                 kind: RuntimeErrorKind::UndefinedGlobalVariable(name.as_str().to_string()),
             });
         }
@@ -240,37 +274,43 @@ impl<'code, 'alloc> VM<'code, 'alloc> {
         Ok(())
     }
 
-    fn op_greater(&mut self, offset: usize) -> Result<(), VmError<'alloc>> {
+    fn op_greater(&mut self) -> Result<(), VmError<'alloc>> {
         let rhs = self.pop()?;
         let lhs = self.pop()?;
         let result = match (lhs.to_float(), rhs.to_float()) {
             (Some(lhs), Some(rhs)) => Value::new_bool(lhs > rhs),
-            _ => return Err(VmError::RuntimeError {
-                source: self.chunk.source(),
-                span: self.get_span(offset),
-                kind: RuntimeErrorKind::TypeError("comparison only supported on Numbers"),
-            }),
+            _ => {
+                dbg!(lhs, rhs);
+                return Err(VmError::RuntimeError {
+                    source: self.chunk.source(),
+                    span: self.get_span(self.offset() - 1),
+                    kind: RuntimeErrorKind::TypeError("comparison only supported on Numbers"),
+                })
+            },
         };
         self.push(result);
         Ok(())
     }
 
-    fn op_less(&mut self, offset: usize) -> Result<(), VmError<'alloc>> {
+    fn op_less(&mut self) -> Result<(), VmError<'alloc>> {
         let rhs = self.pop()?;
         let lhs = self.pop()?;
         let result = match (lhs.to_float(), rhs.to_float()) {
             (Some(lhs), Some(rhs)) => Value::new_bool(lhs < rhs),
-            _ => return Err(VmError::RuntimeError {
-                source: self.chunk.source(),
-                span: self.get_span(offset),
-                kind: RuntimeErrorKind::TypeError("comparison only supported on Numbers"),
-            }),
+            _ => {
+                dbg!(lhs, rhs);
+                return Err(VmError::RuntimeError {
+                    source: self.chunk.source(),
+                    span: self.get_span(self.offset() - 1),
+                    kind: RuntimeErrorKind::TypeError("comparison only supported on Numbers"),
+                })
+            },
         };
         self.push(result);
         Ok(())
     }
 
-    fn op_add(&mut self, offset: usize) -> Result<(), VmError<'alloc>> {
+    fn op_add(&mut self) -> Result<(), VmError<'alloc>> {
         let rhs = self.pop()?;
         let lhs = self.pop()?;
         let result = if let (Some(lhs), Some(rhs)) = (lhs.to_float(), rhs.to_float()) {
@@ -281,7 +321,7 @@ impl<'code, 'alloc> VM<'code, 'alloc> {
         } else {
             return Err(VmError::RuntimeError {
                 source: self.chunk.source(),
-                span: self.get_span(offset),
+                span: self.get_span(self.offset() - 1),
                 kind: RuntimeErrorKind::TypeError("addition only supported on Numbers and Strings"),
             });
         };
@@ -289,14 +329,14 @@ impl<'code, 'alloc> VM<'code, 'alloc> {
         Ok(())
     }
 
-    fn op_subtract(&mut self, offset: usize) -> Result<(), VmError<'alloc>> {
+    fn op_subtract(&mut self) -> Result<(), VmError<'alloc>> {
         let rhs = self.pop()?;
         let lhs = self.pop()?;
         let result = match (lhs.to_float(), rhs.to_float()) {
             (Some(lhs), Some(rhs)) => Value::new_float(lhs - rhs),
             _ => return Err(VmError::RuntimeError {
                 source: self.chunk.source(),
-                span: self.get_span(offset),
+                span: self.get_span(self.offset() - 1),
                 kind: RuntimeErrorKind::TypeError("subtraction only supported on Numbers"),
             }),
         };
@@ -304,14 +344,14 @@ impl<'code, 'alloc> VM<'code, 'alloc> {
         Ok(())
     }
 
-    fn op_multiply(&mut self, offset: usize) -> Result<(), VmError<'alloc>> {
+    fn op_multiply(&mut self) -> Result<(), VmError<'alloc>> {
         let rhs = self.pop()?;
         let lhs = self.pop()?;
         let result = match (lhs.to_float(), rhs.to_float()) {
             (Some(lhs), Some(rhs)) => Value::new_float(lhs * rhs),
             _ => return Err(VmError::RuntimeError {
                 source: self.chunk.source(),
-                span: self.get_span(offset),
+                span: self.get_span(self.offset() - 1),
                 kind: RuntimeErrorKind::TypeError("multiplication only supported on Numbers"),
             }),
         };
@@ -319,14 +359,14 @@ impl<'code, 'alloc> VM<'code, 'alloc> {
         Ok(())
     }
 
-    fn op_divide(&mut self, offset: usize) -> Result<(), VmError<'alloc>> {
+    fn op_divide(&mut self) -> Result<(), VmError<'alloc>> {
         let rhs = self.pop()?;
         let lhs = self.pop()?;
         let result = match (lhs.to_float(), rhs.to_float()) {
             (Some(lhs), Some(rhs)) => Value::new_float(lhs / rhs),
             _ => return Err(VmError::RuntimeError {
                 source: self.chunk.source(),
-                span: self.get_span(offset),
+                span: self.get_span(self.offset() - 1),
                 kind: RuntimeErrorKind::TypeError("division only supported on Numbers"),
             }),
         };
@@ -341,31 +381,31 @@ impl<'code, 'alloc> VM<'code, 'alloc> {
         Ok(())
     }
 
-    fn op_negate(&mut self, offset: usize) -> Result<(), VmError<'alloc>> {
+    fn op_negate(&mut self) -> Result<(), VmError<'alloc>> {
         let value = self.pop()?;
         let value = value.to_float()
             .map(|n| Value::new_float(-n))
             .ok_or_else(|| VmError::RuntimeError {
                 source: self.chunk.source(),
-                span: self.get_span(offset),
+                span: self.get_span(self.offset() - 1),
                 kind: RuntimeErrorKind::TypeError("negation only supported on Numbers"),
             })?;
         self.push(value);
         Ok(())
     }
 
-    fn op_assert(&mut self, offset: usize) -> Result<(), VmError<'alloc>> {
+    fn op_assert(&mut self) -> Result<(), VmError<'alloc>> {
         let value = self.pop()?;
         match value.to_bool() {
             Some(true) => {}
             Some(false) => return Err(VmError::RuntimeError {
                 source: self.chunk.source(),
-                span: self.get_span(offset),
+                span: self.get_span(self.offset() - 1),
                 kind: RuntimeErrorKind::AssertionError
             }),
             _ => return Err(VmError::RuntimeError {
                 source: self.chunk.source(),
-                span: self.get_span(offset),
+                span: self.get_span(self.offset() - 1),
                 kind: RuntimeErrorKind::TypeError("asserted expression must return a Bool"),
             }),
         }
@@ -378,35 +418,43 @@ impl<'code, 'alloc> VM<'code, 'alloc> {
         Ok(())
     }
 
-    fn op_jump(&mut self, offset: u16) -> Result<(), VmError<'alloc>> {
-        let offset = offset as usize;
-        self.ip = &self.ip[offset..];
-        Ok(())
+    fn op_jump(&mut self) {
+        let offset = self.read_u16() as usize;
+
+        // SAFETY Chunk is checked when VM is constructed.
+        // - every jump must be at the start of a valid instruction
+        self.ip = unsafe { self.ip.add(offset as usize) };
     }
 
-    fn op_jump_if_true(&mut self, offset: u16) -> Result<(), VmError<'alloc>> {
+    fn op_jump_if_true(&mut self) -> Result<(), VmError<'alloc>> {
+        let offset = self.read_u16();
+
         let value = self.peek()?;
         if !value.is_falsy() {
-            let offset = offset as usize;
-            self.ip = &self.ip[offset..];
+            // SAFETY Chunk is checked when VM is constructed.
+            // - every jump must be at the start of a valid instruction
+            self.ip = unsafe { self.ip.add(offset as usize) };
         }
         Ok(())
     }
 
-    fn op_jump_if_false(&mut self, offset: u16) -> Result<(), VmError<'alloc>> {
+    fn op_jump_if_false(&mut self) -> Result<(), VmError<'alloc>> {
+        let offset = self.read_u16();
+
         let value = self.peek()?;
         if value.is_falsy() {
-            let offset = offset as usize;
-            self.ip = &self.ip[offset..];
+            // SAFETY Chunk is checked when VM is constructed.
+            // - every jump must be at the start of a valid instruction
+            self.ip = unsafe { self.ip.add(offset as usize) };
         }
         Ok(())
     }
 
-    fn op_loop(&mut self, offset: u16) -> Result<(), VmError<'alloc>> {
-        let offset = offset as usize;
-        let ip_offset = self.chunk.code().len() - self.ip.len();
-        let jump_to = ip_offset - offset;
-        self.ip = &self.chunk.code()[jump_to..];
-        Ok(())
+    fn op_loop(&mut self) {
+        let offset = self.read_u16();
+
+        // SAFETY Chunk is checked when VM is constructed.
+        // - every jump must be at the start of a valid instruction
+        self.ip = unsafe { self.ip.sub(offset as usize) };
     }
 }

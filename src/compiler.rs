@@ -62,6 +62,9 @@ pub fn compile<'alloc>(ast: AST<'alloc>, alloc: &'alloc Alloc) -> std::result::R
         emitter.item(d)?
     }
 
+    emitter.chunk.emit(OpCode::Unit, ast.eof.span);
+    emitter.chunk.emit(OpCode::Return, ast.eof.span);
+
     Ok(emitter.chunk)
 }
 

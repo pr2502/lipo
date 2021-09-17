@@ -19,6 +19,7 @@ mod spanned;
 pub struct AST<'alloc> {
     pub source: ObjectRef<'alloc, String>,
     pub items: Vec<Item>,
+    pub eof: Token,
 }
 
 // Items
