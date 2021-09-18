@@ -43,6 +43,7 @@ pub enum OpCode {
     JumpIfTrue { offset: u16 },
     JumpIfFalse { offset: u16 },
     Loop { offset: u16 },
+    Call { args: u8 },
     Return,
 }
 
@@ -72,6 +73,7 @@ opcodes! {
     JUMP_IF_TRUE,
     JUMP_IF_FALSE,
     LOOP,
+    CALL,
     RETURN,
 }
 
@@ -123,6 +125,7 @@ impl OpCode {
             [Self::LOOP, x, y, rest @ .. ] => {
                 (OpCode::Loop { offset: u16::from_le_bytes([*x, *y]) }, rest)
             }
+            [Self::CALL, x, rest @ .. ] => (OpCode::Call { args: *x }, rest),
             [Self::RETURN, rest @ .. ]    => (OpCode::Return, rest),
             _ => return None,
         })
@@ -131,6 +134,9 @@ impl OpCode {
     pub fn encode(self, code: &mut Vec<u8>) {
         code.push(self.tag());
         match self {
+            OpCode::Call { args: u8_arg } => {
+                code.push(u8_arg);
+            }
             OpCode::Constant { key: key_arg } |
             OpCode::GetGlobal { name_key: key_arg } |
             OpCode::DefGlobal { name_key: key_arg } |
@@ -176,6 +182,7 @@ impl OpCode {
             OpCode::JumpIfTrue { .. }   => Self::JUMP_IF_TRUE,
             OpCode::JumpIfFalse { .. }  => Self::JUMP_IF_FALSE,
             OpCode::Loop { .. }         => Self::LOOP,
+            OpCode::Call { .. }         => Self::CALL,
             OpCode::Return              => Self::RETURN,
         }
     }

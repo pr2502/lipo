@@ -36,7 +36,7 @@ pub struct ClassItem {
     pub name: Identifier,
     pub inherit: Option<ClassInherit>,
     pub open_brace: Token,
-    pub methods: Vec<Function>,
+    pub methods: Vec<FnItem>,
     pub close_brace: Token,
 }
 
@@ -47,10 +47,6 @@ pub struct ClassInherit {
 
 pub struct FnItem {
     pub fn_tok: Token,
-    pub function: Function,
-}
-
-pub struct Function {
     pub name: Identifier,
     pub left_paren_tok: Token,
     pub parameters: Delimited<Token, FnParam>,
@@ -129,7 +125,7 @@ pub struct PrintStmt {
 
 pub struct ReturnStmt {
     pub return_tok: Token,
-    pub expr: Expression,
+    pub expr: Option<Expression>,
     pub semicolon_tok: Token,
 }
 
@@ -193,7 +189,7 @@ pub struct GroupExpr {
 }
 
 pub struct CallExpr {
-    pub fun: Box<Expression>,
+    pub calee: Box<Expression>,
     pub left_paren_tok: Token,
     pub arguments: Delimited<Token, Expression>,
     pub right_paren_tok: Token,

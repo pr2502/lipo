@@ -12,8 +12,9 @@ use std::fmt::{self, Debug};
 use std::iter;
 
 
-derive_Object!(['alloc] Chunk<'alloc>);
+derive_Object!(Chunk<'alloc>);
 /// Bytecode Chunk
+#[derive(Hash)]
 pub struct Chunk<'alloc> {
     /// Packed bytecode
     code: Box<[u8]>,
@@ -85,6 +86,7 @@ unsafe impl<'alloc> Trace for Chunk<'alloc> {
 }
 
 impl<'alloc> Debug for Chunk<'alloc> {
+    // TODO doesn't play nice with std pretty printer indentaion
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         const RED: &str = "\x1B[31m";
         const RESET: &str = "\x1B[m";
@@ -289,6 +291,7 @@ impl<'alloc> ChunkBuf<'alloc> {
                     jump_targets.push(jump_to);
                 },
 
+                OpCode::Call { args: _ } => {},
                 OpCode::Return => {},
             }
         }
@@ -318,7 +321,9 @@ impl<'alloc> ChunkBuf<'alloc> {
 #[derive(Debug)]
 pub struct PatchPlace {
     /// Byte offset of the start of the instruction into the code vector
-    position: usize,
+    ///
+    /// None if the emitted instruction isn't patchable.
+    position: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -328,17 +333,23 @@ pub struct LoopPoint {
 }
 
 impl<'alloc> ChunkBuf<'alloc> {
-    pub fn emit(&mut self, opcode: OpCode, span: FreeSpan) -> Option<PatchPlace> {
+    pub fn emit(&mut self, opcode: OpCode, span: FreeSpan) -> PatchPlace {
         let position = self.code.len();
         opcode.encode(&mut self.code);
         self.spans.push(span);
 
-        matches!(opcode.tag(), OpCode::JUMP | OpCode::JUMP_IF_TRUE | OpCode::JUMP_IF_FALSE)
-            .then(|| PatchPlace { position })
+        PatchPlace {
+            position: matches!(
+                opcode.tag(),
+                OpCode::JUMP | OpCode::JUMP_IF_TRUE | OpCode::JUMP_IF_FALSE
+            )
+            .then(|| position),
+        }
     }
 
-    pub fn patch_jump(&mut self, place: Option<PatchPlace>) {
-        let PatchPlace { position } = place.expect("tried to patch an unpatchable instruction");
+    pub fn patch_jump(&mut self, place: PatchPlace) {
+        let PatchPlace { position } = place;
+        let position = position.expect("tried to patch an unpatchable instruction");
 
         // Check that the position really points to a placeholder JUMP* instruction
         assert_matches!(

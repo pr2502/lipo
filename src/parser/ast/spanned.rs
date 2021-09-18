@@ -27,13 +27,7 @@ impl Spanned for ClassItem {
 
 impl Spanned for FnItem {
     fn span(&self) -> FreeSpan {
-        join(self.fn_tok.span, self.function.span())
-    }
-}
-
-impl Spanned for Function {
-    fn span(&self) -> FreeSpan {
-        join(self.name.span(), self.body.span())
+        join(self.fn_tok.span, self.body.span())
     }
 }
 
@@ -162,7 +156,7 @@ impl Spanned for GroupExpr {
 
 impl Spanned for CallExpr {
     fn span(&self) -> FreeSpan {
-        join(self.fun.span(), self.right_paren_tok.span)
+        join(self.calee.span(), self.right_paren_tok.span)
     }
 }
 

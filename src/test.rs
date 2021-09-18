@@ -1,7 +1,8 @@
-use crate::compiler::compile;
-use crate::object::builtins::String;
+use crate::compiler::{self, compile};
+use crate::object::builtins::{NativeFunction, String};
 use crate::object::Alloc;
 use crate::parser::parse;
+use crate::value::Value;
 use crate::vm::{RuntimeErrorKind, VmError, VM};
 
 
@@ -13,27 +14,74 @@ fn init() {
     });
 }
 
-macro_rules! run {
-    ( $code:literal, $($tt:tt)* ) => {{
+macro_rules! parse {
+    ( @$alloc:ident, $code:literal, $($tt:tt)* ) => {{
         init();
 
-        let alloc = Alloc::new();
-
-        let src = String::new($code, &alloc);
+        let src = String::new($code, &$alloc);
         println!("src:\n{}\n", src.as_str());
 
-        let ast = parse(src).unwrap();
+        let ast = parse(src);
         println!("ast:\n{:#?}\n", &ast);
+        std::assert_matches::assert_matches!(ast, $($tt)*);
 
-        let chunk = compile(ast, &alloc).unwrap();
-        println!("{:?}", &chunk);
+        ast
+    }};
 
-        let vm = VM::new(&chunk, &alloc);
+    ( $code:literal, $($tt:tt)* ) => {{
+        let alloc = Alloc::new();
+        let _ = parse!(@alloc, $code, $($tt)*);
+    }};
+    ( $code:literal ) => {
+        parse!($code, Ok(_))
+    };
+}
+
+macro_rules! compile {
+    ( @$alloc:ident, $code:literal, $($tt:tt)* ) => {{
+        let ast = parse!(@$alloc, $code, Ok(_)).unwrap();
+
+        let script = compile(ast, &$alloc);
+        println!("script:\n{:#?}\n", &script);
+        std::assert_matches::assert_matches!(script, $($tt)*);
+
+        script
+    }};
+
+    ( $code:literal, $($tt:tt)* ) => {{
+        let alloc = Alloc::new();
+        let _ = compile!(@alloc, $code, $($tt)*);
+    }};
+    ( $code:literal ) => {
+        compile!($code, Ok(_))
+    };
+}
+
+macro_rules! run {
+    ( @$alloc:ident, $code:literal, $($tt:tt)* ) => {{
+        let script = compile!(@$alloc, $code, Ok(_)).unwrap();
+
+        let mut vm = VM::new(script, &$alloc);
+        // TODO move builtin functions elsewhere
+        vm.add_global("dbg", Value::new_object(
+            NativeFunction::new("dbg", |args| {
+                args.iter().enumerate()
+                    .for_each(|(i, arg)| println!("dbg#{}  {:?}", i, arg));
+                Ok(Value::new_unit())
+            }, &$alloc),
+        ));
         let res = vm.run();
-        dbg!(&res);
+        println!("result\n{:#?}\n", &res);
         std::assert_matches::assert_matches!(res, $($tt)*);
     }};
-    ( $code:literal ) => { run!( $code, Ok(v) if v.is_unit() ) };
+
+    ( $code:literal, $($tt:tt)* ) => {{
+        let alloc = Alloc::new();
+        run!(@alloc, $code, $($tt)*)
+    }};
+    ( $code:literal ) => {
+        run!($code, Ok(_))
+    };
 }
 
 #[test]
@@ -137,11 +185,24 @@ fn whileloop() {
     }");
 }
 
-#[ignore = "not yet implemented"]
+#[test]
+fn return_from_script() {
+    compile!(
+        "return;",
+        Err(compiler::Error::ReturnFromScript { .. }),
+    );
+}
+
 #[test]
 fn function() {
-    run!("
-        fn foo(a, mut b) {
+    run!(r#"
+        dbg((), 1, true, "foo");
+    "#);
+    run!(r#"
+        fn foo() {
+            assert true;
+            return true;
         }
-    ")
+        assert foo();
+    "#);
 }

@@ -44,12 +44,6 @@ impl SourceDebug for ClassItem {
 
 impl SourceDebug for FnItem {
     fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.function.fmt(source, f)
-    }
-}
-
-impl SourceDebug for Function {
-    fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Fun")
             .field("name", &self.name.wrap(source))
             .field("params", &self.parameters.items.as_slice().wrap(source))
@@ -144,9 +138,11 @@ impl SourceDebug for PrintStmt {
 
 impl SourceDebug for ReturnStmt {
     fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("Return")
-            .field(&self.expr.wrap(source))
-            .finish()
+        let mut w = f.debug_tuple("Return");
+        if let Some(expr) = &self.expr {
+            w.field(&expr.wrap(source));
+        }
+        w.finish()
     }
 }
 
@@ -172,7 +168,7 @@ impl SourceDebug for Expression {
             Expression::Unary(inner) => inner.fmt(source, f),
             // Expression::Field(inner) => inner.fmt(source, f),
             Expression::Group(inner) => inner.fmt(source, f),
-            // Expression::Call(inner) => inner.fmt(source, f),
+            Expression::Call(inner) => inner.fmt(source, f),
             Expression::Primary(inner) => inner.fmt(source, f),
             _ => Ok(())
         }
@@ -203,6 +199,18 @@ impl SourceDebug for GroupExpr {
         } else {
             f.write_str("Unit")
         }
+    }
+}
+
+impl SourceDebug for CallExpr {
+    fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Call")
+            .field("calee", &self.calee.wrap(source))
+            .field("args", &self.arguments.items.iter()
+                .map(|arg| arg.wrap(source))
+                .collect::<Vec<_>>(),
+            )
+            .finish()
     }
 }
 

@@ -96,8 +96,4 @@ impl<'src> Lexer<'src> {
         self.current = self.inner.next().unwrap_or(TokenKind::Eof);
         last
     }
-
-    pub fn source(&self) -> &'src str {
-        self.inner.source()
-    }
 }

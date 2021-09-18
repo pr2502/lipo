@@ -3,11 +3,12 @@ use crate::object::{Alloc, Object, ObjectRef, Trace};
 use std::fmt::{self, Debug};
 
 
-derive_Object!(['alloc] Function<'alloc>);
+derive_Object!(Function<'alloc>);
+#[derive(Hash)]
 pub struct Function<'alloc> {
     pub(crate) chunk: Chunk<'alloc>,
     pub(crate) name: Box<str>,
-    pub(crate) _arity: u32,
+    pub(crate) arity: u32,
 }
 
 unsafe impl<'alloc> Trace for Function<'alloc> {
@@ -17,14 +18,17 @@ unsafe impl<'alloc> Trace for Function<'alloc> {
 }
 
 impl<'alloc> Function<'alloc> {
-    pub fn new(chunk: Chunk<'alloc>, _arity: u32, name: &str, alloc: &'alloc Alloc) -> ObjectRef<'alloc, Function<'alloc>> {
-        let name = name.into();
-        Object::init(Function { chunk, name, _arity }, alloc)
+    pub fn new(chunk: Chunk<'alloc>, arity: u32, name: Box<str>, alloc: &'alloc Alloc) -> ObjectRef<'alloc, Function<'alloc>> {
+        Object::init(Function { chunk, name, arity }, alloc)
     }
 }
 
 impl<'alloc> Debug for Function<'alloc> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Function({})", self.name)
+        f.debug_struct("Function")
+            .field("name", &self.name)
+            .field("arity", &self.arity)
+            .field("code", &self.chunk)
+            .finish()
     }
 }

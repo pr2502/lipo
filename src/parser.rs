@@ -1,6 +1,7 @@
 use crate::lexer::{Lexer, Token, TokenKind};
 use crate::object::builtins::String;
 use crate::object::ObjectRef;
+use crate::span::{FreeSpan, Spanned};
 use std::num::ParseFloatError;
 
 
@@ -35,6 +36,10 @@ pub enum Error {
         cause: ParseFloatError,
     },
     InvalidAssignmentTarget,
+    TooManyArguments {
+        extra_arg_span: FreeSpan,
+        limit: usize,
+    }
 }
 
 struct Parser<'src> {
@@ -88,6 +93,8 @@ impl<'src> Parser<'src> {
     }
 }
 
+const MAX_ARGS: usize = u8::MAX as usize;
+
 impl<'src> Parser<'src> {
     fn item(&mut self) -> Result<Item> {
         // TODO recovery
@@ -105,11 +112,6 @@ impl<'src> Parser<'src> {
 
     fn fn_item(&mut self) -> Result<FnItem> {
         let fn_tok = self.expect_next(TokenKind::Fn)?;
-        let function = self.function()?;
-        Ok(FnItem { fn_tok, function })
-    }
-
-    fn function(&mut self) -> Result<Function> {
         let name = self.name()?;
         let left_paren_tok = self.expect_next(TokenKind::LeftParen)?;
         let mut parameters = Delimited::default();
@@ -134,7 +136,7 @@ impl<'src> Parser<'src> {
         }
         let right_paren_tok = self.expect_next(TokenKind::RightParen)?;
         let body = self.block()?;
-        Ok(Function { name, left_paren_tok, parameters, right_paren_tok, body })
+        Ok(FnItem { fn_tok, name, left_paren_tok, parameters, right_paren_tok, body })
     }
 
     fn let_item(&mut self) -> Result<LetItem> {
@@ -204,7 +206,11 @@ impl<'src> Parser<'src> {
 
     fn return_stmt(&mut self) -> Result<ReturnStmt> {
         let return_tok = self.expect_next(TokenKind::Return)?;
-        let expr = self.expression()?;
+        let expr = if self.peek_kind() != TokenKind::Semicolon {
+            Some(self.expression()?)
+        } else {
+            None
+        };
         let semicolon_tok = self.expect_next(TokenKind::Semicolon)?;
         Ok(ReturnStmt { return_tok, expr, semicolon_tok })
     }
@@ -299,6 +305,7 @@ impl<'src> Parser<'src> {
                 TokenKind::LeftParen => {}
                 // expression end
                 TokenKind::Semicolon |
+                TokenKind::Comma |
                 TokenKind::RightParen |
                 TokenKind::LeftBrace |
                 TokenKind::Eof => {
@@ -316,7 +323,13 @@ impl<'src> Parser<'src> {
                     break;
                 }
 
-                todo!("parse function call");
+                match operator.kind {
+                    TokenKind::LeftParen => {
+                        lhs = Expression::Call(self.call_expr(Box::new(lhs))?);
+                        continue;
+                    }
+                    _ => unreachable!(),
+                }
             }
 
             if let Some((l_bp, r_bp)) = infix_binding_power(operator.kind) {
@@ -342,15 +355,64 @@ impl<'src> Parser<'src> {
         Ok(lhs)
     }
 
+    fn call_expr(&mut self, calee: Box<Expression>) -> Result<CallExpr> {
+        let left_paren_tok = self.expect_next(TokenKind::LeftParen)?;
+        let arguments = self.argument_list()?;
+        let right_paren_tok = self.expect_next(TokenKind::RightParen)?;
+        Ok(CallExpr { calee, left_paren_tok, arguments, right_paren_tok })
+    }
+
+    fn argument_list(&mut self) -> Result<Delimited<Token, Expression>> {
+        let mut args = Delimited::default();
+
+        while self.peek_kind() != TokenKind::RightParen {
+            let arg = self.expression()?;
+            if args.items.len() > MAX_ARGS {
+                return Err(Error::TooManyArguments {
+                    extra_arg_span: arg.span(),
+                    limit: MAX_ARGS,
+                });
+            }
+            args.items.push(arg);
+
+            match self.peek_kind() {
+                TokenKind::Comma => {
+                    args.delim.push(self.expect_next(TokenKind::Comma)?);
+                }
+                TokenKind::RightParen => {},
+                _ => return Err(Error::UnexpectedToken2 {
+                    found: self.lexer.peek(),
+                    expected: &[TokenKind::Comma, TokenKind::RightParen],
+                }),
+            }
+        }
+
+        Ok(args)
+    }
+
     fn name(&mut self) -> Result<Identifier> {
         let token = self.expect_next(TokenKind::Identifier)?;
         Ok(Identifier { token })
     }
 }
 
+// # Precedence
+// Sorted from lowest binding power (lowest precedence) to highest.
+//
+// ASSIGNMENT   =
+// OR           or
+// AND          and
+// EQUALITY     == /=
+// COMPARISON   < > <= >=
+// TERM         + -
+// FACTOR       * /
+// UNARY        not -
+// CALL         . ()
+// PRIMARY
+
 fn prefix_binding_power(kind: TokenKind) -> ((), u8) {
     match kind {
-        // unary (higher than factor for infix operators)
+        // unary
         TokenKind::Not |
         TokenKind::Minus => ((), 15),
 
@@ -358,9 +420,13 @@ fn prefix_binding_power(kind: TokenKind) -> ((), u8) {
     }
 }
 
-fn postfix_binding_power(_kind: TokenKind) -> Option<(u8, ())> {
-    // TODO
-    None
+fn postfix_binding_power(kind: TokenKind) -> Option<(u8, ())> {
+    Some(match kind {
+        // call
+        TokenKind::LeftParen => (16, ()),
+
+        _ => return None,
+    })
 }
 
 fn infix_binding_power(kind: TokenKind) -> Option<(u8, u8)> {

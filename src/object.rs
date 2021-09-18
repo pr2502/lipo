@@ -12,8 +12,8 @@ use std::{mem, ptr};
 // TODO wrap this in a derive macro
 #[macro_export]
 macro_rules! derive_Object {
-    ( [$($param:tt)*] $object_ty:ty ) => {
-        unsafe impl<$($param)*> $crate::object::DynObject for $object_ty {
+    ( $object_ty:ident $(<$lifetime:lifetime>)? ) => {
+        unsafe impl $(<$lifetime>)? $crate::object::DynObject for $object_ty $(<$lifetime>)? {
             // VTABLE is generated based on the traits automatically implemented for `Object`s
             fn __vtable() -> &'static $crate::object::ObjectVtable {
 
@@ -42,10 +42,8 @@ macro_rules! derive_Object {
             }
         }
 
-        impl<$($param)*> $crate::object::Object for $object_ty {}
+        impl $(<$lifetime>)? $crate::object::Object for $object_ty $(<$lifetime>)? {}
     };
-
-    ( $object_ty:ty ) => { derive_Object!([] $object_ty); };
 }
 
 #[doc(hidden)]
@@ -87,9 +85,11 @@ pub fn __derive_hash_code<'alloc, O: Object>(this: ObjectRef<'alloc, O>) -> usiz
 
 pub mod builtins {
     mod function;
+    mod native_function;
     mod string;
 
     pub use function::Function;
+    pub use native_function::{NativeError, NativeFunction};
     pub use string::String;
 
     pub use crate::chunk::Chunk;
