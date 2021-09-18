@@ -160,7 +160,7 @@ pub enum Expression {
 // - assignment     : "="
 // - logic_or       : "or"
 // - logic_and      : "and"
-// - equality       : "!=", "=="
+// - equality       : "/=", "=="
 // - comparison     : ">", ">=", "<", "<="
 // - term           : "-", "+"
 // - factor         : "/", "*"
@@ -196,7 +196,6 @@ pub struct CallExpr {
 }
 
 // PrimaryExpr can have the following tokens:
-// - Nil
 // - True, False
 // - This, Super
 // - Number, String, Identifier

@@ -77,7 +77,6 @@ impl<'alloc> Chunk<'alloc> {
     }
 }
 
-
 unsafe impl<'alloc> Trace for Chunk<'alloc> {
     fn mark(&self) {
         self.source.mark();

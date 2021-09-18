@@ -1,23 +1,4 @@
-[package]
-name = "rox"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-fxhash = "0.2.1"
-log = { version = "0.4.14", features = ["max_level_trace", "release_max_level_info"] }
-logos = "0.12.0"
-unicode-width = { version = "0.1.8", optional = true }
-
-[features]
-default = ["full-unicode"]
-
-full-unicode = ["unicode-width"]
-
-# GC stress testing
-# Runs garbage collection on every interpreter cycle. This is super slow but
-# should uncover bugs in the GC faster, hopefully.
-gc-stress = []
-
-[dev-dependencies]
-pretty_env_logger = "0.4.0"
+[workspace]
+members = [
+    "lipo",
+]

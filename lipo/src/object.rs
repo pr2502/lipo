@@ -429,6 +429,9 @@ struct ObjectWrap<O: Object> {
 pub(crate) struct ObjectHeader {
     vtable: &'static ObjectVtable,
     next: AtomicPtr<ObjectHeader>,
+    /// GC marker
+    ///
+    /// Set to `true` during tracing and objects which are left at `false` get dropped.
     mark: AtomicBool,
 }
 
