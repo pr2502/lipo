@@ -4,14 +4,12 @@ use crate::object::{Alloc, ObjectRef, Trace};
 use crate::opcode::OpCode;
 use crate::span::FreeSpan;
 use crate::value::Value;
-use fxhash::FxHashMap as HashMap;
 
 
 pub struct VM<'alloc> {
     alloc: &'alloc Alloc,
     call_stack: Vec<Frame<'alloc>>,
     stack: Vec<Value<'alloc>>,
-    globals: HashMap<ObjectRef<'alloc, String>, Value<'alloc>>,
 
     // PERF Cache the top frame values so we save a pointer dereference and eliminate bounds checks
     // on call_stack.
@@ -63,13 +61,7 @@ impl<'alloc> VM<'alloc> {
             alloc,
             call_stack: vec![frame],
             stack: vec![Value::new_object(function)],
-            globals: HashMap::default(),
         }
-    }
-
-    pub fn add_global(&mut self, name: &'static str, value: Value<'alloc>) {
-        let name = String::new(name, self.alloc);
-        self.globals.insert(name, value);
     }
 
     fn pop(&mut self) -> Value<'alloc> {
@@ -106,27 +98,11 @@ impl<'alloc> VM<'alloc> {
         }
     }
 
-    fn get_global_name(&self, key: ConstKey) -> ObjectRef<'alloc, String> {
-        match self.get_constant(key).downcast::<String>() {
-            Some(name) => name,
-            None => {
-                #[cfg(debug_assertions)] // TODO get type name
-                { unreachable!("BUG: VM encountered invalid constant type for {:?}, expected String found ?, Chunk::check is incorrect", key) }
-
-                // SAFETY Chunk is checked when the VM is constructed, all constant references used
-                // in DefGlobal, GetGlobal or SetGlobal OpCodes must reference a String.
-                #[cfg(not(debug_assertions))]
-                unsafe { std::hint::unreachable_unchecked() }
-            }
-        }
-    }
-
     fn gc(&mut self) {
         // TODO unless feature=gc-stress is enabled don't run the GC on every call.
         // check memory usage first.
 
         self.stack.iter().for_each(Trace::mark);
-        self.globals.iter().for_each(|(key, val)| { key.mark(); val.mark() });
         self.call_stack.iter().for_each(|frame| frame.function.mark());
 
         // SAFETY we've marked all the roots above
@@ -181,9 +157,6 @@ impl<'alloc> VM<'alloc> {
                 OpCode::POP             => self.op_pop(),
                 OpCode::GET_LOCAL       => self.op_get_local(),
                 OpCode::SET_LOCAL       => self.op_set_local(),
-                OpCode::GET_GLOBAL      => self.op_get_global()?,
-                OpCode::DEF_GLOBAL      => self.op_def_global(),
-                OpCode::SET_GLOBAL      => self.op_set_global()?,
                 OpCode::EQUAL           => self.op_equal()?,
                 OpCode::GREATER         => self.op_greater()?,
                 OpCode::LESS            => self.op_less()?,
@@ -262,43 +235,6 @@ impl<'alloc> VM<'alloc> {
         *slot = value;
     }
 
-    fn op_get_global(&mut self) -> Result<(), VmError<'alloc>> {
-        let key = self.read_const_key();
-
-        let name = self.get_global_name(key);
-        let value = *self.globals.get(&name)
-            .ok_or_else(|| VmError::RuntimeError {
-                source: self.chunk().source(),
-                span: self.chunk().span(self.offset() - 3),
-                kind: RuntimeErrorKind::UndefinedGlobalVariable(name.as_str().to_string()),
-            })?;
-        self.push(value);
-        Ok(())
-    }
-
-    fn op_def_global(&mut self) {
-        let key = self.read_const_key();
-
-        let name = self.get_global_name(key);
-        let value = self.pop();
-        self.globals.insert(name, value);
-    }
-
-    fn op_set_global(&mut self) -> Result<(), VmError<'alloc>> {
-        let key = self.read_const_key();
-
-        let name = self.get_global_name(key);
-        let value = self.peek();
-        if self.globals.insert(name, value).is_none() {
-            return Err(VmError::RuntimeError {
-                source: self.chunk().source(),
-                span: self.chunk().span(self.offset() - 3),
-                kind: RuntimeErrorKind::UndefinedGlobalVariable(name.as_str().to_string()),
-            });
-        }
-        Ok(())
-    }
-
     fn op_equal(&mut self) -> Result<(), VmError<'alloc>> {
         let rhs = self.pop();
         let lhs = self.pop();
@@ -333,7 +269,6 @@ impl<'alloc> VM<'alloc> {
         let result = match (lhs.to_float(), rhs.to_float()) {
             (Some(lhs), Some(rhs)) => Value::new_bool(lhs < rhs),
             _ => {
-                dbg!(lhs, rhs);
                 return Err(VmError::RuntimeError {
                     source: self.chunk().source(),
                     span: self.chunk().span(self.offset() - 1),

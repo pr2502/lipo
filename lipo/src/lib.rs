@@ -3,8 +3,6 @@
 #![feature(drain_filter)]
 #![feature(new_uninit)]
 #![feature(option_result_unwrap_unchecked)]
-#![feature(test)]
-#![feature(bench_black_box)]
 
 // spooky scary specialization
 #![allow(incomplete_features)]

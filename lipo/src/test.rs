@@ -1,11 +1,8 @@
 use crate::compiler::{self, compile};
-use crate::object::builtins::{NativeFunction, String};
+use crate::object::builtins::String;
 use crate::object::Alloc;
 use crate::parser::parse;
-use crate::value::Value;
 use crate::vm::{RuntimeErrorKind, VmError, VM};
-
-extern crate test;
 
 
 fn init() {
@@ -59,15 +56,7 @@ macro_rules! run {
     ( @$alloc:ident, $code:literal, $($tt:tt)* ) => {{
         let script = compile!(@$alloc, $code, Ok(_)).unwrap();
 
-        let mut vm = VM::new(script, &$alloc);
-        // TODO move builtin functions elsewhere
-        vm.add_global("dbg", Value::new_object(
-            NativeFunction::new("dbg", |args| {
-                args.iter().enumerate()
-                    .for_each(|(i, arg)| println!("dbg#{}  {:?}", i, arg));
-                Ok(Value::new_unit())
-            }, &$alloc),
-        ));
+        let vm = VM::new(script, &$alloc);
         let res = vm.run();
         std::assert_matches::assert_matches!(res, $($tt)*);
     }};
@@ -81,28 +70,6 @@ macro_rules! run {
     };
 }
 
-macro_rules! bench {
-    ( @$alloc:ident, $bencher:ident, $code:literal, $($tt:tt)* ) => {{
-        let script = compile!(@$alloc, $code, Ok(_)).unwrap();
-
-        let vm = VM::new(script, &$alloc);
-        let res = vm.run();
-        std::assert_matches::assert_matches!(res, $($tt)*);
-
-        $bencher.iter(|| {
-            let vm = VM::new(script, &$alloc);
-            let _ = std::hint::black_box(vm.run());
-        });
-    }};
-
-    ( $bencher:ident, $code:literal, $($tt:tt)* ) => {{
-        let alloc = Alloc::new();
-        bench!(@alloc, $bencher, $code, $($tt)*)
-    }};
-    ( $bencher:ident, $code:literal ) => {
-        bench!($bencher, $code, Ok(_))
-    };
-}
 
 #[test]
 fn type_error() {
@@ -136,7 +103,7 @@ fn print() {
 fn global() {
     run!("
         let a;
-        let b = 2;
+        let mut b = 2;
         print b;
         b = 3;
         print b;
@@ -188,7 +155,7 @@ fn ifelse() {
         assert a;
     ");
     run!("
-        let b;
+        let mut b;
         if true {
             b = true;
         } else {
@@ -226,9 +193,6 @@ fn return_from_script() {
 #[test]
 fn function() {
     run!(r#"
-        dbg((), 1, true, "foo");
-    "#);
-    run!(r#"
         fn foo() {
             assert true;
             return true;
@@ -253,22 +217,7 @@ fn function_with_params() {
     ");
 }
 
-#[cfg(not(miri))]
-#[bench]
-fn fib(b: &mut test::Bencher) {
-    bench!(b, "
-        fn fib(n) {
-            if n <= 1 {
-                return 1;
-            } else {
-                return fib(n-1) + fib(n-2);
-            }
-        }
-        fib(15);
-    ");
-}
-
-#[cfg(miri)]
+#[ignore = "closures not implemented yet"]
 #[test]
 fn fib() {
     run!("
@@ -279,6 +228,23 @@ fn fib() {
                 return fib(n-1) + fib(n-2);
             }
         }
-        fib(3);
+        assert fib(5) == 8;
     ");
+}
+
+#[ignore = "closures not implemented yet"]
+#[test]
+fn closure() {
+    run!(r#"
+        fn make_closure() {
+            let local = "local";
+            fn closure() {
+                print local;
+                return local;
+            }
+            return closure;
+        }
+        let closure = make_closure();
+        assert closure() == "local";
+    "#);
 }

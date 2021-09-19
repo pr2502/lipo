@@ -175,8 +175,7 @@ impl<'alloc> ChunkBuf<'alloc> {
     /// 2. All jumps are in bounds
     /// 3. All jumps land on a valid opcode boundary
     /// 4. All constants exist
-    /// 5. Constants used to reference a global are of type [`String`].
-    /// 6. Chunk ends with the return opcode
+    /// 5. Chunk ends with the return opcode
     ///
     /// For now stack slot accesses must still be checked by the VM.
     ///
@@ -194,7 +193,7 @@ impl<'alloc> ChunkBuf<'alloc> {
         let mut ip = code;
 
         // Dummy instruction, the only important thing is that it's NOT an `OpCode::Return` so that
-        // an empty code slice doesn't accidentally pass (6).
+        // an empty code slice doesn't accidentally pass (5).
         let mut prev_opcode = OpCode::Unit;
 
         loop {
@@ -205,7 +204,7 @@ impl<'alloc> ChunkBuf<'alloc> {
                     // Continue decoding
                 }
                 Ordering::Equal => {
-                    // Assert 6.
+                    // Assert 5.
                     // Last opcode in the chunk must be a return to prevent reading past the end of
                     // the `code` slice.
                     assert!(prev_opcode == OpCode::Return, "last opcode must be a return");
@@ -231,10 +230,7 @@ impl<'alloc> ChunkBuf<'alloc> {
             let after_offset = (ip.as_ptr() as usize) - (code.as_ptr() as usize);
 
             match opcode {
-                OpCode::Constant { key } |
-                OpCode::GetGlobal { name_key: key } |
-                OpCode::DefGlobal { name_key: key } |
-                OpCode::SetGlobal { name_key: key } => {
+                OpCode::Constant { key } => {
                     // Assert 4.
                     // All constants referenced by the instructions must be present in the chunk
                     // constant pool. Because constants keys are consecutive indexes we can just
@@ -243,20 +239,6 @@ impl<'alloc> ChunkBuf<'alloc> {
                         (key.index as usize) < self.constants.len(),
                         "constant index out of range",
                     );
-
-                    match opcode {
-                        OpCode::GetGlobal { name_key } |
-                        OpCode::DefGlobal { name_key } |
-                        OpCode::SetGlobal { name_key } => {
-                            // Assert 5.
-                            // Constants used as a global keys are of type `String`.
-                            assert!(
-                                self.constants[name_key.index as usize].downcast::<String>().is_some(),
-                                "name_key is not of type String",
-                            );
-                        }
-                        _ => {}
-                    }
                 }
 
                 OpCode::Unit => {},

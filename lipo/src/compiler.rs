@@ -43,6 +43,9 @@ pub enum Error {
         extra_arg_span: FreeSpan,
         limit: usize,
     },
+    UndefinedName {
+        name: FreeSpan,
+    },
 }
 
 struct Emitter<'alloc> {
@@ -130,12 +133,6 @@ impl<'alloc> Emitter<'alloc> {
 }
 
 impl<'alloc> Emitter<'alloc> {
-    fn identifier_constant(&mut self, ident: Identifier) -> ConstKey {
-        let span_str = ident.token.span.anchor(&self.source).as_str();
-        let value = Value::new_object(String::new(span_str, self.alloc));
-        self.insert_constant(value)
-    }
-
     fn add_local(&mut self, name: Identifier, mutable: bool, span: FreeSpan) -> Result {
         if self.fn_scope().locals.len() >= (u16::MAX as usize) {
             return Err(Error::TooManyLocals { span: name.span() });
@@ -201,6 +198,9 @@ impl<'alloc> Emitter<'alloc> {
     }
 
     fn fn_item(&mut self, fn_item: &FnItem) -> Result {
+        // Add an immutable local into the outer fn
+        self.add_local(fn_item.name, false, fn_item.span())?;
+
         let name = fn_item.name.span().anchor(&self.source).as_str().into();
         self.fn_stack.push(FnScope {
             name,
@@ -236,9 +236,7 @@ impl<'alloc> Emitter<'alloc> {
         assert!(self.fn_scope().scope_depth == 0);
 
         let key = self.insert_constant(function);
-        let name_key = self.identifier_constant(fn_item.name);
         self.emit(OpCode::Constant { key }, fn_item.span());
-        self.emit(OpCode::DefGlobal { name_key }, fn_item.span());
 
         Ok(())
     }
@@ -253,14 +251,7 @@ impl<'alloc> Emitter<'alloc> {
             self.emit(OpCode::Unit, span);
         }
 
-        if self.fn_scope().scope_depth == 0 {
-            // global variable
-            let name_key = self.identifier_constant(let_item.name);
-            self.emit(OpCode::DefGlobal { name_key }, span);
-        } else {
-            // local variable
-            self.add_local(let_item.name, let_item.mut_tok.is_some(), let_item.span())?;
-        }
+        self.add_local(let_item.name, let_item.mut_tok.is_some(), let_item.span())?;
 
         Ok(())
     }
@@ -401,8 +392,8 @@ impl<'alloc> Emitter<'alloc> {
                         }
                         self.emit(OpCode::SetLocal { slot }, binary_expr.span());
                     } else {
-                        let name_key = self.identifier_constant(ident);
-                        self.emit(OpCode::SetGlobal { name_key }, binary_expr.span());
+                        // TODO upvalues
+                        return Err(Error::UndefinedName { name: ident.span() })
                     }
                     return Ok(())
                 }
@@ -609,10 +600,10 @@ impl<'alloc> Emitter<'alloc> {
         let ident = Identifier { token: primary.token };
         if let Some((slot, _)) = self.resolve_local(ident) {
             self.emit(OpCode::GetLocal { slot }, ident.span());
+            Ok(())
         } else {
-            let name_key = self.identifier_constant(ident);
-            self.emit(OpCode::GetGlobal { name_key }, ident.span());
+            // TODO upvalues
+            Err(Error::UndefinedName { name: ident.span() })
         }
-        Ok(())
     }
 }

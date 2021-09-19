@@ -25,9 +25,6 @@ pub enum OpCode {
     Pop,
     GetLocal { slot: u16 },
     SetLocal { slot: u16 },
-    GetGlobal { name_key: ConstKey },
-    DefGlobal { name_key: ConstKey },
-    SetGlobal { name_key: ConstKey },
     Equal,
     Greater,
     Less,
@@ -55,9 +52,6 @@ opcodes! {
     POP,
     GET_LOCAL,
     SET_LOCAL,
-    GET_GLOBAL,
-    DEF_GLOBAL,
-    SET_GLOBAL,
     EQUAL,
     GREATER,
     LESS,
@@ -92,15 +86,6 @@ impl OpCode {
             }
             [Self::SET_LOCAL, x, y, rest @ .. ] => {
                 (OpCode::SetLocal { slot: u16::from_le_bytes([*x, *y]) }, rest)
-            }
-            [Self::GET_GLOBAL, x, y, rest @ .. ] => {
-                (OpCode::GetGlobal { name_key: ConstKey::from_le_bytes([*x, *y]) }, rest)
-            }
-            [Self::DEF_GLOBAL, x, y, rest @ .. ] => {
-                (OpCode::DefGlobal { name_key: ConstKey::from_le_bytes([*x, *y]) }, rest)
-            }
-            [Self::SET_GLOBAL, x, y, rest @ .. ] => {
-                (OpCode::SetGlobal { name_key: ConstKey::from_le_bytes([*x, *y]) }, rest)
             }
             [Self::EQUAL, rest @ .. ]     => (OpCode::Equal, rest),
             [Self::GREATER, rest @ .. ]   => (OpCode::Greater, rest),
@@ -137,10 +122,7 @@ impl OpCode {
             OpCode::Call { args: u8_arg } => {
                 code.push(u8_arg);
             }
-            OpCode::Constant { key: key_arg } |
-            OpCode::GetGlobal { name_key: key_arg } |
-            OpCode::DefGlobal { name_key: key_arg } |
-            OpCode::SetGlobal { name_key: key_arg } => {
+            OpCode::Constant { key: key_arg } => {
                 code.extend(key_arg.to_le_bytes());
             }
             OpCode::GetLocal { slot: u16_arg } |
@@ -164,9 +146,6 @@ impl OpCode {
             OpCode::Pop                 => Self::POP,
             OpCode::GetLocal { .. }     => Self::GET_LOCAL,
             OpCode::SetLocal { .. }     => Self::SET_LOCAL,
-            OpCode::GetGlobal { .. }    => Self::GET_GLOBAL,
-            OpCode::DefGlobal { .. }    => Self::DEF_GLOBAL,
-            OpCode::SetGlobal { .. }    => Self::SET_GLOBAL,
             OpCode::Equal               => Self::EQUAL,
             OpCode::Greater             => Self::GREATER,
             OpCode::Less                => Self::LESS,
