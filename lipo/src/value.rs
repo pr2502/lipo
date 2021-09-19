@@ -135,32 +135,25 @@ impl<'alloc> Debug for Value<'alloc> {
     }
 }
 
+impl<'alloc> Value<'alloc> {
+    pub fn partial_eq(&self, other: &Self) -> Option<bool> {
+        if self.is_unit() && other.is_unit() {
+            Some(true)
+        } else if let (Some(lhs), Some(rhs)) = (self.to_bool(), other.to_bool()) {
+            Some(lhs == rhs)
+        } else if let (Some(lhs), Some(rhs)) = (self.to_float(), other.to_float()) {
+            Some((lhs - rhs).abs() <= f64::EPSILON)
+        } else if let (Some(lhs), Some(rhs)) = (self.to_object(), other.to_object()) {
+            lhs.partial_eq(&rhs)
+        } else {
+            None
+        }
+    }
+}
+
 impl<'alloc> PartialEq for Value<'alloc> {
     fn eq(&self, other: &Self) -> bool {
-        // TODO in the future we might want to allow objects to implement their own equality with
-        // some inline types.
-
-        // first try comparing floats
-        if let (Some(lhs), Some(rhs)) = (self.to_float(), other.to_float()) {
-            return (lhs - rhs).abs() <= f64::EPSILON;
-        }
-
-        // if objects are not floats we can fast-path out by using bitrepr. if bitreprs are equal,
-        // the values are equal. either:
-        // - identical inline values (Unit, Bool)
-        // - pointers to the exact same objects
-        if self.repr == other.repr {
-            return true;
-        }
-
-        if let (Some(lhs), Some(rhs)) = (self.to_object(), other.to_object()) {
-            // compare objects dynamically according to their types
-            lhs == rhs
-        } else {
-            // values are neither both floats, or both objects, or identical inline values, so they
-            // must be of different types or different inline values
-            false
-        }
+        self.partial_eq(other).unwrap_or(false)
     }
 }
 

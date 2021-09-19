@@ -31,6 +31,16 @@ impl Spanned for FnItem {
     }
 }
 
+impl Spanned for FnParam {
+    fn span(&self) -> FreeSpan {
+        if let Some(mut_tok) = &self.mut_tok {
+            join(mut_tok.span, self.name.token.span)
+        } else {
+            self.name.token.span
+        }
+    }
+}
+
 impl Spanned for LetItem {
     fn span(&self) -> FreeSpan {
         join(self.let_tok.span, self.semicolon_tok.span)
@@ -156,7 +166,7 @@ impl Spanned for GroupExpr {
 
 impl Spanned for CallExpr {
     fn span(&self) -> FreeSpan {
-        join(self.calee.span(), self.right_paren_tok.span)
+        join(self.callee.span(), self.right_paren_tok.span)
     }
 }
 

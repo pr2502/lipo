@@ -19,10 +19,7 @@ macro_rules! parse {
         init();
 
         let src = String::new($code, &$alloc);
-        println!("src:\n{}\n", src.as_str());
-
         let ast = parse(src);
-        println!("ast:\n{:#?}\n", &ast);
         std::assert_matches::assert_matches!(ast, $($tt)*);
 
         ast
@@ -42,7 +39,6 @@ macro_rules! compile {
         let ast = parse!(@$alloc, $code, Ok(_)).unwrap();
 
         let script = compile(ast, &$alloc);
-        println!("script:\n{:#?}\n", &script);
         std::assert_matches::assert_matches!(script, $($tt)*);
 
         script
@@ -71,7 +67,6 @@ macro_rules! run {
             }, &$alloc),
         ));
         let res = vm.run();
-        println!("result\n{:#?}\n", &res);
         std::assert_matches::assert_matches!(res, $($tt)*);
     }};
 
@@ -131,6 +126,16 @@ fn locals() {
             let a = a;
             print a;
         }
+    }");
+
+    // test resolving order of locals
+    run!("{
+        let a = 1;
+        let b = 2;
+        let c = 3;
+        assert a == 1;
+        assert b == 2;
+        assert c == 3;
     }");
 }
 
@@ -205,4 +210,20 @@ fn function() {
         }
         assert foo();
     "#);
+}
+
+#[test]
+fn function_with_params() {
+    run!("
+        fn add(a, b) {
+            return a + b;
+        }
+        assert add(1, 2) == 3;
+    ");
+    run!("
+        fn first(a, b, c) {
+            return a;
+        }
+        assert first(1,2,3) == 1;
+    ");
 }

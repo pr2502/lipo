@@ -4,7 +4,7 @@ use std::fmt::{self, Debug};
 
 
 derive_Object!(Function<'alloc>);
-#[derive(Hash)]
+#[derive(Hash, PartialEq, Eq)]
 pub struct Function<'alloc> {
     pub(crate) chunk: Chunk<'alloc>,
     pub(crate) name: Box<str>,
@@ -25,10 +25,6 @@ impl<'alloc> Function<'alloc> {
 
 impl<'alloc> Debug for Function<'alloc> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Function")
-            .field("name", &self.name)
-            .field("arity", &self.arity)
-            .field("code", &self.chunk)
-            .finish()
+        write!(f, "Function({})", &self.name)
     }
 }

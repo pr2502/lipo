@@ -205,7 +205,7 @@ impl SourceDebug for GroupExpr {
 impl SourceDebug for CallExpr {
     fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Call")
-            .field("calee", &self.calee.wrap(source))
+            .field("callee", &self.callee.wrap(source))
             .field("args", &self.arguments.items.iter()
                 .map(|arg| arg.wrap(source))
                 .collect::<Vec<_>>(),

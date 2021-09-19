@@ -14,7 +14,7 @@ use std::iter;
 
 derive_Object!(Chunk<'alloc>);
 /// Bytecode Chunk
-#[derive(Hash)]
+#[derive(Hash, PartialEq, Eq)]
 pub struct Chunk<'alloc> {
     /// Packed bytecode
     code: Box<[u8]>,

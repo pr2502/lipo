@@ -7,7 +7,7 @@ pub trait Spanned {
 }
 
 
-#[derive(Clone, Copy, Default, Hash)]
+#[derive(Clone, Copy, Default, Hash, PartialEq, Eq)]
 pub struct FreeSpan {
     pub start: u32,
     pub end: u32,

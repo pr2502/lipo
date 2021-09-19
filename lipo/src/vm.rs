@@ -14,6 +14,7 @@ pub struct VM<'alloc> {
     globals: HashMap<ObjectRef<'alloc, String>, Value<'alloc>>,
 }
 
+#[derive(Debug)]
 struct Frame<'alloc> {
     function: ObjectRef<'alloc, Function<'alloc>>,
     ip: *const u8,
@@ -52,7 +53,7 @@ impl<'alloc> VM<'alloc> {
         VM {
             alloc,
             call_stack: vec![frame],
-            stack: Vec::default(),
+            stack: vec![Value::new_object(function)],
             globals: HashMap::default(),
         }
     }
@@ -128,6 +129,9 @@ impl<'alloc> VM<'alloc> {
     }
 
     fn gc(&mut self) {
+        // TODO unless feature=gc-stress is enabled don't run the GC on every call.
+        // check memory usage first.
+
         self.stack.iter().for_each(Trace::mark);
         self.globals.iter().for_each(|(key, val)| { key.mark(); val.mark() });
         self.call_stack.iter().for_each(|frame| frame.function.mark());
@@ -168,6 +172,8 @@ impl<'alloc> VM<'alloc> {
     }
 
     pub fn run(mut self) -> Result<(), VmError<'alloc>> {
+        log::debug!("script = {:?}", &self.chunk());
+
         loop {
             #[cfg(feature = "gc-stress")]
             self.gc();
@@ -201,13 +207,7 @@ impl<'alloc> VM<'alloc> {
                 OpCode::JUMP_IF_FALSE   => self.op_jump_if_false(),
                 OpCode::LOOP            => self.op_loop(),
                 OpCode::CALL            => self.op_call()?,
-                OpCode::RETURN          => {
-                    self.call_stack.pop();
-
-                    if self.call_stack.is_empty() {
-                        break Ok(());
-                    }
-                }
+                OpCode::RETURN          => if self.op_return() { break Ok(()) },
                 _ => {
                     #[cfg(debug_assertions)]
                     unreachable!("BUG: VM encountered invalid opcode {:#02X}, Chunk::check is incorrect", opcode);
@@ -286,7 +286,6 @@ impl<'alloc> VM<'alloc> {
 
         let name = self.get_global_name(key);
         let value = self.pop();
-        log::trace!("define global variable name {:?}", name);
         self.globals.insert(name, value);
     }
 
@@ -295,7 +294,6 @@ impl<'alloc> VM<'alloc> {
 
         let name = self.get_global_name(key);
         let value = self.peek();
-        log::trace!("define global variable name {:?}", name);
         if self.globals.insert(name, value).is_none() {
             return Err(VmError::RuntimeError {
                 source: self.chunk().source(),
@@ -309,10 +307,12 @@ impl<'alloc> VM<'alloc> {
     fn op_equal(&mut self) -> Result<(), VmError<'alloc>> {
         let rhs = self.pop();
         let lhs = self.pop();
-        // TODO error for unsupported types instead of panicking
-        let result = lhs == rhs;
-        self.push(Value::new_bool(result));
-        Ok(())
+        if let Some(result) = lhs.partial_eq(&rhs) {
+            self.push(Value::new_bool(result));
+            Ok(())
+        } else {
+            todo!("type error");
+        }
     }
 
     fn op_greater(&mut self) -> Result<(), VmError<'alloc>> {
@@ -497,14 +497,16 @@ impl<'alloc> VM<'alloc> {
     fn op_call(&mut self) -> Result<(), VmError<'alloc>> {
         let args = self.read_u8() as usize;
 
-        let calee = self.peek_n(args);
+        let callee = self.peek_n(args);
 
-        if let Some(native_function) = calee.downcast::<NativeFunction>() {
+        if let Some(native_function) = callee.downcast::<NativeFunction>() {
             let arg_start = self.stack.len() - args;
             let res = native_function.call(&self.stack[arg_start..]);
             match res {
                 Ok(val) => {
-                    self.stack.truncate(arg_start);
+                    // Native function arguments don't include the callee, but we need to remove it
+                    // from the stack too.
+                    self.stack.truncate(arg_start - 1);
                     self.push(val);
                     Ok(())
                 }
@@ -512,7 +514,7 @@ impl<'alloc> VM<'alloc> {
                     Err(VmError::NativeError(err))
                 }
             }
-        } else if let Some(function) = calee.downcast::<Function>() {
+        } else if let Some(function) = callee.downcast::<Function>() {
             let arity = function.arity as usize;
             if arity != args {
                 return Err(VmError::RuntimeError {
@@ -522,12 +524,16 @@ impl<'alloc> VM<'alloc> {
                 });
             }
 
-            let arg_start = self.stack.len() - args;
+            // Put callee in stack slot 0.
+            let stack_start = self.stack.len() - args - 1;
+
+            log::debug!("stack {:#?}", &self.stack[stack_start..]);
+            log::debug!("function {} = {:?}", &function.name, &function.chunk);
 
             self.call_stack.push(Frame {
                 function,
                 ip: function.chunk.code().as_ptr(),
-                stack_offset: arg_start,
+                stack_offset: stack_start,
             });
 
             Ok(())
@@ -535,8 +541,25 @@ impl<'alloc> VM<'alloc> {
             Err(VmError::RuntimeError {
                 source: self.chunk().source(),
                 span: self.chunk().span(self.offset() - 2),
-                kind: RuntimeErrorKind::ValueNotCallable(calee),
+                kind: RuntimeErrorKind::ValueNotCallable(callee),
             })
         }
+    }
+
+    /// Returns true when returning from the top level call frame
+    fn op_return(&mut self) -> bool {
+        let result = self.pop();
+
+        let stack_top = self.frame().stack_offset;
+        self.call_stack.pop();
+
+        // Function stack has the callee in slot 0 so truncating here removes callee too.
+        self.stack.truncate(stack_top);
+        self.push(result);
+
+        self.gc();
+
+        // If there are no call frames left break the interpreter loop.
+        self.call_stack.is_empty()
     }
 }

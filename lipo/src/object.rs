@@ -65,16 +65,14 @@ pub fn __derive_debug_fmt<'alloc, O: Object>(this: ObjectRef<'alloc, O>, f: &mut
 }
 
 #[doc(hidden)]
-pub fn __derive_partial_eq<'alloc, O: Object>(this: ObjectRef<'alloc, O>, other: ObjectRefAny<'alloc>) -> bool {
-    if !<O as ObjectPartialEq>::supported() {
-        todo!("type error: type $object_ty doesn't support equality");
+pub fn __derive_partial_eq<'alloc, O: Object>(this: ObjectRef<'alloc, O>, other: ObjectRefAny<'alloc>) -> Option<bool> {
+    if <O as ObjectPartialEq>::supported() {
+        if let Some(other) = other.downcast::<O>() {
+            return Some(<O as ObjectPartialEq>::eq(&*this, other));
+        }
     }
-
-    if let Some(other) = other.downcast::<O>() {
-        <O as ObjectPartialEq>::eq(&*this, other)
-    } else {
-        todo!("type error: rhs type doesn't match");
-    }
+    // Types don't support equality
+    None
 }
 
 #[doc(hidden)]
@@ -245,7 +243,19 @@ impl Alloc {
                 // SAFETY object is not null so it must be valid `
                 let to_drop: ObjectRefAny<'static> = unsafe { ObjectRefAny::from_ptr(object) };
 
-                log::info!("collecting Obj@{:?} {:?}", to_drop.ptr, &to_drop);
+
+                log::info!(
+                    "collecting Obj@{:?} {}",
+                    to_drop.ptr,
+                    {
+                        let fmt = format!("{:?}", &to_drop);
+                        if fmt.len() > 32 {
+                            format!("{:.30}...", fmt)
+                        } else {
+                            fmt
+                        }
+                    }
+                );
 
                 // SAFETY Object behind `current` will can never be used again
                 let ObjectVtable { drop, .. } = to_drop.vtable();
@@ -495,14 +505,14 @@ pub struct ObjectVtable {
     ) -> fmt::Result,
 
     /// Compare Objects for equality, dispatch for [`ObjectPartialEq::eq`]
-    // TODO panics if equality is not supported or the rhs type doesn't match,
-    // maybe return a Result<bool, TypeError> or Option<Result<bool, TypeError>>
+    ///
+    /// Returns `None` when `this` doesn't support equality or when `rhs` type doesn't match.
     pub partial_eq: fn(
         // this: Self
         ObjectRefAny,
         // rhs: Any
         ObjectRefAny,
-    ) -> bool,
+    ) -> Option<bool>,
 
     /// Get Object hash code, dispatch for [`ObjectHashCode::hash_code`]
     // TODO panics if hashing is not supported,
@@ -573,10 +583,16 @@ impl<'alloc> Debug for ObjectRefAny<'alloc> {
     }
 }
 
-impl<'alloc> PartialEq for ObjectRefAny<'alloc> {
-    fn eq(&self, other: &Self) -> bool {
+impl<'alloc> ObjectRefAny<'alloc> {
+    pub fn partial_eq(&self, other: &ObjectRefAny<'alloc>) -> Option<bool> {
         let ObjectVtable { partial_eq, .. } = self.vtable();
         partial_eq(*self, *other)
+    }
+}
+
+impl<'alloc> PartialEq for ObjectRefAny<'alloc> {
+    fn eq(&self, other: &Self) -> bool {
+        self.partial_eq(other).unwrap_or(false)
     }
 }
 

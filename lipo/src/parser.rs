@@ -1,7 +1,6 @@
 use crate::lexer::{Lexer, Token, TokenKind};
 use crate::object::builtins::String;
 use crate::object::ObjectRef;
-use crate::span::{FreeSpan, Spanned};
 use std::num::ParseFloatError;
 
 
@@ -36,10 +35,6 @@ pub enum Error {
         cause: ParseFloatError,
     },
     InvalidAssignmentTarget,
-    TooManyArguments {
-        extra_arg_span: FreeSpan,
-        limit: usize,
-    }
 }
 
 struct Parser<'src> {
@@ -92,8 +87,6 @@ impl<'src> Parser<'src> {
         }
     }
 }
-
-const MAX_ARGS: usize = u8::MAX as usize;
 
 impl<'src> Parser<'src> {
     fn item(&mut self) -> Result<Item> {
@@ -355,25 +348,18 @@ impl<'src> Parser<'src> {
         Ok(lhs)
     }
 
-    fn call_expr(&mut self, calee: Box<Expression>) -> Result<CallExpr> {
+    fn call_expr(&mut self, callee: Box<Expression>) -> Result<CallExpr> {
         let left_paren_tok = self.expect_next(TokenKind::LeftParen)?;
         let arguments = self.argument_list()?;
         let right_paren_tok = self.expect_next(TokenKind::RightParen)?;
-        Ok(CallExpr { calee, left_paren_tok, arguments, right_paren_tok })
+        Ok(CallExpr { callee, left_paren_tok, arguments, right_paren_tok })
     }
 
     fn argument_list(&mut self) -> Result<Delimited<Token, Expression>> {
         let mut args = Delimited::default();
 
         while self.peek_kind() != TokenKind::RightParen {
-            let arg = self.expression()?;
-            if args.items.len() > MAX_ARGS {
-                return Err(Error::TooManyArguments {
-                    extra_arg_span: arg.span(),
-                    limit: MAX_ARGS,
-                });
-            }
-            args.items.push(arg);
+            args.items.push(self.expression()?);
 
             match self.peek_kind() {
                 TokenKind::Comma => {

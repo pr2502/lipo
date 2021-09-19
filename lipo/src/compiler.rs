@@ -9,6 +9,9 @@ use crate::value::Value;
 use std::num::ParseFloatError;
 
 
+/// Maximum number of function arguments and parameters
+const MAX_ARGS: usize = u8::MAX as usize;
+
 #[derive(Debug)]
 pub enum Error {
     TooManyLocals {
@@ -26,12 +29,20 @@ pub enum Error {
         span: FreeSpan,
     },
     AssignImmutableBinding {
-        let_span: FreeSpan,
+        bind_span: FreeSpan,
         assign_span: FreeSpan,
     },
     ReturnFromScript {
         return_span: FreeSpan,
-    }
+    },
+    TooManyParameters {
+        extra_param_span: FreeSpan,
+        limit: usize,
+    },
+    TooManyArguments {
+        extra_arg_span: FreeSpan,
+        limit: usize,
+    },
 }
 
 struct Emitter<'alloc> {
@@ -49,7 +60,7 @@ struct FnScope<'alloc> {
 
 struct Local {
     name: Identifier,
-    let_span: FreeSpan,
+    bind_span: FreeSpan,
     mutable: bool,
     depth: u32,
 }
@@ -125,26 +136,26 @@ impl<'alloc> Emitter<'alloc> {
         self.insert_constant(value)
     }
 
-    fn add_local(&mut self, let_item: &LetItem) -> Result {
+    fn add_local(&mut self, name: Identifier, mutable: bool, span: FreeSpan) -> Result {
         if self.fn_scope().locals.len() >= (u16::MAX as usize) {
-            return Err(Error::TooManyLocals { span: let_item.name.span() });
+            return Err(Error::TooManyLocals { span: name.span() });
         }
         let ident_slice = |ident: Identifier| ident.token.span.anchor(&self.source).as_str();
         let shadowing = self.fn_scope().locals.iter()
             .rev()
             .take_while(|loc| loc.depth == self.fn_scope().scope_depth)
-            .find(|loc| ident_slice(loc.name) == ident_slice(let_item.name));
+            .find(|loc| ident_slice(loc.name) == ident_slice(name));
         if let Some(local) = shadowing {
             return Err(Error::Shadowing {
-                shadowing_span: let_item.name.span(),
+                shadowing_span: name.span(),
                 shadowed_span: local.name.span(),
             });
         }
         let depth = self.fn_scope().scope_depth;
         self.fn_scope_mut().locals.push(Local {
-            name: let_item.name,
-            let_span: let_item.span(),
-            mutable: let_item.mut_tok.is_some(),
+            name,
+            bind_span: span,
+            mutable,
             depth,
         });
         Ok(())
@@ -153,9 +164,9 @@ impl<'alloc> Emitter<'alloc> {
     fn resolve_local(&mut self, name: Identifier) -> Option<(u16, &Local)> {
         let ident_slice = |ident: Identifier| ident.token.span.anchor(&self.source).as_str();
         self.fn_scope().locals.iter()
-            .rev().enumerate()
+            .enumerate()
             .find(|(_, loc)| ident_slice(loc.name) == ident_slice(name))
-            .map(|(slot, loc)| (slot as u16, loc))
+            .map(|(slot, loc)| ((slot as u16) + 1, loc))
     }
 
     fn begin_scope(&mut self) {
@@ -198,8 +209,14 @@ impl<'alloc> Emitter<'alloc> {
             scope_depth: 0,
         });
 
-        if !fn_item.parameters.items.is_empty() {
-            todo!("function params")
+        for (i, param) in fn_item.parameters.items.iter().enumerate() {
+            if i >= MAX_ARGS {
+                return Err(Error::TooManyParameters {
+                    extra_param_span: param.span(),
+                    limit: MAX_ARGS,
+                });
+            }
+            self.add_local(param.name, param.mut_tok.is_some(), param.span())?;
         }
 
         self.block_inner(&fn_item.body.body)?;
@@ -210,7 +227,7 @@ impl<'alloc> Emitter<'alloc> {
         let function = self.fn_stack.pop().unwrap();
         let function = Value::new_object(Function::new(
             function.chunk.check(),
-            0,
+            fn_item.parameters.items.len().try_into().unwrap(),
             function.name,
             self.alloc,
         ));
@@ -242,7 +259,7 @@ impl<'alloc> Emitter<'alloc> {
             self.emit(OpCode::DefGlobal { name_key }, span);
         } else {
             // local variable
-            self.add_local(let_item)?;
+            self.add_local(let_item.name, let_item.mut_tok.is_some(), let_item.span())?;
         }
 
         Ok(())
@@ -378,7 +395,7 @@ impl<'alloc> Emitter<'alloc> {
                     if let Some((slot, local)) = self.resolve_local(ident) {
                         if !local.mutable {
                             return Err(Error::AssignImmutableBinding {
-                                let_span: local.let_span,
+                                bind_span: local.bind_span,
                                 assign_span: binary_expr.span(),
                             });
                         }
@@ -514,8 +531,14 @@ impl<'alloc> Emitter<'alloc> {
     }
 
     fn call_expr(&mut self, call_expr: &CallExpr) -> Result {
-        self.expression(&call_expr.calee)?;
-        for arg in &call_expr.arguments.items {
+        self.expression(&call_expr.callee)?;
+        for (i, arg) in call_expr.arguments.items.iter().enumerate() {
+            if i >= MAX_ARGS {
+                return Err(Error::TooManyArguments {
+                    extra_arg_span: arg.span(),
+                    limit: MAX_ARGS,
+                });
+            }
             self.expression(arg)?;
         }
         let args = call_expr.arguments.items.len().try_into().unwrap();
