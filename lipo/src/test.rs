@@ -5,6 +5,8 @@ use crate::parser::parse;
 use crate::value::Value;
 use crate::vm::{RuntimeErrorKind, VmError, VM};
 
+extern crate test;
+
 
 fn init() {
     use std::sync::Once;
@@ -76,6 +78,29 @@ macro_rules! run {
     }};
     ( $code:literal ) => {
         run!($code, Ok(_))
+    };
+}
+
+macro_rules! bench {
+    ( @$alloc:ident, $bencher:ident, $code:literal, $($tt:tt)* ) => {{
+        let script = compile!(@$alloc, $code, Ok(_)).unwrap();
+
+        let vm = VM::new(script, &$alloc);
+        let res = vm.run();
+        std::assert_matches::assert_matches!(res, $($tt)*);
+
+        $bencher.iter(|| {
+            let vm = VM::new(script, &$alloc);
+            let _ = std::hint::black_box(vm.run());
+        });
+    }};
+
+    ( $bencher:ident, $code:literal, $($tt:tt)* ) => {{
+        let alloc = Alloc::new();
+        bench!(@alloc, $bencher, $code, $($tt)*)
+    }};
+    ( $bencher:ident, $code:literal ) => {
+        bench!($bencher, $code, Ok(_))
     };
 }
 
@@ -225,5 +250,35 @@ fn function_with_params() {
             return a;
         }
         assert first(1,2,3) == 1;
+    ");
+}
+
+#[cfg(not(miri))]
+#[bench]
+fn fib(b: &mut test::Bencher) {
+    bench!(b, "
+        fn fib(n) {
+            if n <= 1 {
+                return 1;
+            } else {
+                return fib(n-1) + fib(n-2);
+            }
+        }
+        fib(15);
+    ");
+}
+
+#[cfg(miri)]
+#[test]
+fn fib() {
+    run!("
+        fn fib(n) {
+            if n <= 1 {
+                return 1;
+            } else {
+                return fib(n-1) + fib(n-2);
+            }
+        }
+        fib(3);
     ");
 }

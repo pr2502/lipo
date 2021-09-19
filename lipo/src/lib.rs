@@ -3,12 +3,14 @@
 #![feature(drain_filter)]
 #![feature(new_uninit)]
 #![feature(option_result_unwrap_unchecked)]
+#![feature(test)]
+#![feature(bench_black_box)]
 
 // spooky scary specialization
 #![allow(incomplete_features)]
 #![feature(specialization)]
 
-// use RFC 2585 right away, don't way for it to get enabled by default
+// use RFC 2585 explicitly, don't wait for it to get enabled by default
 #![deny(unsafe_op_in_unsafe_fn)]
 
 // we like to give lifetimes meaningful names

@@ -12,6 +12,11 @@ pub struct VM<'alloc> {
     call_stack: Vec<Frame<'alloc>>,
     stack: Vec<Value<'alloc>>,
     globals: HashMap<ObjectRef<'alloc, String>, Value<'alloc>>,
+
+    // PERF Cache the top frame values so we save a pointer dereference and eliminate bounds checks
+    // on call_stack.
+    ip: *const u8,
+    stack_offset: usize,
 }
 
 #[derive(Debug)]
@@ -51,6 +56,10 @@ impl<'alloc> VM<'alloc> {
             stack_offset: 0,
         };
         VM {
+            // Init from the first frame
+            ip: frame.ip,
+            stack_offset: frame.stack_offset,
+
             alloc,
             call_stack: vec![frame],
             stack: vec![Value::new_object(function)],
@@ -74,24 +83,8 @@ impl<'alloc> VM<'alloc> {
             .expect("peek empty stack")
     }
 
-    fn peek_n(&mut self, from_end: usize) -> Value<'alloc> {
-        let idx = self.stack.len()
-            .checked_sub(from_end + 1) // +1 because idx=vec.len() is one past the end
-            .expect("peek past the start of stack");
-        // SAFETY checked for underflow, idx is always < len
-        unsafe { *self.stack.get_unchecked(idx) }
-    }
-
     fn push(&mut self, value: Value<'alloc>) {
         self.stack.push(value);
-    }
-
-    fn frame(&self) -> &Frame<'alloc> {
-        self.call_stack.last().unwrap()
-    }
-
-    fn frame_mut(&mut self) -> &mut Frame<'alloc> {
-        self.call_stack.last_mut().unwrap()
     }
 
     fn chunk(&self) -> &Chunk<'alloc> {
@@ -141,20 +134,20 @@ impl<'alloc> VM<'alloc> {
     }
 
     fn offset(&self) -> usize {
-        (self.frame().ip as usize) - (self.chunk().code().as_ptr() as usize)
+        (self.ip as usize) - (self.chunk().code().as_ptr() as usize)
     }
 
     fn read_u8(&mut self) -> u8 {
         debug_assert!(
-            self.chunk().code().as_ptr_range().contains(&self.frame().ip),
+            self.chunk().code().as_ptr_range().contains(&self.ip),
             "BUG: ip is out of code range, Chunk::check is incorrect",
         );
 
         // SAFETY Chunk is checked when the VM is constructed.
         // - every jump must be at the start of a valid instruction
         // - the Chunk ends with a return instruction that prevents reading past the end
-        let byte = unsafe { *self.frame().ip };
-        self.frame_mut().ip = unsafe { self.frame().ip.add(1) };
+        let byte = unsafe { *self.ip };
+        self.ip = unsafe { self.ip.add(1) };
 
         byte
     }
@@ -251,9 +244,11 @@ impl<'alloc> VM<'alloc> {
     fn op_get_local(&mut self) {
         let slot = self.read_u16() as usize;
 
-        let offset = self.frame().stack_offset;
+        let offset = self.stack_offset;
+
         let value = *self.stack.get(offset + slot)
             .unwrap_or_else(|| unreachable!("invalid stack access, slot={}", slot));
+
         self.push(value);
     }
 
@@ -261,7 +256,7 @@ impl<'alloc> VM<'alloc> {
         let slot = self.read_u16() as usize;
 
         let value = self.peek();
-        let offset = self.frame().stack_offset;
+        let offset = self.stack_offset;
         let slot = self.stack.get_mut(offset + slot)
             .unwrap_or_else(|| unreachable!("invalid stack access, slot={}", slot));
         *slot = value;
@@ -461,7 +456,7 @@ impl<'alloc> VM<'alloc> {
 
         // SAFETY Chunk is checked when VM is constructed.
         // - every jump must be at the start of a valid instruction
-        self.frame_mut().ip = unsafe { self.frame().ip.add(offset as usize) };
+        self.ip = unsafe { self.ip.add(offset as usize) };
     }
 
     fn op_jump_if_true(&mut self) {
@@ -471,7 +466,7 @@ impl<'alloc> VM<'alloc> {
         if !value.is_falsy() {
             // SAFETY Chunk is checked when VM is constructed.
             // - every jump must be at the start of a valid instruction
-            self.frame_mut().ip = unsafe { self.frame().ip.add(offset as usize) };
+            self.ip = unsafe { self.ip.add(offset as usize) };
         }
     }
 
@@ -482,7 +477,7 @@ impl<'alloc> VM<'alloc> {
         if value.is_falsy() {
             // SAFETY Chunk is checked when VM is constructed.
             // - every jump must be at the start of a valid instruction
-            self.frame_mut().ip = unsafe { self.frame().ip.add(offset as usize) };
+            self.ip = unsafe { self.ip.add(offset as usize) };
         }
     }
 
@@ -491,13 +486,31 @@ impl<'alloc> VM<'alloc> {
 
         // SAFETY Chunk is checked when VM is constructed.
         // - every jump must be at the start of a valid instruction
-        self.frame_mut().ip = unsafe { self.frame().ip.sub(offset as usize) };
+        self.ip = unsafe { self.ip.sub(offset as usize) };
     }
 
     fn op_call(&mut self) -> Result<(), VmError<'alloc>> {
         let args = self.read_u8() as usize;
 
-        let callee = self.peek_n(args);
+        // The stack layou before call:
+        //
+        //         caller stack_offset (or stack top)                stack.len() offset puts us
+        //         |                                                 |   one past the last arg
+        //         v                                                 v
+        // stack: [caller, tmp1, tmp2, tmp3, callee, arg1, arg2, arg3]
+        //                                   ^       ^     ^     ^
+        //                                   |       |_____|_____|__ args = 3
+        //                                   |       |
+        //                                   |       for native functions we start the args here
+        //                                   |         arg_start = stack.len() - args
+        //                                   |
+        //                                   callee stack_start = stack.len() - args - 1
+        //                                                      = stack.len() - (args + 1)
+
+        let callee_idx = self.stack.len().checked_sub(args + 1)
+            .expect("peek past the start of stack");
+        // SAFETY because we checked for underflow callee_idx is always < stack.len() and in bounds
+        let callee = unsafe { *self.stack.get_unchecked(callee_idx) };
 
         if let Some(native_function) = callee.downcast::<NativeFunction>() {
             let arg_start = self.stack.len() - args;
@@ -524,17 +537,29 @@ impl<'alloc> VM<'alloc> {
                 });
             }
 
-            // Put callee in stack slot 0.
+            // Include callee in the new stack frame at slot 0.
             let stack_start = self.stack.len() - args - 1;
 
             log::debug!("stack {:#?}", &self.stack[stack_start..]);
             log::debug!("function {} = {:?}", &function.name, &function.chunk);
 
-            self.call_stack.push(Frame {
+            // Save cached values back in the frame.
+            let caller_frame = self.call_stack.last_mut().unwrap();
+            caller_frame.ip = self.ip;
+            caller_frame.stack_offset = self.stack_offset;
+
+            let callee_frame = Frame {
                 function,
                 ip: function.chunk.code().as_ptr(),
                 stack_offset: stack_start,
-            });
+            };
+
+            // Initialize cache for the new frame.
+            self.ip = callee_frame.ip;
+            self.stack_offset = callee_frame.stack_offset;
+
+            self.call_stack.push(callee_frame);
+
 
             Ok(())
         } else {
@@ -550,16 +575,25 @@ impl<'alloc> VM<'alloc> {
     fn op_return(&mut self) -> bool {
         let result = self.pop();
 
-        let stack_top = self.frame().stack_offset;
+        let stack_top = self.stack_offset;
         self.call_stack.pop();
 
-        // Function stack has the callee in slot 0 so truncating here removes callee too.
-        self.stack.truncate(stack_top);
-        self.push(result);
+        if let Some(frame) = self.call_stack.last() {
+            // Function stack has the callee in slot 0 so truncating here removes callee too.
+            self.stack.truncate(stack_top);
+            self.stack.push(result);
 
-        self.gc();
+            // Restore previous frame cached values.
+            self.ip = frame.ip;
+            self.stack_offset = frame.stack_offset;
 
-        // If there are no call frames left break the interpreter loop.
-        self.call_stack.is_empty()
+            self.gc();
+
+            // Continue in the caller
+            false
+        } else {
+            // Empty call stack, break the interpreter loop
+            true
+        }
     }
 }
