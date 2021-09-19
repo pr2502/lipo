@@ -13,139 +13,167 @@ fn init() {
     });
 }
 
+macro_rules! res {
+    ( $res:pat ) => { $res };
+    ( ) => { Ok(_) };
+}
+
 macro_rules! parse {
-    ( @$alloc:ident, $code:literal, $($tt:tt)* ) => {{
+    ( @$alloc:ident, $code:literal, $res:pat ) => {{
         init();
 
-        let src = String::new($code, &$alloc);
+        let src = unindent::unindent($code);
+        let src = String::new_owned(src.into(), &$alloc);
         let ast = parse(src);
-        std::assert_matches::assert_matches!(ast, $($tt)*);
+        std::assert_matches::assert_matches!(ast, $res);
 
         ast
     }};
 
-    ( $code:literal, $($tt:tt)* ) => {{
-        let alloc = Alloc::new();
-        let _ = parse!(@alloc, $code, $($tt)*);
-    }};
-    ( $code:literal ) => {
-        parse!($code, Ok(_))
+    (
+        $(#[$m:meta])*
+        $name:ident,
+        $code:literal
+        $(, $res:pat)? $(,)?
+    ) => {
+        $(#[$m])*
+        #[test]
+        fn $name() {
+            let alloc = Alloc::new();
+            let _ = parse!(@alloc, $code, res!($($res)*));
+        }
     };
 }
 
 macro_rules! compile {
-    ( @$alloc:ident, $code:literal, $($tt:tt)* ) => {{
+    ( @$alloc:ident, $code:literal, $res:pat ) => {{
         let ast = parse!(@$alloc, $code, Ok(_)).unwrap();
 
         let script = compile(ast, &$alloc);
-        std::assert_matches::assert_matches!(script, $($tt)*);
+        std::assert_matches::assert_matches!(script, $res);
 
         script
     }};
 
-    ( $code:literal, $($tt:tt)* ) => {{
-        let alloc = Alloc::new();
-        let _ = compile!(@alloc, $code, $($tt)*);
-    }};
-    ( $code:literal ) => {
-        compile!($code, Ok(_))
+    (
+        $(#[$m:meta])*
+        $name:ident,
+        $code:literal
+        $(, $res:pat)? $(,)?
+    ) => {
+        $(#[$m])*
+        #[test]
+        fn $name() {
+            let alloc = Alloc::new();
+            let _ = compile!(@alloc, $code, res!($($res)*));
+        }
     };
 }
 
 macro_rules! run {
-    ( @$alloc:ident, $code:literal, $($tt:tt)* ) => {{
+    ( @$alloc:ident, $code:literal, $res:pat ) => {{
         let script = compile!(@$alloc, $code, Ok(_)).unwrap();
 
         let vm = VM::new(script, &$alloc);
         let res = vm.run();
-        std::assert_matches::assert_matches!(res, $($tt)*);
+        std::assert_matches::assert_matches!(res, $res);
     }};
 
-    ( $code:literal, $($tt:tt)* ) => {{
-        let alloc = Alloc::new();
-        run!(@alloc, $code, $($tt)*)
-    }};
-    ( $code:literal ) => {
-        run!($code, Ok(_))
+    (
+        $(#[$m:meta])*
+        $name:ident,
+        $code:literal
+        $(, $res:pat)? $(,)?
+    ) => {
+        $(#[$m])*
+        #[test]
+        fn $name() {
+            let alloc = Alloc::new();
+            run!(@alloc, $code, res!($($res)*))
+        }
     };
 }
 
 
-#[test]
-fn type_error() {
-    run!(
-        "1 / true;",
-        Err(VmError::RuntimeError { kind: RuntimeErrorKind::TypeError(_), .. }),
-    );
+run! {
+    type_error,
+    "1 / true;",
+    Err(VmError::RuntimeError { kind: RuntimeErrorKind::TypeError(_), .. }),
 }
 
-#[test]
-fn weird_expr() {
-    run!("assert not (5 - 4 > 3 * 2 == not ());");
+run! {
+    weird_expr,
+    "assert not (5 - 4 > 3 * 2 == not ());",
 }
 
-#[test]
-fn strings_ops() {
-    run!(r#"assert "string" == "string";"#);
-    run!(r#"assert "string1" /= "string2";"#);
-    run!(r#"assert "foo" + "bar" == "foobar";"#);
+run! {
+    string_ops,
+    r#"
+        assert "string" == "string";
+        assert "string1" /= "string2";
+        assert "foo" + "bar" == "foobar";
+    "#,
 }
 
-#[test]
-fn print() {
-    run!(r#"
+run! {
+    print,
+    r#"
         print 1 + 2;
         print 3 + 4;
-    "#);
+    "#,
 }
 
-#[test]
-fn global() {
-    run!("
+run! {
+    // Globals are no longer globals but that doesn't matter,
+    // we still have let bindings at the top scope.
+    global,
+    "
         let a;
         let mut b = 2;
         print b;
         b = 3;
         print b;
-    ");
+    ",
 }
 
-#[test]
-fn locals() {
-    run!("{
+run! {
+    locals,
+    "{
         let a = 1;
         {
             let a = a;
             print a;
         }
-    }");
+    }",
+}
 
-    // test resolving order of locals
-    run!("{
+run! {
+    locals_resolving_order,
+    "
         let a = 1;
         let b = 2;
         let c = 3;
         assert a == 1;
         assert b == 2;
         assert c == 3;
-    }");
+    ",
 }
 
-#[test]
-fn ifs() {
-    run!("
+run! {
+    ifs,
+    "
         if () {
             assert false;
         }
         if true {
             assert true;
         }
-    ");
+    ",
 }
 
-#[test]
-fn ifelse() {
-    run!("
+run! {
+    ifelse,
+    "
         let mut a;
         if () {
             assert false;
@@ -153,8 +181,12 @@ fn ifelse() {
             a = true;
         }
         assert a;
-    ");
-    run!("
+    ",
+}
+
+run! {
+    ifelse2,
+    "
         let mut b;
         if true {
             b = true;
@@ -162,65 +194,67 @@ fn ifelse() {
             assert false;
         }
         assert b;
-    ");
+    ",
 }
 
-#[test]
-fn andor() {
-    run!("assert true and true;");
-    run!("assert false or true;");
+run! {
+    and_or,
+    "
+        assert true and true;
+        assert false or true;
+    ",
 }
 
-#[test]
-fn whileloop() {
-    run!("{
+run! {
+    whileloop,
+    "
         let mut a = 10;
         while a > 0 {
             print a;
             a = a - 1;
         }
-    }");
+    ",
 }
 
-#[test]
-fn return_from_script() {
-    compile!(
-        "return;",
-        Err(compiler::Error::ReturnFromScript { .. }),
-    );
+compile! {
+    // `return` keyword is not allowed in the top level scope
+    return_from_script,
+    "
+        return;
+    ",
+    Err(compiler::Error::ReturnFromScript { .. }),
 }
 
-#[test]
-fn function() {
-    run!(r#"
+run! {
+    function,
+    r#"
         fn foo() {
             assert true;
             return true;
         }
         assert foo();
-    "#);
+    "#,
 }
 
-#[test]
-fn function_with_params() {
-    run!("
+run! {
+    functions_with_params,
+    "
         fn add(a, b) {
             return a + b;
         }
         assert add(1, 2) == 3;
-    ");
-    run!("
+
         fn first(a, b, c) {
             return a;
         }
         assert first(1,2,3) == 1;
-    ");
+    ",
 }
 
-#[ignore = "closures not implemented yet"]
-#[test]
-fn fib() {
-    run!("
+run! {
+    #[ignore = "closures not implemented yet"]
+    fibonacci,
+    "
         fn fib(n) {
             if n <= 1 {
                 return 1;
@@ -229,22 +263,23 @@ fn fib() {
             }
         }
         assert fib(5) == 8;
-    ");
+    ",
 }
 
-#[ignore = "closures not implemented yet"]
-#[test]
-fn closure() {
-    run!(r#"
-        fn make_closure() {
-            let local = "local";
+run! {
+    #[ignore = "closures not implemented yet"]
+    closure,
+    r#"
+        fn make_closure(param) {
             fn closure() {
-                print local;
-                return local;
+                print param;
+                return param;
             }
             return closure;
         }
-        let closure = make_closure();
-        assert closure() == "local";
-    "#);
+        let closure = make_closure("a");
+        let closure2 = make_closure("b");
+        assert closure() == "a";
+        assert closure2() == "b";
+    "#,
 }

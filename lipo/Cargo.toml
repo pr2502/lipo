@@ -21,3 +21,4 @@ gc-stress = []
 
 [dev-dependencies]
 pretty_env_logger = "0.4.0"
+unindent = "0.1.7"
