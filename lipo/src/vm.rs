@@ -254,7 +254,7 @@ impl<'alloc> VM<'alloc> {
             _ => {
                 return Err(VmError::RuntimeError {
                     source: self.chunk().source(),
-                    span: self.chunk().span(self.offset() - 1),
+                    span: self.chunk().span(self.offset() - OpCode::Greater.len()),
                     kind: RuntimeErrorKind::TypeError("comparison only supported on Numbers"),
                 })
             },
@@ -271,7 +271,7 @@ impl<'alloc> VM<'alloc> {
             _ => {
                 return Err(VmError::RuntimeError {
                     source: self.chunk().source(),
-                    span: self.chunk().span(self.offset() - 1),
+                    span: self.chunk().span(self.offset() - OpCode::Less.len()),
                     kind: RuntimeErrorKind::TypeError("comparison only supported on Numbers"),
                 })
             },
@@ -291,7 +291,7 @@ impl<'alloc> VM<'alloc> {
         } else {
             return Err(VmError::RuntimeError {
                 source: self.chunk().source(),
-                span: self.chunk().span(self.offset() - 1),
+                span: self.chunk().span(self.offset() - OpCode::Add.len()),
                 kind: RuntimeErrorKind::TypeError("addition only supported on Numbers and Strings"),
             });
         };
@@ -306,7 +306,7 @@ impl<'alloc> VM<'alloc> {
             (Some(lhs), Some(rhs)) => Value::new_float(lhs - rhs),
             _ => return Err(VmError::RuntimeError {
                 source: self.chunk().source(),
-                span: self.chunk().span(self.offset() - 1),
+                span: self.chunk().span(self.offset() - OpCode::Subtract.len()),
                 kind: RuntimeErrorKind::TypeError("subtraction only supported on Numbers"),
             }),
         };
@@ -321,7 +321,7 @@ impl<'alloc> VM<'alloc> {
             (Some(lhs), Some(rhs)) => Value::new_float(lhs * rhs),
             _ => return Err(VmError::RuntimeError {
                 source: self.chunk().source(),
-                span: self.chunk().span(self.offset() - 1),
+                span: self.chunk().span(self.offset() - OpCode::Multiply.len()),
                 kind: RuntimeErrorKind::TypeError("multiplication only supported on Numbers"),
             }),
         };
@@ -336,7 +336,7 @@ impl<'alloc> VM<'alloc> {
             (Some(lhs), Some(rhs)) => Value::new_float(lhs / rhs),
             _ => return Err(VmError::RuntimeError {
                 source: self.chunk().source(),
-                span: self.chunk().span(self.offset() - 1),
+                span: self.chunk().span(self.offset() - OpCode::Divide.len()),
                 kind: RuntimeErrorKind::TypeError("division only supported on Numbers"),
             }),
         };
@@ -356,7 +356,7 @@ impl<'alloc> VM<'alloc> {
             .map(|n| Value::new_float(-n))
             .ok_or_else(|| VmError::RuntimeError {
                 source: self.chunk().source(),
-                span: self.chunk().span(self.offset() - 1),
+                span: self.chunk().span(self.offset() - OpCode::Negate.len()),
                 kind: RuntimeErrorKind::TypeError("negation only supported on Numbers"),
             })?;
         self.push(value);
@@ -369,12 +369,12 @@ impl<'alloc> VM<'alloc> {
             Some(true) => {}
             Some(false) => return Err(VmError::RuntimeError {
                 source: self.chunk().source(),
-                span: self.chunk().span(self.offset() - 1),
+                span: self.chunk().span(self.offset() - OpCode::Assert.len()),
                 kind: RuntimeErrorKind::AssertionError
             }),
             _ => return Err(VmError::RuntimeError {
                 source: self.chunk().source(),
-                span: self.chunk().span(self.offset() - 1),
+                span: self.chunk().span(self.offset() - OpCode::Assert.len()),
                 kind: RuntimeErrorKind::TypeError("asserted expression must return a Bool"),
             }),
         }
@@ -467,7 +467,7 @@ impl<'alloc> VM<'alloc> {
             if arity != args {
                 return Err(VmError::RuntimeError {
                     source: self.chunk().source(),
-                    span: self.chunk().span(self.offset() - 2),
+                    span: self.chunk().span(self.offset() - OpCode::Call { args: 0 }.len()),
                     kind: RuntimeErrorKind::WrongArity { arity, args },
                 });
             }
@@ -500,7 +500,7 @@ impl<'alloc> VM<'alloc> {
         } else {
             Err(VmError::RuntimeError {
                 source: self.chunk().source(),
-                span: self.chunk().span(self.offset() - 2),
+                span: self.chunk().span(self.offset() - OpCode::Call { args: 0 }.len()),
                 kind: RuntimeErrorKind::ValueNotCallable(callee),
             })
         }

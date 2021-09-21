@@ -165,4 +165,40 @@ impl OpCode {
             OpCode::Return              => Self::RETURN,
         }
     }
+
+    /// Encoded length
+    #[allow(clippy::len_without_is_empty)]
+    pub const fn len(self) -> usize {
+        match self {
+            // no arguments
+            OpCode::Unit |
+            OpCode::True |
+            OpCode::False |
+            OpCode::Pop |
+            OpCode::Equal |
+            OpCode::Greater |
+            OpCode::Less |
+            OpCode::Add |
+            OpCode::Subtract |
+            OpCode::Multiply |
+            OpCode::Divide |
+            OpCode::Not |
+            OpCode::Negate |
+            OpCode::Assert |
+            OpCode::Print |
+            OpCode::Return => 1,
+
+            // one byte argument
+            OpCode::Call { .. } => 2,
+
+            // two byte argument
+            OpCode::Constant { .. } |
+            OpCode::GetLocal { .. } |
+            OpCode::SetLocal { .. } |
+            OpCode::Jump { .. } |
+            OpCode::JumpIfTrue { .. } |
+            OpCode::JumpIfFalse { .. } |
+            OpCode::Loop { .. } => 3,
+        }
+    }
 }

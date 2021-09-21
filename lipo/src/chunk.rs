@@ -5,7 +5,6 @@ use crate::span::FreeSpan;
 use crate::value::Value;
 use fxhash::FxHashMap as HashMap;
 use std::assert_matches::assert_matches;
-use std::cmp::Ordering;
 use std::collections::hash_map::Entry;
 use std::convert::TryInto;
 use std::fmt::{self, Debug};
@@ -44,31 +43,12 @@ impl<'alloc> Chunk<'alloc> {
     ///
     /// Will panic if the byte offset code incorrect.
     pub fn span(&self, byte_offset: usize) -> FreeSpan {
-        let mut ip = &self.code[..];
-        let mut span_idx = 0;
-        assert!(byte_offset < self.code.len(), "invalid OpCode byte offset");
-        loop {
-            let scan_offset = (ip.as_ptr() as usize) - (self.code.as_ptr() as usize);
-            match Ord::cmp(&scan_offset, &byte_offset) {
-                Ordering::Less => {
-                    // Continue scanning
-                }
-                Ordering::Equal => {
-                    // Found
-                    break span_idx;
-                }
-                Ordering::Greater => {
-                    // Misaligned byte offset
-                    panic!("invalid OpCode byte offset");
-                }
-            }
-            let (_, next_ip) = OpCode::decode(ip).unwrap();
-            ip = next_ip;
-            span_idx += 1;
-        };
+        let (_, idx) = OffsetIter::new(&self.code)
+            .find(|(_, offset)| offset == &byte_offset)
+            .expect("invalid OpCode byte offset");
 
         // TODO don't panic if debuginfo is missing
-        self.spans[span_idx]
+        self.spans[idx]
     }
 
     pub fn get_constant(&self, key: ConstKey) -> Option<Value<'alloc>> {
@@ -79,8 +59,8 @@ impl<'alloc> Chunk<'alloc> {
 
 unsafe impl<'alloc> Trace for Chunk<'alloc> {
     fn mark(&self) {
-        self.source.mark();
         self.constants.iter().for_each(Trace::mark);
+        self.source.mark();
     }
 }
 
@@ -100,16 +80,8 @@ impl<'alloc> Debug for Chunk<'alloc> {
             writeln!(f)?;
         }
 
-
         writeln!(f, "code:")?;
-        let opcodes = {
-            let mut code = &self.code[..];
-            iter::from_fn(move || {
-                let (opcode, rest) = OpCode::decode(code)?;
-                code = rest;
-                Some(opcode)
-            })
-        };
+        let opcodes = Iter::new(&self.code);
         let spans = self.spans.iter()
             .map(|fs| fs.anchor(&self.source));
         let mut prev_line = 0;
@@ -185,108 +157,78 @@ impl<'alloc> ChunkBuf<'alloc> {
     ///   for overflow on every push
     /// - return a Result instead of panicking
     pub fn check(self) -> Chunk<'alloc> {
-        let code = &self.code[..];
-        let len = code.len();
+        // TODO we want to return the collected problems later
+        #![allow(clippy::needless_collect)]
 
-        let mut valid_boundaries = Vec::new();
-        let mut jump_targets = Vec::new();
-        let mut ip = code;
+        // Assert 1.
+        // All opcodes must decode successfully.
+        let decoded = OffsetIter::new(&self.code).collect::<Vec<_>>();
 
-        // Dummy instruction, the only important thing is that it's NOT an `OpCode::Return` so that
-        // an empty code slice doesn't accidentally pass (5).
-        let mut prev_opcode = OpCode::Unit;
 
-        loop {
-            let before_offset = (ip.as_ptr() as usize) - (code.as_ptr() as usize);
+        // Assert 2. and 3.
+        // Every jump must land on a starting offset of an instruction, if not it's either out of
+        // bounds (2) or misaligned (3).
+        let jump_targets = decoded.iter()
+            .filter_map(|(opcode, offset)| {
+                let jump_from = (offset + opcode.len()) as isize;
+                Some(match opcode {
+                    // forward jumps
+                    OpCode::Jump { offset } |
+                    OpCode::JumpIfTrue { offset } |
+                    OpCode::JumpIfFalse { offset } => {
+                        let offset: isize = (*offset).try_into().unwrap();
+                        jump_from + offset
+                    }
 
-            match Ord::cmp(&before_offset, &len) {
-                Ordering::Less => {
-                    // Continue decoding
+                    // backward jump
+                    OpCode::Loop { offset } => {
+                        let offset: isize = (*offset).try_into().unwrap();
+                        jump_from - offset
+                    }
+
+                    // not jumps
+                    _ => return None,
+                })
+            });
+        let invalid_jumps = jump_targets
+                .filter(|jump_target| {
+                    decoded
+                        .binary_search_by_key(jump_target, |(_, offset)| *offset as isize)
+                        .is_err()
+                })
+                .collect::<Vec<_>>();
+        assert!(
+            invalid_jumps.is_empty(),
+            "invalid jump target",
+        );
+
+        // Assert 4.
+        // All constants referenced by the instructions must be present in the chunk constant pool.
+        // Because constants keys are consecutive indexes we can just compare the length.
+        let missing_constants = decoded.iter()
+            .filter_map(|(opcode, _)| {
+                match opcode {
+                    // constants
+                    OpCode::Constant { key } => Some(*key),
+
+                    // not constants
+                    _ => None,
                 }
-                Ordering::Equal => {
-                    // Assert 5.
-                    // Last opcode in the chunk must be a return to prevent reading past the end of
-                    // the `code` slice.
-                    assert!(prev_opcode == OpCode::Return, "last opcode must be a return");
+            })
+            .filter(|key| key.index as usize >= self.constants.len())
+            .collect::<Vec<_>>();
+        assert!(
+            missing_constants.is_empty(),
+            "constant index out of range",
+        );
 
-                    assert!(ip.is_empty()); // Sanity check that the offset is calculated correctly.
-
-                    // Finished decoding
-                    break;
-                }
-                Ordering::Greater => unreachable!(),
-            }
-
-            // Assert 1.
-            // All opcodes must decode successfully.
-            let (opcode, next_ip) = OpCode::decode(ip).expect("invalid opcode");
-            prev_opcode = opcode;
-            ip = next_ip;
-
-            // The instruction was decoded successfully, it's ok to jump to it.
-            valid_boundaries.push(before_offset);
-
-            // Jump offsets are calculated relative to the IP after the instruction was decoded.
-            let after_offset = (ip.as_ptr() as usize) - (code.as_ptr() as usize);
-
-            match opcode {
-                OpCode::Constant { key } => {
-                    // Assert 4.
-                    // All constants referenced by the instructions must be present in the chunk
-                    // constant pool. Because constants keys are consecutive indexes we can just
-                    // compare the length.
-                    assert!(
-                        (key.index as usize) < self.constants.len(),
-                        "constant index out of range",
-                    );
-                }
-
-                OpCode::Unit => {},
-                OpCode::True => {},
-                OpCode::False => {},
-                OpCode::Pop => {},
-                OpCode::GetLocal { slot: _ } => {},
-                OpCode::SetLocal { slot: _ } => {},
-
-                OpCode::Equal => {},
-                OpCode::Greater => {},
-                OpCode::Less => {},
-                OpCode::Add => {},
-                OpCode::Subtract => {},
-                OpCode::Multiply => {},
-                OpCode::Divide => {},
-                OpCode::Not => {},
-                OpCode::Negate => {},
-                OpCode::Assert => {},
-                OpCode::Print => {},
-
-                OpCode::Jump { offset: jump } |
-                OpCode::JumpIfTrue { offset: jump } |
-                OpCode::JumpIfFalse { offset: jump } => {
-                    let jump_to = after_offset.checked_add(jump as usize).expect("overflow");
-                    jump_targets.push(jump_to);
-                },
-
-                OpCode::Loop { offset: jump } => {
-                    let jump_to = after_offset.checked_sub(jump as usize).expect("overflow");
-                    jump_targets.push(jump_to);
-                },
-
-                OpCode::Call { args: _ } => {},
-                OpCode::Return => {},
-            }
-        }
-
-        for offset in jump_targets {
-            // Assert 2. and 3.
-            // We stored the starting offset of every decoded instruction in `valid_boundaries`,
-            // every jump must land on one of them. If not it's either out of bounds (2) or
-            // misaligned (3).
-            assert!(
-                valid_boundaries.binary_search(&offset).is_ok(),
-                "jump to an invalid boundary",
-            );
-        }
+        // Assert 5.
+        // Last opcode in the chunk must be a return to prevent reading past the end of the `code`
+        // slice.
+        assert!(
+            decoded.last().map(|(opcode, _)| matches!(opcode, OpCode::Return)).unwrap_or(false),
+            "last opcode must be a return",
+        );
 
         // Now that the ChunkBuf has been checked we can construct a Chunk
         Chunk {
@@ -422,3 +364,66 @@ impl<'alloc> ChunkBuf<'alloc> {
         }
     }
 }
+
+
+pub struct Iter<'code> {
+    code: &'code [u8],
+}
+
+impl<'code> Iter<'code> {
+    fn new(code: &'code [u8]) -> Iter<'code> {
+        Iter { code }
+    }
+}
+
+impl<'code> Iterator for Iter<'code> {
+    type Item = OpCode;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.code.is_empty() {
+            return None;
+        }
+        match OpCode::decode(self.code) {
+            Some((opcode, rest)) => {
+                self.code = rest;
+                Some(opcode)
+            }
+            None => {
+                let sample = if self.code.len() > 8 { &self.code[..8] } else { self.code };
+                panic!("BUG: atempted to iterade invalid code. invalid code starts with {:?}", sample);
+            }
+        }
+    }
+}
+
+impl<'code> iter::FusedIterator for Iter<'code> {}
+
+
+pub struct OffsetIter<'code> {
+    decode: Iter<'code>,
+    offset: usize,
+}
+
+impl<'code> OffsetIter<'code> {
+    fn new(code: &'code [u8]) -> OffsetIter<'code> {
+        OffsetIter {
+            decode: Iter::new(code),
+            offset: 0,
+        }
+    }
+}
+
+impl<'code> Iterator for OffsetIter<'code> {
+    type Item = (OpCode, usize);
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.decode.next() {
+            Some(opcode) => {
+                let offset = self.offset;
+                self.offset += opcode.len();
+                Some((opcode, offset))
+            }
+            None => None,
+        }
+    }
+}
+
+impl<'code> iter::FusedIterator for OffsetIter<'code> {}
