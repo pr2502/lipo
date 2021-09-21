@@ -341,7 +341,7 @@ pub trait Object: DynObject {
 ///
 /// **This trait should not be implemented manually**, use the [`derive_Object`] macro instead.
 #[doc(hidden)]
-pub unsafe trait DynObject: Trace + Debug + Sized {
+pub unsafe trait DynObject: Trace + Debug + Sized + Send + Sync {
     /// # Safety
     /// Must return a unique static constant and must be filled correctly.
     /// See the [`ObjectVtable`] documentation and comments.
@@ -452,6 +452,7 @@ pub struct ObjectRefAny<'alloc> {
     ptr: *mut ObjectHeader,
 }
 
+
 /// Reference to a garbage collected Object
 pub struct ObjectRef<'alloc, O: Object> {
     _alloc: PhantomData<&'alloc ()>,
@@ -467,6 +468,17 @@ impl<'alloc, O: Object> Clone for ObjectRef<'alloc, O> {
     }
 }
 impl<'alloc, O: Object> Copy for ObjectRef<'alloc, O> {}
+
+
+// SAFETY ObjectRef* don't allow their contents to be mutated and all `Object`s are required to be
+// Send and Sync themselves by the `DynObject` trait so allowing immutable access to them is safe
+// from any thread.
+//
+// For the purposes of synchronization these types behave like `Arc<O>` and `Arc<dyn Object>`.
+unsafe impl<'alloc> Send for ObjectRefAny<'alloc> {}
+unsafe impl<'alloc> Sync for ObjectRefAny<'alloc> {}
+unsafe impl<'alloc, O: Object> Send for ObjectRef<'alloc, O> {}
+unsafe impl<'alloc, O: Object> Sync for ObjectRef<'alloc, O> {}
 
 
 /// Custom [virtual method table](https://en.wikipedia.org/wiki/Virtual_method_table) for the
