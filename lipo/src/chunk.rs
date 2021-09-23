@@ -1,5 +1,5 @@
 use crate::object::builtins::String;
-use crate::object::{ObjectRef, Trace};
+use crate::object::{Object, ObjectRef, Trace};
 use crate::opcode::OpCode;
 use crate::span::FreeSpan;
 use crate::value::Value;
@@ -11,9 +11,8 @@ use std::fmt::{self, Debug};
 use std::iter;
 
 
-derive_Object!(Chunk<'alloc>);
 /// Bytecode Chunk
-#[derive(Hash, PartialEq, Eq)]
+#[derive(Object, Hash, PartialEq, Eq)]
 pub struct Chunk<'alloc> {
     /// Packed bytecode
     code: Box<[u8]>,

@@ -97,11 +97,22 @@ name = "lipo"
 version = "0.1.0"
 dependencies = [
  "fxhash",
+ "lipo_macro",
  "log",
  "logos",
  "pretty_env_logger",
  "unicode-width",
  "unindent",
+]
+
+[[package]]
+name = "lipo_macro"
+version = "0.1.0"
+dependencies = [
+ "lipo",
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

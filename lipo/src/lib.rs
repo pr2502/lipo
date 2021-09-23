@@ -15,13 +15,11 @@
 #![allow(clippy::needless_lifetimes)]
 
 
-#[macro_use]
-pub mod object;
-
 pub mod chunk;
 pub mod compiler;
 pub mod fmt;
 pub mod lexer;
+pub mod object;
 pub mod opcode;
 pub mod parser;
 pub mod span;

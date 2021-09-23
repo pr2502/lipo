@@ -7,31 +7,9 @@ use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use std::{mem, ptr};
 
 
-/// Helper macro for implementing the Object trait
-//
-// TODO replace this with a derive macro
-#[macro_export]
-macro_rules! derive_Object {
-    ( $object_ty:ident $(<$lifetime:lifetime>)? ) => {
-        unsafe impl $(<$lifetime>)? $crate::object::DynObject for $object_ty $(<$lifetime>)? {
-            fn __vtable() -> &'static $crate::object::ObjectVtable {
+// Re-export the derive macro
+pub use lipo_macro::Object;
 
-                static VTABLE: $crate::object::ObjectVtable = $crate::object::ObjectVtable {
-                    typename: ::std::stringify!($object_ty),
-                    drop: $crate::object::__derive::drop::<$object_ty>,
-                    mark: $crate::object::__derive::mark::<$object_ty>,
-                    debug_fmt: $crate::object::__derive::debug_fmt::<$object_ty>,
-                    partial_eq: $crate::object::__derive::partial_eq::<$object_ty>,
-                    hash_code: $crate::object::__derive::hash_code::<$object_ty>,
-                };
-
-                &VTABLE
-            }
-        }
-
-        impl $(<$lifetime>)? $crate::object::Object for $object_ty $(<$lifetime>)? {}
-    };
-}
 
 /// Implementation of vtable functions
 ///

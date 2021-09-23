@@ -1,10 +1,10 @@
-use crate::object::{Alloc, ObjectHashCode, ObjectRef, Trace};
+use crate::object::{Alloc, Object, ObjectHashCode, ObjectRef, Trace};
 use std::fmt::{self, Debug, Display};
 use std::hash::{Hash, Hasher};
 use std::ops::Deref;
 
 
-derive_Object!(String);
+#[derive(Object)]
 pub struct String {
     /// `fxhash::hash` of the `String`'s chars
     hash: usize,

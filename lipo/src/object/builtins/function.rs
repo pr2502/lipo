@@ -1,10 +1,9 @@
 use crate::chunk::Chunk;
-use crate::object::{Alloc, ObjectRef, Trace};
+use crate::object::{Alloc, Object, ObjectRef, Trace};
 use std::fmt::{self, Debug};
 
 
-derive_Object!(Function<'alloc>);
-#[derive(Hash, PartialEq, Eq)]
+#[derive(Object, Hash, PartialEq, Eq)]
 pub struct Function<'alloc> {
     pub(crate) chunk: Chunk<'alloc>,
     pub(crate) name: Box<str>,

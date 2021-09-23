@@ -1,4 +1,4 @@
-use crate::object::{Alloc, ObjectRef, Trace};
+use crate::object::{Alloc, Object, ObjectRef, Trace};
 use crate::value::Value;
 use std::fmt::{self, Debug};
 use std::marker::PhantomData;
@@ -9,7 +9,7 @@ type Args<'stack, 'alloc> = &'stack [Value<'alloc>];
 // Native function result
 type Result<'alloc> = std::result::Result<Value<'alloc>, NativeError<'alloc>>;
 
-derive_Object!(NativeFunction);
+#[derive(Object)]
 pub struct NativeFunction {
     name: &'static str,
     fn_impl: for<'alloc> fn(Args<'_, 'alloc>) -> Result<'alloc>,
@@ -44,7 +44,7 @@ impl NativeFunction {
 }
 
 
-derive_Object!(NativeError<'alloc>);
+#[derive(Object)]
 pub struct NativeError<'alloc> {
     msg: String,
     _todo: PhantomData<&'alloc ()>, // some objects in the future maybe
