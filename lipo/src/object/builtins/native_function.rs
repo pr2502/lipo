@@ -1,4 +1,4 @@
-use crate::object::{Alloc, Object, ObjectRef, Trace};
+use crate::object::{Alloc, ObjectRef, Trace};
 use crate::value::Value;
 use std::fmt::{self, Debug};
 use std::marker::PhantomData;
@@ -27,7 +27,7 @@ impl NativeFunction {
         fn_impl: for<'call_alloc> fn(Args<'_, 'call_alloc>) -> Result<'call_alloc>,
         alloc: &'alloc Alloc,
     ) -> ObjectRef<'alloc, NativeFunction> {
-        Object::init(NativeFunction { name, fn_impl }, alloc)
+        alloc.alloc(NativeFunction { name, fn_impl })
     }
 }
 

@@ -9,35 +9,22 @@ use std::{mem, ptr};
 
 /// Helper macro for implementing the Object trait
 //
-// TODO wrap this in a derive macro
+// TODO replace this with a derive macro
 #[macro_export]
 macro_rules! derive_Object {
     ( $object_ty:ident $(<$lifetime:lifetime>)? ) => {
         unsafe impl $(<$lifetime>)? $crate::object::DynObject for $object_ty $(<$lifetime>)? {
-            // VTABLE is generated based on the traits automatically implemented for `Object`s
             fn __vtable() -> &'static $crate::object::ObjectVtable {
 
-                fn downcast_unchecked<'alloc>(this: $crate::object::ObjectRefAny<'alloc>)
-                    -> $crate::object::ObjectRef<'alloc, $object_ty>
-                {
-                    debug_assert!(this.is::<$object_ty>(), "incorrect receiver type");
-
-                    // SAFETY within the context of this function, all receivers must be
-                    // of type `$object_ty`
-                    unsafe { this.downcast::<$object_ty>().unwrap_unchecked() }
-                }
-
-                // SAFETY `downcast_unchecked` must only be called on the receivers which are
-                // guaranteed to be type `$object_ty` because the function is picked from _their_
-                // vtable
                 static VTABLE: $crate::object::ObjectVtable = $crate::object::ObjectVtable {
-                    _typename: ::std::stringify!($object_ty),
-                    drop: |this| $crate::object::__derive_drop(downcast_unchecked(this)),
-                    mark: |this| $crate::object::__derive_mark(downcast_unchecked(this)),
-                    debug_fmt: |this, f| $crate::object::__derive_debug_fmt(downcast_unchecked(this), f),
-                    partial_eq: |this, other| $crate::object::__derive_partial_eq(downcast_unchecked(this), other),
-                    hash_code: |this| $crate::object::__derive_hash_code(downcast_unchecked(this)),
+                    typename: ::std::stringify!($object_ty),
+                    drop: $crate::object::__derive::drop::<$object_ty>,
+                    mark: $crate::object::__derive::mark::<$object_ty>,
+                    debug_fmt: $crate::object::__derive::debug_fmt::<$object_ty>,
+                    partial_eq: $crate::object::__derive::partial_eq::<$object_ty>,
+                    hash_code: $crate::object::__derive::hash_code::<$object_ty>,
                 };
+
                 &VTABLE
             }
         }
@@ -46,38 +33,83 @@ macro_rules! derive_Object {
     };
 }
 
+/// Implementation of vtable functions
+///
+/// These are used by the derive macro so they must be public but are hidden from the documentation
+/// and should not be used outside of the generated code.
 #[doc(hidden)]
-pub fn __derive_drop<O: Object>(this: ObjectRef<'static, O>) {
-    let ObjectRef { _alloc, ptr } = this;
-    // SAFETY GC should only be calling this when the object is unreachable
-    unsafe { Alloc::dealloc(ptr) }
-}
+pub mod __derive {
+    use super::*;
 
-#[doc(hidden)]
-pub fn __derive_mark<'alloc, O: Object>(this: ObjectRef<'alloc, O>) {
-    this.mark();
-    <O as Trace>::mark(&*this);
-}
+    unsafe fn downcast_unchecked<'alloc, O: Object>(this: ObjectRefAny<'alloc>) -> ObjectRef<'alloc, O> {
+        match this.downcast::<O>() {
+            Some(obj) => obj,
+            None => {
+                #[cfg(debug_assertions)] {
+                    unreachable!(
+                        "BUG: incorrect receiver type. expected type {expect} got {found}",
+                        expect = O::__vtable().typename,
+                        found = this.vtable().typename,
+                    )
+                }
 
-#[doc(hidden)]
-pub fn __derive_debug_fmt<'alloc, O: Object>(this: ObjectRef<'alloc, O>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    <O as Debug>::fmt(&*this, f)
-}
-
-#[doc(hidden)]
-pub fn __derive_partial_eq<'alloc, O: Object>(this: ObjectRef<'alloc, O>, other: ObjectRefAny<'alloc>) -> Option<bool> {
-    if <O as ObjectPartialEq>::supported() {
-        if let Some(other) = other.downcast::<O>() {
-            return Some(<O as ObjectPartialEq>::eq(&*this, other));
+                // SAFETY functions from the Object's vtable must be only called with that object
+                // as a receiver (first parameter of every function).
+                #[cfg(not(debug_assertions))]
+                unsafe { std::hint::unreachable_unchecked() }
+            }
         }
-    }
-    // Types don't support equality
-    None
-}
 
-#[doc(hidden)]
-pub fn __derive_hash_code<'alloc, O: Object>(this: ObjectRef<'alloc, O>) -> usize {
-    <O as ObjectHashCode>::hash_code(&*this)
+    }
+
+    /// [`ObjectVtable::drop`]
+    pub unsafe fn drop<O: Object>(this: ObjectRefAny<'static>) {
+        // SAFETY caller must use correct receiver type
+        let ObjectRef { _alloc, ptr } = unsafe { downcast_unchecked::<O>(this) };
+
+        // SAFETY GC should only be calling this when the object is unreachable
+        unsafe { Alloc::dealloc::<O>(ptr) }
+    }
+
+    /// [`ObjectVtable::mark`]
+    pub unsafe fn mark<'alloc, O: Object>(this: ObjectRefAny<'alloc>) {
+        // SAFETY caller must use correct receiver type
+        let this = unsafe { downcast_unchecked::<O>(this) };
+
+        this.mark();
+        <O as Trace>::mark(&*this);
+    }
+
+    /// [`ObjectVtable::debug_fmt`]
+    pub unsafe fn debug_fmt<'alloc, O: Object>(this: ObjectRefAny<'alloc>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // SAFETY caller must use correct receiver type
+        let this = unsafe { downcast_unchecked::<O>(this) };
+
+        <O as Debug>::fmt(&*this, f)
+    }
+
+    /// [`ObjectVtable::partial_eq`]
+    pub unsafe fn partial_eq<'alloc, O: Object>(this: ObjectRefAny<'alloc>, other: ObjectRefAny<'alloc>) -> Option<bool> {
+        // SAFETY caller must use correct receiver type
+        let this = unsafe { downcast_unchecked::<O>(this) };
+
+        if <O as ObjectPartialEq>::supported() {
+            if let Some(other) = other.downcast::<O>() {
+                return Some(<O as ObjectPartialEq>::eq(&*this, other));
+            }
+        }
+
+        // Types which don't support equality
+        None
+    }
+
+    /// [`ObjectVtable::hash_code`]
+    pub unsafe fn hash_code<'alloc, O: Object>(this: ObjectRefAny<'alloc>) -> usize {
+        // SAFETY caller must use correct receiver type
+        let this = unsafe { downcast_unchecked::<O>(this) };
+
+        <O as ObjectHashCode>::hash_code(&*this)
+    }
 }
 
 
@@ -173,7 +205,7 @@ impl Alloc {
 
 impl Alloc {
     /// Allocate new object and track it
-    fn alloc<'alloc, O: Object>(&'alloc self, inner: O) -> ObjectRef<'alloc, O> {
+    pub fn alloc<'alloc, O: Object>(&'alloc self, inner: O) -> ObjectRef<'alloc, O> {
         let wrap = Box::new(ObjectWrap {
             header: ObjectHeader {
                 vtable: O::__vtable(),
@@ -301,7 +333,9 @@ unsafe impl<'alloc> Trace for ObjectRefAny<'alloc> {
         if !prev_marked {
             // if the object wasn't marked previously mark recursively all it's children
             let ObjectVtable { mark, .. } = self.vtable();
-            mark(*self);
+
+            // SAFETY we're using this Object's own vtable
+            unsafe { mark(*self); }
         }
     }
 }
@@ -327,14 +361,7 @@ unsafe impl<'alloc> Trace for Value<'alloc> {
 ////////////////////////////////////////////////////////////////////////////////
 // Object traits
 
-pub trait Object: DynObject {
-    /// Moves the object to the heap and registers it in the `alloc` allocator.
-    ///
-    /// Do not override this method, use the default implementation.
-    fn init<'alloc>(this: Self, alloc: &'alloc Alloc) -> ObjectRef<'alloc, Self> {
-        alloc.alloc(this)
-    }
-}
+pub trait Object: DynObject {}
 
 
 /// Custom dynamic dispatch implementation for the [`Object`] trait.
@@ -490,26 +517,34 @@ unsafe impl<'alloc, O: Object> Sync for ObjectRef<'alloc, O> {}
 #[doc(hidden)]
 pub struct ObjectVtable {
     /// String representation for the type, used for debugging
-    pub _typename: &'static str,
+    pub typename: &'static str,
 
     /// Deallocate Object, dispatch for [`Alloc::dealloc`]
     ///
     /// # Safety
     /// After calling `drop` the object behind `this` gets freed and cannot be used via this or any
     /// other reference. Caller must ensure that the Object is unreachable.
+    ///
+    /// The receiver (first argument) must be of upcast ObjectRef<'static, Self>.
     pub drop: unsafe fn(
         // this: Self
         ObjectRefAny<'static>,
     ),
 
     /// Mark Object as reachable, dispatch for [`Trace::mark`]
-    pub mark: fn(
+    ///
+    /// # Safety
+    /// The receiver (first argument) must be of upcast ObjectRef<'static, Self>.
+    pub mark: unsafe fn(
         // this: Self
         ObjectRefAny,
     ),
 
     /// Format Object using the [`std::fmt::Debug`] formatter.
-    pub debug_fmt: fn(
+    ///
+    /// # Safety
+    /// The receiver (first argument) must be of upcast ObjectRef<'static, Self>.
+    pub debug_fmt: unsafe fn(
         // this: Self
         ObjectRefAny,
         // f: debug formatter from std
@@ -519,7 +554,10 @@ pub struct ObjectVtable {
     /// Compare Objects for equality, dispatch for [`ObjectPartialEq::eq`]
     ///
     /// Returns `None` when `this` doesn't support equality or when `rhs` type doesn't match.
-    pub partial_eq: fn(
+    ///
+    /// # Safety
+    /// The receiver (first argument) must be of upcast ObjectRef<'static, Self>.
+    pub partial_eq: unsafe fn(
         // this: Self
         ObjectRefAny,
         // rhs: Any
@@ -527,9 +565,12 @@ pub struct ObjectVtable {
     ) -> Option<bool>,
 
     /// Get Object hash code, dispatch for [`ObjectHashCode::hash_code`]
+    ///
+    /// # Safety
+    /// The receiver (first argument) must be of upcast ObjectRef<'static, Self>.
     // TODO panics if hashing is not supported,
     // maybe return an Option<usize>
-    pub hash_code: fn(
+    pub hash_code: unsafe fn(
         // this: Self
         ObjectRefAny,
     ) -> usize,
@@ -591,14 +632,18 @@ impl<'alloc> ObjectRefAny<'alloc> {
 impl<'alloc> Debug for ObjectRefAny<'alloc> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let ObjectVtable { debug_fmt, .. } = self.vtable();
-        debug_fmt(*self, f)
+
+        // SAFETY we're using this Object's own vtable
+        unsafe { debug_fmt(*self, f) }
     }
 }
 
 impl<'alloc> ObjectRefAny<'alloc> {
     pub fn partial_eq(&self, other: &ObjectRefAny<'alloc>) -> Option<bool> {
         let ObjectVtable { partial_eq, .. } = self.vtable();
-        partial_eq(*self, *other)
+
+        // SAFETY we're using this Object's own vtable
+        unsafe { partial_eq(*self, *other) }
     }
 }
 
@@ -611,7 +656,10 @@ impl<'alloc> PartialEq for ObjectRefAny<'alloc> {
 impl<'alloc> Hash for ObjectRefAny<'alloc> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         let ObjectVtable { hash_code, .. } = self.vtable();
-        let code = hash_code(*self);
+
+        // SAFETY we're using this Object's own vtable
+        let code = unsafe { hash_code(*self) };
+
         state.write_usize(code);
     }
 }

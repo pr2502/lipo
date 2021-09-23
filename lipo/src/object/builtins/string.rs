@@ -1,4 +1,4 @@
-use crate::object::{Alloc, Object, ObjectRef, ObjectHashCode, Trace};
+use crate::object::{Alloc, ObjectHashCode, ObjectRef, Trace};
 use std::fmt::{self, Debug, Display};
 use std::hash::{Hash, Hasher};
 use std::ops::Deref;
@@ -26,7 +26,7 @@ impl String {
 
     pub fn new_owned<'alloc>(chars: Box<str>, alloc: &'alloc Alloc) -> ObjectRef<'alloc, String> {
         let hash = fxhash::hash(chars.as_bytes());
-        Object::init(String { hash, chars }, alloc)
+        alloc.alloc(String { hash, chars })
     }
 
     pub fn as_str(&self) -> &str {

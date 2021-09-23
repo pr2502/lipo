@@ -1,5 +1,5 @@
 use crate::chunk::Chunk;
-use crate::object::{Alloc, Object, ObjectRef, Trace};
+use crate::object::{Alloc, ObjectRef, Trace};
 use std::fmt::{self, Debug};
 
 
@@ -19,7 +19,7 @@ unsafe impl<'alloc> Trace for Function<'alloc> {
 
 impl<'alloc> Function<'alloc> {
     pub fn new(chunk: Chunk<'alloc>, arity: u32, name: Box<str>, alloc: &'alloc Alloc) -> ObjectRef<'alloc, Function<'alloc>> {
-        Object::init(Function { chunk, name, arity }, alloc)
+        alloc.alloc(Function { chunk, name, arity })
     }
 }
 
