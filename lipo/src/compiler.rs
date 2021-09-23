@@ -1,6 +1,6 @@
 use crate::chunk::{ChunkBuf, ConstKey, LoopPoint, PatchPlace};
 use crate::lexer::TokenKind;
-use crate::object::builtins::{Function, String};
+use crate::object::builtins::{Closure, Function, String};
 use crate::object::{Alloc, ObjectRef};
 use crate::opcode::OpCode;
 use crate::parser::ast::*;
@@ -58,29 +58,57 @@ struct FnScope<'alloc> {
     name: Box<str>,
     chunk: ChunkBuf<'alloc>,
     locals: Vec<Local>,
+    upvalues: Vec<Upvalue>,
     scope_depth: u32,
 }
 
+#[derive(Clone, Copy)]
 struct Local {
+    // name of the binding / reference
     name: Identifier,
+    // where the binding was introduced
     bind_span: FreeSpan,
+    // can be reassigned
     mutable: bool,
+    // number of enclosing block scopes
     depth: u32,
+}
+
+#[derive(Clone, Copy)]
+struct Upvalue {
+    // name of the binding / reference
+    name: Identifier,
+    // reference to the parent scope's bindings
+    reference: UpvalueRef,
+}
+
+// upvalue can refer to a local binding or another upvalue
+#[derive(Clone, Copy)]
+enum UpvalueRef {
+    Local(u16),
+    Upvalue(u8),
 }
 
 type Result = std::result::Result<(), Error>;
 
-pub fn compile<'alloc>(ast: AST<'alloc>, alloc: &'alloc Alloc) -> std::result::Result<ObjectRef<'alloc, Function<'alloc>>, Error> {
+pub fn compile<'alloc>(ast: AST<'alloc>, alloc: &'alloc Alloc) -> std::result::Result<ObjectRef<'alloc, Closure<'alloc>>, Error> {
     let mut emitter = Emitter {
         alloc,
         source: ast.source,
         fn_stack: Vec::default(),
     };
 
+    let script = Local {
+        name: Identifier { token: ast.eof },
+        bind_span: ast.eof.span,
+        mutable: false,
+        depth: 0,
+    };
     emitter.fn_stack.push(FnScope {
         name: "<script>".into(),
         chunk: ChunkBuf::new(emitter.source),
-        locals: Vec::default(),
+        locals: vec![script],
+        upvalues: Vec::default(),
         scope_depth: 0,
     });
 
@@ -90,14 +118,10 @@ pub fn compile<'alloc>(ast: AST<'alloc>, alloc: &'alloc Alloc) -> std::result::R
     emitter.emit(OpCode::Return, ast.eof.span);
 
     let script = emitter.fn_stack.pop().unwrap();
-    assert!(emitter.fn_stack.is_empty());
+    assert!(emitter.fn_stack.is_empty(), "BUG: unclosed function in compiler");
 
-    Ok(Function::new(
-        script.chunk.check(),
-        0,
-        "<script>".into(),
-        alloc,
-    ))
+    let function = Function::new(script.chunk.check(), 0, "<script>".into(), alloc);
+    Ok(Closure::new(function, Box::new([]), alloc))
 }
 
 const DUMMY: u16 = u16::MAX;
@@ -132,15 +156,15 @@ impl<'alloc> Emitter<'alloc> {
     }
 }
 
-impl<'alloc> Emitter<'alloc> {
-    fn add_local(&mut self, name: Identifier, mutable: bool, span: FreeSpan) -> Result {
-        if self.fn_scope().locals.len() >= (u16::MAX as usize) {
+impl<'alloc> FnScope<'alloc> {
+    fn add_local(&mut self, name: Identifier, mutable: bool, span: FreeSpan, source: &str) -> Result {
+        if self.locals.len() >= usize::from(u16::MAX) {
             return Err(Error::TooManyLocals { span: name.span() });
         }
-        let ident_slice = |ident: Identifier| ident.token.span.anchor(&self.source).as_str();
-        let shadowing = self.fn_scope().locals.iter()
+        let ident_slice = |ident: Identifier| ident.token.span.anchor(source).as_str();
+        let shadowing = self.locals.iter()
             .rev()
-            .take_while(|loc| loc.depth == self.fn_scope().scope_depth)
+            .take_while(|loc| loc.depth == self.scope_depth)
             .find(|loc| ident_slice(loc.name) == ident_slice(name));
         if let Some(local) = shadowing {
             return Err(Error::Shadowing {
@@ -148,8 +172,8 @@ impl<'alloc> Emitter<'alloc> {
                 shadowed_span: local.name.span(),
             });
         }
-        let depth = self.fn_scope().scope_depth;
-        self.fn_scope_mut().locals.push(Local {
+        let depth = self.scope_depth;
+        self.locals.push(Local {
             name,
             bind_span: span,
             mutable,
@@ -158,12 +182,85 @@ impl<'alloc> Emitter<'alloc> {
         Ok(())
     }
 
-    fn resolve_local(&mut self, name: Identifier) -> Option<(u16, &Local)> {
-        let ident_slice = |ident: Identifier| ident.token.span.anchor(&self.source).as_str();
-        self.fn_scope().locals.iter()
+    fn find_local(&self, name: Identifier, source: &str) -> Option<(u16, Local)> {
+        let ident_slice = |ident: Identifier| ident.token.span.anchor(source).as_str();
+        self.locals.iter()
             .enumerate()
             .find(|(_, loc)| ident_slice(loc.name) == ident_slice(name))
-            .map(|(slot, loc)| ((slot as u16) + 1, loc))
+            .map(|(slot, loc)| (slot.try_into().unwrap(), *loc))
+    }
+
+    fn find_upvalue(&self, name: Identifier, source: &str) -> Option<(u8, Upvalue)> {
+        let ident_slice = |ident: Identifier| ident.token.span.anchor(source).as_str();
+        self.upvalues.iter()
+            .enumerate()
+            .find(|(_, upval)| ident_slice(upval.name) == ident_slice(name))
+            .map(|(idx, upval)| (idx.try_into().unwrap(), *upval))
+    }
+}
+
+impl<'alloc> Emitter<'alloc> {
+    fn add_local(&mut self, name: Identifier, mutable: bool, span: FreeSpan) -> Result {
+        let source = self.source;
+        self.fn_scope_mut()
+            .add_local(name, mutable, span, &source)
+    }
+
+    fn resolve_local(&self, name: Identifier) -> Option<(u16, Local)> {
+        let source = self.source;
+        self.fn_scope()
+            .find_local(name, &source)
+    }
+
+    fn resolve_upvalue(&mut self, name: Identifier) -> Option<(u8, Upvalue)> {
+        // Find an existing upvalue
+        if let Some(existing) = self.fn_scope().find_upvalue(name, &self.source) {
+            return Some(existing);
+        }
+
+        // Find which enclosing scope, if any, has the binding we want
+        //
+        // If no binding is found we return `None`
+        let (fn_scope_idx, (slot, local)) = self.fn_stack.iter()
+            .enumerate()
+            .rev() // scan upwards
+            .skip(1) // skip the current fn_scope, we already looked there in `resolve_local`
+            .find_map(|(fn_scope_idx, fn_scope)| {
+                let found = fn_scope.find_local(name, &self.source)?;
+                Some((fn_scope_idx, found))
+            })?;
+
+        if local.mutable {
+            todo!("error: cannot capture a mutable variable")
+        }
+
+        // For each enclosing fn_scope register an upvalue, if it doesn't already exist
+        //
+        // `upvalue_ref` keeps the reference to the previous upvalue/local, we initialize it
+        // with a reference to the original Local.
+        let mut upvalue_ref = UpvalueRef::Local(slot);
+        for fn_scope in &mut self.fn_stack[fn_scope_idx + 1 ..] {
+            if let Some((slot, _)) = fn_scope.find_upvalue(name, &self.source) {
+                // If the upvalue is found we just update the reference for the next iteration to
+                // point to the existing upvalue.
+                upvalue_ref = UpvalueRef::Upvalue(slot);
+            } else {
+                let slot: u8 = fn_scope.upvalues.len()
+                    .try_into().expect("too many upvalues"); // TODO error handling
+                fn_scope.upvalues.push(Upvalue {
+                    name,
+                    reference: upvalue_ref,
+                });
+                upvalue_ref = UpvalueRef::Upvalue(slot);
+            }
+        }
+
+        // The last iteration inserted the new upvalue into the current fn_scope
+        if let UpvalueRef::Upvalue(slot) = upvalue_ref {
+            Some((slot, self.fn_scope().upvalues[usize::from(slot)]))
+        } else {
+            unreachable!("BUG: invalid upvalue slot");
+        }
     }
 
     fn begin_scope(&mut self) {
@@ -202,10 +299,18 @@ impl<'alloc> Emitter<'alloc> {
         self.add_local(fn_item.name, false, fn_item.span())?;
 
         let name = fn_item.name.span().anchor(&self.source).as_str().into();
+        // Reference to callee in the 0th stack slot
+        let recur = Local {
+            name: fn_item.name,
+            bind_span: fn_item.span(),
+            mutable: false,
+            depth: 0,
+        };
         self.fn_stack.push(FnScope {
             name,
             chunk: ChunkBuf::new(self.source),
-            locals: Vec::default(),
+            locals: vec![recur],
+            upvalues: Vec::default(),
             scope_depth: 0,
         });
 
@@ -225,18 +330,23 @@ impl<'alloc> Emitter<'alloc> {
         self.emit(OpCode::Return, fn_item.body.right_brace_tok.span);
 
         let function = self.fn_stack.pop().unwrap();
+        let upvals = function.upvalues.len().try_into().unwrap();
+
+        for upval in &function.upvalues {
+            match upval.reference {
+                UpvalueRef::Local(slot) => self.emit(OpCode::GetLocal { slot }, upval.name.span()),
+                UpvalueRef::Upvalue(slot) => self.emit(OpCode::GetUpvalue { slot }, upval.name.span()),
+            };
+        }
+
         let function = Value::new_object(Function::new(
             function.chunk.check(),
             fn_item.parameters.items.len().try_into().unwrap(),
             function.name,
             self.alloc,
         ));
-
-        // assume functions are always globals for now
-        assert!(self.fn_scope().scope_depth == 0);
-
-        let key = self.insert_constant(function);
-        self.emit(OpCode::Constant { key }, fn_item.span());
+        let fn_key = self.insert_constant(function);
+        self.emit(OpCode::Closure { fn_key, upvals }, fn_item.span());
 
         Ok(())
     }
@@ -391,8 +501,9 @@ impl<'alloc> Emitter<'alloc> {
                             });
                         }
                         self.emit(OpCode::SetLocal { slot }, binary_expr.span());
+                    } else if let Some((_slot, _upvalue)) = self.resolve_upvalue(ident) {
+                        todo!() // error: we can't assign upvalues
                     } else {
-                        // TODO upvalues
                         return Err(Error::UndefinedName { name: ident.span() })
                     }
                     return Ok(())
@@ -600,6 +711,9 @@ impl<'alloc> Emitter<'alloc> {
         let ident = Identifier { token: primary.token };
         if let Some((slot, _)) = self.resolve_local(ident) {
             self.emit(OpCode::GetLocal { slot }, ident.span());
+            Ok(())
+        } else if let Some((slot, _)) = self.resolve_upvalue(ident) {
+            self.emit(OpCode::GetUpvalue { slot }, ident.span());
             Ok(())
         } else {
             // TODO upvalues

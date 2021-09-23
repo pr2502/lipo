@@ -25,6 +25,7 @@ pub enum OpCode {
     Pop,
     GetLocal { slot: u16 },
     SetLocal { slot: u16 },
+    GetUpvalue { slot: u8 },
     Equal,
     Greater,
     Less,
@@ -41,6 +42,7 @@ pub enum OpCode {
     JumpIfFalse { offset: u16 },
     Loop { offset: u16 },
     Call { args: u8 },
+    Closure { fn_key: ConstKey, upvals: u8 },
     Return,
 }
 
@@ -52,6 +54,7 @@ opcodes! {
     POP,
     GET_LOCAL,
     SET_LOCAL,
+    GET_UPVALUE,
     EQUAL,
     GREATER,
     LESS,
@@ -68,6 +71,7 @@ opcodes! {
     JUMP_IF_FALSE,
     LOOP,
     CALL,
+    CLOSURE,
     RETURN,
 }
 
@@ -86,6 +90,9 @@ impl OpCode {
             }
             [Self::SET_LOCAL, x, y, rest @ .. ] => {
                 (OpCode::SetLocal { slot: u16::from_le_bytes([*x, *y]) }, rest)
+            }
+            [Self::GET_UPVALUE, x, rest @ .. ] => {
+                (OpCode::GetUpvalue { slot: *x }, rest)
             }
             [Self::EQUAL, rest @ .. ]     => (OpCode::Equal, rest),
             [Self::GREATER, rest @ .. ]   => (OpCode::Greater, rest),
@@ -111,6 +118,9 @@ impl OpCode {
                 (OpCode::Loop { offset: u16::from_le_bytes([*x, *y]) }, rest)
             }
             [Self::CALL, x, rest @ .. ] => (OpCode::Call { args: *x }, rest),
+            [Self::CLOSURE, x, y, z, rest @ .. ]  => {
+                (OpCode::Closure { fn_key: ConstKey::from_le_bytes([*x, *y]), upvals: *z }, rest)
+            }
             [Self::RETURN, rest @ .. ]    => (OpCode::Return, rest),
             _ => return None,
         })
@@ -119,7 +129,8 @@ impl OpCode {
     pub fn encode(self, code: &mut Vec<u8>) {
         code.push(self.tag());
         match self {
-            OpCode::Call { args: u8_arg } => {
+            OpCode::Call { args: u8_arg } |
+            OpCode::GetUpvalue { slot: u8_arg } => {
                 code.push(u8_arg);
             }
             OpCode::Constant { key: key_arg } => {
@@ -133,6 +144,10 @@ impl OpCode {
             OpCode::Loop { offset: u16_arg } => {
                 code.extend(u16_arg.to_le_bytes());
             },
+            OpCode::Closure { fn_key, upvals } => {
+                code.extend(fn_key.to_le_bytes());
+                code.push(upvals);
+            }
             _ => {}
         }
     }
@@ -146,6 +161,7 @@ impl OpCode {
             OpCode::Pop                 => Self::POP,
             OpCode::GetLocal { .. }     => Self::GET_LOCAL,
             OpCode::SetLocal { .. }     => Self::SET_LOCAL,
+            OpCode::GetUpvalue { .. }   => Self::GET_UPVALUE,
             OpCode::Equal               => Self::EQUAL,
             OpCode::Greater             => Self::GREATER,
             OpCode::Less                => Self::LESS,
@@ -162,6 +178,7 @@ impl OpCode {
             OpCode::JumpIfFalse { .. }  => Self::JUMP_IF_FALSE,
             OpCode::Loop { .. }         => Self::LOOP,
             OpCode::Call { .. }         => Self::CALL,
+            OpCode::Closure { .. }      => Self::CLOSURE,
             OpCode::Return              => Self::RETURN,
         }
     }
@@ -189,7 +206,8 @@ impl OpCode {
             OpCode::Return => 1,
 
             // one byte argument
-            OpCode::Call { .. } => 2,
+            OpCode::Call { .. } |
+            OpCode::GetUpvalue { .. } => 2,
 
             // two byte argument
             OpCode::Constant { .. } |
@@ -198,7 +216,55 @@ impl OpCode {
             OpCode::Jump { .. } |
             OpCode::JumpIfTrue { .. } |
             OpCode::JumpIfFalse { .. } |
-            OpCode::Loop { .. } => 3,
+            OpCode::Loop { .. } |
+            OpCode::Closure { .. } => 3,
+        }
+    }
+
+    pub fn stack_effect(self) -> isize {
+        match self {
+            // return drops the whole stack frame,
+            // it must be special cased in the stack tracking code
+            OpCode::Return => unreachable!(),
+
+            // doesn't modify the stack
+            OpCode::Jump { .. } |
+            OpCode::JumpIfTrue { .. } |
+            OpCode::JumpIfFalse { .. } |
+            OpCode::Loop { .. } => 0,
+
+            // pop one push one
+            OpCode::Not |
+            OpCode::Negate => 0,
+
+            // pushes to stack
+            OpCode::Unit |
+            OpCode::True |
+            OpCode::False |
+            OpCode::Constant { .. } |
+            OpCode::GetLocal { .. } |
+            OpCode::GetUpvalue { .. } => 1,
+
+            // pops one element
+            OpCode::Pop |
+            OpCode::Assert |
+            OpCode::Print |
+            OpCode::SetLocal { .. } => -1,
+
+            // binary ops, pop two push one
+            OpCode::Equal |
+            OpCode::Greater |
+            OpCode::Less |
+            OpCode::Add |
+            OpCode::Subtract |
+            OpCode::Multiply |
+            OpCode::Divide => -1,
+
+            // call, pops `args`, pushes one
+            OpCode::Call { args } => -isize::from(args) + 1,
+
+            // closure, pops `upvals`, pushes one
+            OpCode::Closure { upvals, .. } => -isize::from(upvals) + 1,
         }
     }
 }

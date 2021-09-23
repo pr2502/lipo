@@ -17,6 +17,8 @@ pub use lipo_macro::Object;
 /// and should not be used outside of the generated code.
 #[doc(hidden)]
 pub mod __derive {
+    #![allow(clippy::missing_safety_doc)]
+
     use super::*;
 
     unsafe fn downcast_unchecked<'alloc, O: Object>(this: ObjectRefAny<'alloc>) -> ObjectRef<'alloc, O> {
@@ -96,7 +98,7 @@ pub mod builtins {
     mod native_function;
     mod string;
 
-    pub use function::Function;
+    pub use function::{Closure, Function};
     pub use native_function::{NativeError, NativeFunction};
     pub use string::String;
 
@@ -589,7 +591,7 @@ impl<'alloc> ObjectRefAny<'alloc> {
         //
         // So here we compare the vtable pointers directly to save two dereferences.
         ptr::eq(
-            self.header().vtable,
+            self.vtable(),
             O::__vtable(),
         )
     }

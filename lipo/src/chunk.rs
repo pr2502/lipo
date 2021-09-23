@@ -1,4 +1,4 @@
-use crate::object::builtins::String;
+use crate::object::builtins::{Function, String};
 use crate::object::{Object, ObjectRef, Trace};
 use crate::opcode::OpCode;
 use crate::span::FreeSpan;
@@ -52,7 +52,7 @@ impl<'alloc> Chunk<'alloc> {
 
     pub fn get_constant(&self, key: ConstKey) -> Option<Value<'alloc>> {
         let ConstKey { index } = key;
-        self.constants.get(index as usize).copied()
+        self.constants.get(usize::from(index)).copied()
     }
 }
 
@@ -93,7 +93,7 @@ impl<'alloc> Debug for Chunk<'alloc> {
                 write!(f, "   |")?;
             };
             let opcodefmt = format!("{:?}", opcode);
-            write!(f, "    {:<32} |", opcodefmt)?;
+            write!(f, "  {:<36} |", opcodefmt)?;
             if let Some((before, span, after)) = span.line_parts() {
                 writeln!(f, "  {}{}{}{}{}", before, RED, span, RESET, after)?;
             } else {
@@ -146,7 +146,8 @@ impl<'alloc> ChunkBuf<'alloc> {
     /// 2. All jumps are in bounds
     /// 3. All jumps land on a valid opcode boundary
     /// 4. All constants exist
-    /// 5. Chunk ends with the return opcode
+    /// 5. All constants referenced by Closure are type Function
+    /// 6. Chunk ends with the return opcode
     ///
     /// For now stack slot accesses must still be checked by the VM.
     ///
@@ -159,17 +160,17 @@ impl<'alloc> ChunkBuf<'alloc> {
         // TODO we want to return the collected problems later
         #![allow(clippy::needless_collect)]
 
-        // Assert 1.
+        // Assert [1]
         // All opcodes must decode successfully.
         let decoded = OffsetIter::new(&self.code).collect::<Vec<_>>();
 
 
-        // Assert 2. and 3.
+        // Assert [2] and [3]
         // Every jump must land on a starting offset of an instruction, if not it's either out of
-        // bounds (2) or misaligned (3).
+        // bounds [2] or misaligned [3].
         let jump_targets = decoded.iter()
             .filter_map(|(opcode, offset)| {
-                let jump_from = (offset + opcode.len()) as isize;
+                let jump_from = isize::try_from(offset + opcode.len()).unwrap();
                 Some(match opcode {
                     // forward jumps
                     OpCode::Jump { offset } |
@@ -192,7 +193,7 @@ impl<'alloc> ChunkBuf<'alloc> {
         let invalid_jumps = jump_targets
                 .filter(|jump_target| {
                     decoded
-                        .binary_search_by_key(jump_target, |(_, offset)| *offset as isize)
+                        .binary_search_by_key(jump_target, |(_, offset)| isize::try_from(*offset).unwrap())
                         .is_err()
                 })
                 .collect::<Vec<_>>();
@@ -201,7 +202,7 @@ impl<'alloc> ChunkBuf<'alloc> {
             "invalid jump target",
         );
 
-        // Assert 4.
+        // Assert [4]
         // All constants referenced by the instructions must be present in the chunk constant pool.
         // Because constants keys are consecutive indexes we can just compare the length.
         let missing_constants = decoded.iter()
@@ -209,19 +210,37 @@ impl<'alloc> ChunkBuf<'alloc> {
                 match opcode {
                     // constants
                     OpCode::Constant { key } => Some(*key),
+                    OpCode::Closure { fn_key, upvals: _ } => Some(*fn_key),
 
                     // not constants
                     _ => None,
                 }
             })
-            .filter(|key| key.index as usize >= self.constants.len())
-            .collect::<Vec<_>>();
+            .any(|key| usize::from(key.index) >= self.constants.len());
         assert!(
-            missing_constants.is_empty(),
+            !missing_constants,
             "constant index out of range",
         );
 
-        // Assert 5.
+        // Assert [5]
+        // All constants referenced by OpCode::Closure must be of type Function.
+        let wrong_constant_types = decoded.iter()
+            .filter_map(|(opcode, _)| {
+                match opcode {
+                    // typed constants
+                    OpCode::Closure { fn_key, upvals: _ } => Some(*fn_key),
+
+                    // not constants or any-typed constants
+                    _ => None,
+                }
+            })
+            .any(|fn_key| self.constants[usize::from(fn_key.index)].downcast::<Function>().is_none());
+        assert!(
+            !wrong_constant_types,
+            "constant has an incorrect type",
+        );
+
+        // Assert [6]
         // Last opcode in the chunk must be a return to prevent reading past the end of the `code`
         // slice.
         assert!(
@@ -248,6 +267,15 @@ pub struct PatchPlace {
     position: Option<usize>,
 }
 
+impl Drop for PatchPlace {
+    fn drop(&mut self) {
+        // Turn `PatchPlace` into a Drop Bomb if the compiler forgets to patch a jump
+        if self.position.is_some() {
+            panic!("BUG: unpatched jump");
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct LoopPoint {
     /// Byte offset of the start of the instruction into the code vector
@@ -270,7 +298,11 @@ impl<'alloc> ChunkBuf<'alloc> {
     }
 
     pub fn patch_jump(&mut self, place: PatchPlace) {
-        let PatchPlace { position } = place;
+        let position = {
+            let mut place = place;
+            // Defuse PatchPlace Drop Bomb
+            place.position.take()
+        };
         let position = position.expect("tried to patch an unpatchable instruction");
 
         // Check that the position really points to a placeholder JUMP* instruction
@@ -388,7 +420,7 @@ impl<'code> Iterator for Iter<'code> {
             }
             None => {
                 let sample = if self.code.len() > 8 { &self.code[..8] } else { self.code };
-                panic!("BUG: atempted to iterade invalid code. invalid code starts with {:?}", sample);
+                panic!("BUG: atempted to iterate invalid code. invalid code starts with {:?}", sample);
             }
         }
     }

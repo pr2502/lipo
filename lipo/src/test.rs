@@ -252,7 +252,6 @@ run! {
 }
 
 run! {
-    #[ignore = "closures not implemented yet"]
     fibonacci,
     "
         fn fib(n) {
@@ -267,7 +266,6 @@ run! {
 }
 
 run! {
-    #[ignore = "closures not implemented yet"]
     closure,
     r#"
         fn make_closure(param) {
@@ -281,5 +279,19 @@ run! {
         let closure2 = make_closure("b");
         assert closure() == "a";
         assert closure2() == "b";
+    "#,
+}
+
+compile! {
+    // TODO proper error handling
+    #[should_panic = "cannot capture a mutable variable"]
+    capture_mutable_binding,
+    r#"
+        let mut a = "a";
+        fn closure() {
+            return a;
+        }
+        a = "b";
+        assert closure() == "???";
     "#,
 }

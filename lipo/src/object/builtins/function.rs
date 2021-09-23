@@ -1,5 +1,6 @@
 use crate::chunk::Chunk;
 use crate::object::{Alloc, Object, ObjectRef, Trace};
+use crate::value::Value;
 use std::fmt::{self, Debug};
 
 
@@ -25,5 +26,35 @@ impl<'alloc> Function<'alloc> {
 impl<'alloc> Debug for Function<'alloc> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Function({})", &self.name)
+    }
+}
+
+
+#[derive(Object)]
+pub struct Closure<'alloc> {
+    pub(crate) function: ObjectRef<'alloc, Function<'alloc>>,
+    pub(crate) upvalues: Box<[Value<'alloc>]>,
+}
+
+unsafe impl<'alloc> Trace for Closure<'alloc> {
+    fn mark(&self) {
+        self.function.mark();
+        self.upvalues.iter().for_each(Trace::mark);
+    }
+}
+
+impl<'alloc> Closure<'alloc> {
+    pub fn new(
+        function: ObjectRef<'alloc, Function<'alloc>>,
+        upvalues: Box<[Value<'alloc>]>,
+        alloc: &'alloc Alloc,
+    ) -> ObjectRef<'alloc, Closure<'alloc>> {
+        alloc.alloc(Closure { function, upvalues })
+    }
+}
+
+impl<'alloc> Debug for Closure<'alloc> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Closure({})", &self.function.name)
     }
 }

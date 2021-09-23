@@ -165,7 +165,7 @@ impl<'alloc> Hash for Value<'alloc> {
         H: Hasher,
     {
         if let Some(b) = self.to_bool() {
-            state.write_u8(b as u8)
+            state.write_u8(b.into())
         } else if let Some(n) = self.to_float() {
             state.write_u64(n.to_bits())
         } else if let Some(o) = self.to_object() {

@@ -1,5 +1,5 @@
 use crate::chunk::{Chunk, ConstKey};
-use crate::object::builtins::{Function, NativeError, NativeFunction, String};
+use crate::object::builtins::{Closure, Function, NativeError, NativeFunction, String};
 use crate::object::{Alloc, ObjectRef, Trace};
 use crate::opcode::OpCode;
 use crate::span::FreeSpan;
@@ -19,7 +19,7 @@ pub struct VM<'alloc> {
 
 #[derive(Debug)]
 struct Frame<'alloc> {
-    function: ObjectRef<'alloc, Function<'alloc>>,
+    closure: ObjectRef<'alloc, Closure<'alloc>>,
     ip: *const u8,
     stack_offset: usize,
 }
@@ -47,10 +47,10 @@ pub enum RuntimeErrorKind<'alloc> {
 }
 
 impl<'alloc> VM<'alloc> {
-    pub fn new(function: ObjectRef<'alloc, Function<'alloc>>, alloc: &'alloc Alloc) -> VM<'alloc> {
+    pub fn new(closure: ObjectRef<'alloc, Closure<'alloc>>, alloc: &'alloc Alloc) -> VM<'alloc> {
         let frame = Frame {
-            function,
-            ip: function.chunk.code().as_ptr(),
+            closure,
+            ip: closure.function.chunk.code().as_ptr(),
             stack_offset: 0,
         };
         VM {
@@ -60,7 +60,7 @@ impl<'alloc> VM<'alloc> {
 
             alloc,
             call_stack: vec![frame],
-            stack: vec![Value::new_object(function)],
+            stack: vec![Value::new_object(closure)],
         }
     }
 
@@ -80,7 +80,7 @@ impl<'alloc> VM<'alloc> {
     }
 
     fn chunk(&self) -> &Chunk<'alloc> {
-        &self.call_stack.last().unwrap().function.chunk
+        &self.call_stack.last().unwrap().closure.function.chunk
     }
 
     fn get_constant(&self, key: ConstKey) -> Value<'alloc> {
@@ -103,7 +103,7 @@ impl<'alloc> VM<'alloc> {
         // check memory usage first.
 
         self.stack.iter().for_each(Trace::mark);
-        self.call_stack.iter().for_each(|frame| frame.function.mark());
+        self.call_stack.iter().for_each(|frame| frame.closure.mark());
 
         // SAFETY we've marked all the roots above
         unsafe { self.alloc.sweep(); }
@@ -157,6 +157,7 @@ impl<'alloc> VM<'alloc> {
                 OpCode::POP             => self.op_pop(),
                 OpCode::GET_LOCAL       => self.op_get_local(),
                 OpCode::SET_LOCAL       => self.op_set_local(),
+                OpCode::GET_UPVALUE     => self.op_get_upval(),
                 OpCode::EQUAL           => self.op_equal()?,
                 OpCode::GREATER         => self.op_greater()?,
                 OpCode::LESS            => self.op_less()?,
@@ -173,6 +174,7 @@ impl<'alloc> VM<'alloc> {
                 OpCode::JUMP_IF_FALSE   => self.op_jump_if_false(),
                 OpCode::LOOP            => self.op_loop(),
                 OpCode::CALL            => self.op_call()?,
+                OpCode::CLOSURE         => self.op_closure(),
                 OpCode::RETURN          => if self.op_return() { break Ok(()) },
                 _ => {
                     #[cfg(debug_assertions)]
@@ -215,7 +217,7 @@ impl<'alloc> VM<'alloc> {
     }
 
     fn op_get_local(&mut self) {
-        let slot = self.read_u16() as usize;
+        let slot = usize::from(self.read_u16());
 
         let offset = self.stack_offset;
 
@@ -226,13 +228,22 @@ impl<'alloc> VM<'alloc> {
     }
 
     fn op_set_local(&mut self) {
-        let slot = self.read_u16() as usize;
+        let slot = usize::from(self.read_u16());
 
         let value = self.peek();
         let offset = self.stack_offset;
         let slot = self.stack.get_mut(offset + slot)
             .unwrap_or_else(|| unreachable!("invalid stack access, slot={}", slot));
         *slot = value;
+    }
+
+    fn op_get_upval(&mut self) {
+        let slot = usize::from(self.read_u8());
+
+        let value = *self.call_stack.last().unwrap()
+            .closure.upvalues.get(slot)
+            .unwrap_or_else(|| unreachable!("invalid upvalue access, slot={}", slot));
+        self.push(value);
     }
 
     fn op_equal(&mut self) -> Result<(), VmError<'alloc>> {
@@ -387,45 +398,45 @@ impl<'alloc> VM<'alloc> {
     }
 
     fn op_jump(&mut self) {
-        let offset = self.read_u16() as usize;
+        let offset = usize::from(self.read_u16());
 
         // SAFETY Chunk is checked when VM is constructed.
         // - every jump must be at the start of a valid instruction
-        self.ip = unsafe { self.ip.add(offset as usize) };
+        self.ip = unsafe { self.ip.add(offset) };
     }
 
     fn op_jump_if_true(&mut self) {
-        let offset = self.read_u16();
+        let offset = usize::from(self.read_u16());
 
         let value = self.peek();
         if !value.is_falsy() {
             // SAFETY Chunk is checked when VM is constructed.
             // - every jump must be at the start of a valid instruction
-            self.ip = unsafe { self.ip.add(offset as usize) };
+            self.ip = unsafe { self.ip.add(offset) };
         }
     }
 
     fn op_jump_if_false(&mut self) {
-        let offset = self.read_u16();
+        let offset = usize::from(self.read_u16());
 
         let value = self.peek();
         if value.is_falsy() {
             // SAFETY Chunk is checked when VM is constructed.
             // - every jump must be at the start of a valid instruction
-            self.ip = unsafe { self.ip.add(offset as usize) };
+            self.ip = unsafe { self.ip.add(offset) };
         }
     }
 
     fn op_loop(&mut self) {
-        let offset = self.read_u16();
+        let offset = usize::from(self.read_u16());
 
         // SAFETY Chunk is checked when VM is constructed.
         // - every jump must be at the start of a valid instruction
-        self.ip = unsafe { self.ip.sub(offset as usize) };
+        self.ip = unsafe { self.ip.sub(offset) };
     }
 
     fn op_call(&mut self) -> Result<(), VmError<'alloc>> {
-        let args = self.read_u8() as usize;
+        let args = usize::from(self.read_u8());
 
         // The stack layou before call:
         //
@@ -462,8 +473,8 @@ impl<'alloc> VM<'alloc> {
                     Err(VmError::NativeError(err))
                 }
             }
-        } else if let Some(function) = callee.downcast::<Function>() {
-            let arity = function.arity as usize;
+        } else if let Some(closure) = callee.downcast::<Closure>() {
+            let arity = usize::try_from(closure.function.arity).unwrap();
             if arity != args {
                 return Err(VmError::RuntimeError {
                     source: self.chunk().source(),
@@ -476,7 +487,7 @@ impl<'alloc> VM<'alloc> {
             let stack_start = self.stack.len() - args - 1;
 
             log::debug!("stack {:#?}", &self.stack[stack_start..]);
-            log::debug!("function {} = {:?}", &function.name, &function.chunk);
+            log::debug!("function {} = {:?}", &closure.function.name, &closure.function.chunk);
 
             // Save cached values back in the frame.
             let caller_frame = self.call_stack.last_mut().unwrap();
@@ -484,8 +495,8 @@ impl<'alloc> VM<'alloc> {
             caller_frame.stack_offset = self.stack_offset;
 
             let callee_frame = Frame {
-                function,
-                ip: function.chunk.code().as_ptr(),
+                closure,
+                ip: closure.function.chunk.code().as_ptr(),
                 stack_offset: stack_start,
             };
 
@@ -504,6 +515,28 @@ impl<'alloc> VM<'alloc> {
                 kind: RuntimeErrorKind::ValueNotCallable(callee),
             })
         }
+    }
+
+    fn op_closure(&mut self) {
+        let key = self.read_const_key();
+        let upvals = usize::from(self.read_u8());
+
+        let constant = self.get_constant(key);
+        let function = match constant.downcast::<Function>() {
+            Some(function) => function,
+            None => {
+                    #[cfg(debug_assertions)]
+                    unreachable!("BUG: OpCode::Closure referenced a constant that was not a Function");
+
+                    // SAFETY Chunk is checked when the VM is constructed, all constant references
+                    // from OpCode::Closure must be valid and reference a Function object.
+                    #[cfg(not(debug_assertions))]
+                    unsafe { std::hint::unreachable_unchecked(); }
+            },
+        };
+        let upvalues = self.stack.drain((self.stack.len() - upvals)..).collect();
+        let closure = Value::new_object(Closure::new(function, upvalues, self.alloc));
+        self.push(closure);
     }
 
     /// Returns true when returning from the top level call frame
