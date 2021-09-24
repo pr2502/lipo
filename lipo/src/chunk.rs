@@ -12,7 +12,7 @@ use std::iter;
 
 
 /// Bytecode Chunk
-#[derive(Object, Hash, PartialEq, Eq)]
+#[derive(Object, Trace, Hash, PartialEq, Eq)]
 pub struct Chunk<'alloc> {
     /// Packed bytecode
     code: Box<[u8]>,
@@ -53,13 +53,6 @@ impl<'alloc> Chunk<'alloc> {
     pub fn get_constant(&self, key: ConstKey) -> Option<Value<'alloc>> {
         let ConstKey { index } = key;
         self.constants.get(usize::from(index)).copied()
-    }
-}
-
-unsafe impl<'alloc> Trace for Chunk<'alloc> {
-    fn mark(&self) {
-        self.constants.iter().for_each(Trace::mark);
-        self.source.mark();
     }
 }
 

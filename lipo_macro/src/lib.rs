@@ -1,7 +1,8 @@
 use proc_macro::TokenStream;
-use quote::quote;
+use quote::{quote, quote_spanned};
 use std::env;
-use syn::{parse_macro_input, DeriveInput, Error};
+use syn::spanned::Spanned;
+use syn::{parse_macro_input, Data, DeriveInput, Error, Fields, Index};
 
 
 fn lipo_crate() -> impl quote::ToTokens {
@@ -71,11 +72,11 @@ pub fn derive_object(input: TokenStream) -> TokenStream {
 
                 static VTABLE: #lipo::object::ObjectVtable = #lipo::object::ObjectVtable {
                     typename: #typename,
-                    drop: #lipo::object::__derive::drop::<#object_ident>,
-                    mark: #lipo::object::__derive::mark::<#object_ident>,
-                    debug_fmt: #lipo::object::__derive::debug_fmt::<#object_ident>,
-                    partial_eq: #lipo::object::__derive::partial_eq::<#object_ident>,
-                    hash_code: #lipo::object::__derive::hash_code::<#object_ident>,
+                    drop: #lipo::__derive_object::drop::<#object_ident>,
+                    mark: #lipo::__derive_object::mark::<#object_ident>,
+                    debug_fmt: #lipo::__derive_object::debug_fmt::<#object_ident>,
+                    partial_eq: #lipo::__derive_object::partial_eq::<#object_ident>,
+                    hash_code: #lipo::__derive_object::hash_code::<#object_ident>,
                 };
 
                 &VTABLE
@@ -86,4 +87,72 @@ pub fn derive_object(input: TokenStream) -> TokenStream {
     };
 
     TokenStream::from(expanded)
+}
+
+
+#[proc_macro_derive(Trace)]
+pub fn derive_trace(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+
+    let lipo = lipo_crate();
+
+    let ty_ident = input.ident;
+
+    let lifetimes = input.generics.lifetimes();
+    let lifetimes = quote! { <#(#lifetimes),*> };
+
+    let unwanted_generic_params =
+        input.generics.type_params().any(|_| true) || input.generics.const_params().any(|_| true);
+    if unwanted_generic_params {
+        return Error::new_spanned(
+            // FIXME why does this lose span information?
+            input.generics.params,
+            "Object cannot have type or const generic parameters",
+        )
+        .into_compile_error()
+        .into();
+    }
+
+    let mark_children = mark_children(&input.data);
+
+    let expanded = quote! {
+        unsafe impl #lifetimes #lipo::object::Trace for #ty_ident #lifetimes {
+            fn mark(&self) {
+                #mark_children
+            }
+        }
+    };
+
+    TokenStream::from(expanded)
+}
+
+fn mark_children(data: &Data) -> proc_macro2::TokenStream {
+    let lipo = lipo_crate();
+
+    match data {
+        Data::Struct(data) => {
+            match &data.fields {
+                Fields::Named(fields) => {
+                    let children = fields.named.iter().map(|f| {
+                        let name = &f.ident;
+                        quote_spanned! {f.span()=>
+                            #lipo::__derive_trace::MaybeTrace::maybe_mark(&self.#name);
+                        }
+                    });
+                    quote! { #(#children)* }
+                }
+                Fields::Unnamed(fields) => {
+                    let children = fields.unnamed.iter().enumerate().map(|(i, f)| {
+                        let index = Index::from(i);
+                        quote_spanned! {f.span()=>
+                            #lipo::__derive_trace::MaybeTrace::maybe_mark(&self.#index);
+                        }
+                    });
+                    quote! { #(#children)* }
+                }
+                Fields::Unit => quote! {},
+            }
+        }
+        Data::Enum(_) | Data::Union(_) => unimplemented!(),
+    }
 }

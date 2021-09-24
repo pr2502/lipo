@@ -4,19 +4,13 @@ use std::hash::{Hash, Hasher};
 use std::ops::Deref;
 
 
-#[derive(Object)]
+#[derive(Object, Trace)]
 pub struct String {
     /// `fxhash::hash` of the `String`'s chars
     hash: usize,
 
     /// string data
     chars: Box<str>,
-}
-
-unsafe impl Trace for String {
-    fn mark(&self) {
-        // nop
-    }
 }
 
 impl String {

@@ -9,16 +9,10 @@ type Args<'stack, 'alloc> = &'stack [Value<'alloc>];
 // Native function result
 type Result<'alloc> = std::result::Result<Value<'alloc>, NativeError<'alloc>>;
 
-#[derive(Object)]
+#[derive(Object, Trace)]
 pub struct NativeFunction {
     name: &'static str,
     fn_impl: for<'alloc> fn(Args<'_, 'alloc>) -> Result<'alloc>,
-}
-
-unsafe impl Trace for NativeFunction {
-    fn mark(&self) {
-        // nop
-    }
 }
 
 impl NativeFunction {
@@ -44,16 +38,10 @@ impl NativeFunction {
 }
 
 
-#[derive(Object)]
+#[derive(Object, Trace)]
 pub struct NativeError<'alloc> {
     msg: String,
     _todo: PhantomData<&'alloc ()>, // some objects in the future maybe
-}
-
-unsafe impl<'alloc> Trace for NativeError<'alloc> {
-    fn mark(&self) {
-        // nop, for now at least
-    }
 }
 
 impl<'alloc> Debug for NativeError<'alloc> {

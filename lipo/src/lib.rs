@@ -26,5 +26,8 @@ pub mod span;
 pub mod value;
 pub mod vm;
 
+pub use object::__derive_object;
+pub use object::__derive_trace;
+
 #[cfg(test)]
 mod test;
