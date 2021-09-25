@@ -31,7 +31,9 @@ pub enum TokenKind {
     Identifier,
     #[regex(r#""[^"]*""#)]
     String,
-    #[regex(r"[0-9]+(\.[0-9]*)?")]
+    #[regex(r"[0-9][0-9_]*")]
+    #[regex(r"[0-9]+\.[0-9]*")]
+    #[regex(r"[0-9]+(e|E)(\+|-)?[0-9_]+")]
     Number,
 
     // Keywords

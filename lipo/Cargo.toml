@@ -10,6 +10,8 @@ logos = "0.12.0"
 unicode-width = { version = "0.1.8", optional = true }
 
 lipo_macro = { path = "../lipo_macro" }
+codespan-reporting = "0.11.1"
+termcolor = "1.1.2"
 
 [features]
 default = ["full-unicode"]

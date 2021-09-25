@@ -6,57 +6,28 @@ use crate::opcode::OpCode;
 use crate::parser::ast::*;
 use crate::span::{FreeSpan, Spanned};
 use crate::value::Value;
-use std::num::ParseFloatError;
+
+
+pub mod error;
+
+use error::*;
+use error::{BoxError, Error};
 
 
 /// Maximum number of function arguments and parameters
 const MAX_ARGS: usize = u8::MAX as usize;
-
-#[derive(Debug)]
-pub enum Error {
-    TooManyLocals {
-        span: FreeSpan,
-    },
-    Shadowing {
-        shadowing_span: FreeSpan,
-        shadowed_span: FreeSpan,
-    },
-    InvalidNumberLiteral {
-        cause: ParseFloatError,
-        span: FreeSpan,
-    },
-    InvalidAssignmentTarget {
-        span: FreeSpan,
-    },
-    AssignImmutableBinding {
-        bind_span: FreeSpan,
-        assign_span: FreeSpan,
-    },
-    ReturnFromScript {
-        return_span: FreeSpan,
-    },
-    TooManyParameters {
-        extra_param_span: FreeSpan,
-        limit: usize,
-    },
-    TooManyArguments {
-        extra_arg_span: FreeSpan,
-        limit: usize,
-    },
-    UndefinedName {
-        name: FreeSpan,
-    },
-}
+const MAX_LOCALS: usize = u16::MAX as usize;
 
 struct Emitter<'alloc> {
     alloc: &'alloc Alloc,
     source: ObjectRef<'alloc, String>,
     fn_stack: Vec<FnScope<'alloc>>,
-    errors: Vec<Error>,
+    errors: Vec<BoxError>,
 }
 
 struct FnScope<'alloc> {
     name: Box<str>,
+    fndef_span: FreeSpan,
     chunk: ChunkBuf<'alloc>,
     locals: Vec<Local>,
     upvalues: Vec<Upvalue>,
@@ -90,7 +61,7 @@ enum UpvalueRef {
     Upvalue(u8),
 }
 
-pub fn compile<'alloc>(ast: AST<'alloc>, alloc: &'alloc Alloc) -> Result<ObjectRef<'alloc, Closure<'alloc>>, Vec<Error>> {
+pub fn compile<'alloc>(ast: AST<'alloc>, alloc: &'alloc Alloc) -> Result<ObjectRef<'alloc, Closure<'alloc>>, Vec<BoxError>> {
     let mut emitter = Emitter {
         alloc,
         source: ast.source,
@@ -106,6 +77,7 @@ pub fn compile<'alloc>(ast: AST<'alloc>, alloc: &'alloc Alloc) -> Result<ObjectR
     };
     emitter.fn_stack.push(FnScope {
         name: "<script>".into(),
+        fndef_span: FreeSpan::default(),
         chunk: ChunkBuf::new(emitter.source),
         locals: vec![script],
         upvalues: Vec::default(),
@@ -133,6 +105,10 @@ pub fn compile<'alloc>(ast: AST<'alloc>, alloc: &'alloc Alloc) -> Result<ObjectR
 const DUMMY: u16 = u16::MAX;
 
 impl<'alloc> Emitter<'alloc> {
+    fn error<E: Error>(&mut self, err: E) {
+        self.errors.push(BoxError(Box::new(err)));
+    }
+
     fn fn_scope(&self) -> &FnScope<'alloc> {
         self.fn_stack.last().expect("missing FnScope")
     }
@@ -163,31 +139,6 @@ impl<'alloc> Emitter<'alloc> {
 }
 
 impl<'alloc> FnScope<'alloc> {
-    fn add_local(&mut self, name: Identifier, mutable: bool, span: FreeSpan, source: &str) -> Result<(), Error> {
-        if self.locals.len() >= usize::from(u16::MAX) {
-            return Err(Error::TooManyLocals { span: name.span() });
-        }
-        let ident_slice = |ident: Identifier| ident.token.span.anchor(source).as_str();
-        let shadowing = self.locals.iter()
-            .rev()
-            .take_while(|loc| loc.depth == self.scope_depth)
-            .find(|loc| ident_slice(loc.name) == ident_slice(name));
-        if let Some(local) = shadowing {
-            return Err(Error::Shadowing {
-                shadowing_span: name.span(),
-                shadowed_span: local.name.span(),
-            });
-        }
-        let depth = self.scope_depth;
-        self.locals.push(Local {
-            name,
-            bind_span: span,
-            mutable,
-            depth,
-        });
-        Ok(())
-    }
-
     fn find_local(&self, name: Identifier, source: &str) -> Option<(u16, Local)> {
         let ident_slice = |ident: Identifier| ident.token.span.anchor(source).as_str();
         self.locals.iter()
@@ -207,12 +158,35 @@ impl<'alloc> FnScope<'alloc> {
 
 impl<'alloc> Emitter<'alloc> {
     fn add_local(&mut self, name: Identifier, mutable: bool, span: FreeSpan) {
-        let source = self.source;
-        let res = self.fn_scope_mut()
-            .add_local(name, mutable, span, &source);
-        if let Err(e) = res {
-            self.errors.push(e);
+        if self.fn_scope().locals.len() >= MAX_LOCALS {
+            self.error(TooManyLocals {
+                span: name.span(),
+                limit: MAX_LOCALS,
+            });
+            return
         }
+        let ident_slice = |ident: Identifier| ident.token.span.anchor(&self.source).as_str();
+        let shadowing = self.fn_scope()
+            .locals.iter()
+            .rev()
+            .take_while(|loc| loc.depth == self.fn_scope().scope_depth)
+            .find(|loc| ident_slice(loc.name) == ident_slice(name));
+        if let Some(local) = shadowing {
+            let shadowed_span = local.name.span();
+            self.error(Shadowing {
+                shadowing_span: name.span(),
+                shadowed_span,
+            });
+            return
+        }
+        let depth = self.fn_scope().scope_depth;
+        self.fn_scope_mut()
+            .locals.push(Local {
+                name,
+                bind_span: span,
+                mutable,
+                depth,
+            });
     }
 
     fn resolve_local(&self, name: Identifier) -> Option<(u16, Local)> {
@@ -240,7 +214,11 @@ impl<'alloc> Emitter<'alloc> {
             })?;
 
         if local.mutable {
-            todo!("error: cannot capture a mutable variable")
+            self.error(CaptureMutable {
+                bind_span: local.bind_span,
+                closure_def_span: self.fn_scope().fndef_span,
+                capture_span: name.span(),
+            });
         }
 
         // For each enclosing fn_scope register an upvalue, if it doesn't already exist
@@ -317,6 +295,7 @@ impl<'alloc> Emitter<'alloc> {
         };
         self.fn_stack.push(FnScope {
             name,
+            fndef_span: fn_item.span(),
             chunk: ChunkBuf::new(self.source),
             locals: vec![recur],
             upvalues: Vec::default(),
@@ -325,8 +304,9 @@ impl<'alloc> Emitter<'alloc> {
 
         for (i, param) in fn_item.parameters.items.iter().enumerate() {
             if i >= MAX_ARGS {
-                self.errors.push(Error::TooManyParameters {
+                self.error(TooManyParameters {
                     extra_param_span: param.span(),
+                    fn_params_span: FreeSpan::join(fn_item.left_paren_tok.span, fn_item.right_paren_tok.span),
                     limit: MAX_ARGS,
                 });
             }
@@ -426,7 +406,7 @@ impl<'alloc> Emitter<'alloc> {
 
     fn return_stmt(&mut self, return_stmt: &ReturnStmt) {
         if self.fn_stack.len() == 1 {
-            self.errors.push(Error::ReturnFromScript {
+            self.error(ReturnFromScript {
                 return_span: return_stmt.span(),
             });
         }
@@ -490,7 +470,7 @@ impl<'alloc> Emitter<'alloc> {
                     self.expression(&binary_expr.rhs);
                     if let Some((slot, local)) = self.resolve_local(ident) {
                         if !local.mutable {
-                            self.errors.push(Error::AssignImmutableBinding {
+                            self.error(AssignImmutableBinding {
                                 bind_span: local.bind_span,
                                 assign_span: binary_expr.span(),
                             });
@@ -499,15 +479,18 @@ impl<'alloc> Emitter<'alloc> {
                     } else if let Some((_slot, _upvalue)) = self.resolve_upvalue(ident) {
                         todo!() // error: we can't assign upvalues
                     } else {
-                        self.errors.push(Error::UndefinedName { name: ident.span() })
+                        self.error(UndefinedName {
+                            name_span: ident.span(),
+                        })
                     }
                     return
                 }
             }
             // TODO more complex assignment target
-            self.errors.push(Error::InvalidAssignmentTarget {
+            self.error(InvalidAssignmentTarget {
                 span: binary_expr.lhs.span(),
             });
+            return;
         }
 
         if op == TokenKind::Or {
@@ -625,14 +608,15 @@ impl<'alloc> Emitter<'alloc> {
         self.expression(&call_expr.callee);
         for (i, arg) in call_expr.arguments.items.iter().enumerate() {
             if i >= MAX_ARGS {
-                self.errors.push(Error::TooManyArguments {
+                self.error(TooManyArguments {
                     extra_arg_span: arg.span(),
+                    call_span: call_expr.span(),
                     limit: MAX_ARGS,
                 });
             }
             self.expression(arg);
         }
-        let args = call_expr.arguments.items.len().try_into().unwrap();
+        let args = call_expr.arguments.items.len().try_into().unwrap_or(u8::MAX);
         self.emit(OpCode::Call { args }, call_expr.span());
     }
 
@@ -676,7 +660,7 @@ impl<'alloc> Emitter<'alloc> {
                 self.emit(OpCode::Constant { key }, span);
             }
             Err(cause) => {
-                self.errors.push(Error::InvalidNumberLiteral { cause, span });
+                self.error(InvalidNumberLiteral { cause, span });
             }
         }
     }
@@ -699,7 +683,9 @@ impl<'alloc> Emitter<'alloc> {
         } else if let Some((slot, _)) = self.resolve_upvalue(ident) {
             self.emit(OpCode::GetUpvalue { slot }, ident.span());
         } else {
-            self.errors.push(Error::UndefinedName { name: ident.span() })
+            self.error(UndefinedName {
+                name_span: ident.span()
+            });
         }
     }
 }

@@ -17,6 +17,7 @@
 
 pub mod chunk;
 pub mod compiler;
+pub mod diagnostic;
 pub mod fmt;
 pub mod lexer;
 pub mod object;

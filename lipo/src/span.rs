@@ -13,6 +13,12 @@ pub struct FreeSpan {
     pub end: u32,
 }
 
+impl AsRef<FreeSpan> for FreeSpan {
+    fn as_ref(&self) -> &FreeSpan {
+        self
+    }
+}
+
 impl From<Range<usize>> for FreeSpan {
     fn from(range: Range<usize>) -> Self {
         let start = range.start.try_into().expect("out of span range");
