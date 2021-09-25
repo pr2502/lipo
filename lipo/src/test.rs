@@ -50,7 +50,14 @@ macro_rules! compile {
         let ast = parse!(@$alloc, $code, Ok(_)).unwrap();
 
         let script = compile(ast, &$alloc);
-        std::assert_matches::assert_matches!(script, $res);
+
+        // Change the type from `Result<T, Vec<E>>` to `Result<T, &[E]>` so we
+        // can reasonably match on it.
+        let res = match &script {
+            Ok(script) => Ok(*script),
+            Err(e) => Err(e.as_slice()),
+        };
+        std::assert_matches::assert_matches!(res, $res);
 
         script
     }};
@@ -222,7 +229,7 @@ compile! {
     "
         return;
     ",
-    Err(compiler::Error::ReturnFromScript { .. }),
+    Err([compiler::Error::ReturnFromScript { .. }]),
 }
 
 run! {

@@ -52,6 +52,7 @@ struct Emitter<'alloc> {
     alloc: &'alloc Alloc,
     source: ObjectRef<'alloc, String>,
     fn_stack: Vec<FnScope<'alloc>>,
+    errors: Vec<Error>,
 }
 
 struct FnScope<'alloc> {
@@ -89,13 +90,12 @@ enum UpvalueRef {
     Upvalue(u8),
 }
 
-type Result = std::result::Result<(), Error>;
-
-pub fn compile<'alloc>(ast: AST<'alloc>, alloc: &'alloc Alloc) -> std::result::Result<ObjectRef<'alloc, Closure<'alloc>>, Error> {
+pub fn compile<'alloc>(ast: AST<'alloc>, alloc: &'alloc Alloc) -> Result<ObjectRef<'alloc, Closure<'alloc>>, Vec<Error>> {
     let mut emitter = Emitter {
         alloc,
         source: ast.source,
         fn_stack: Vec::default(),
+        errors: Vec::default(),
     };
 
     let script = Local {
@@ -112,13 +112,19 @@ pub fn compile<'alloc>(ast: AST<'alloc>, alloc: &'alloc Alloc) -> std::result::R
         scope_depth: 0,
     });
 
-    emitter.block_inner(&ast.items)?;
+    emitter.block_inner(&ast.items);
 
     emitter.emit(OpCode::Unit, ast.eof.span);
     emitter.emit(OpCode::Return, ast.eof.span);
 
     let script = emitter.fn_stack.pop().unwrap();
     assert!(emitter.fn_stack.is_empty(), "BUG: unclosed function in compiler");
+
+    if !emitter.errors.is_empty() {
+        // Don't even try to check the Chunk for correctness, if there were any errors it likely
+        // contains nonsense.
+        return Err(emitter.errors);
+    }
 
     let function = Function::new(script.chunk.check(), 0, "<script>".into(), alloc);
     Ok(Closure::new(function, Box::new([]), alloc))
@@ -157,7 +163,7 @@ impl<'alloc> Emitter<'alloc> {
 }
 
 impl<'alloc> FnScope<'alloc> {
-    fn add_local(&mut self, name: Identifier, mutable: bool, span: FreeSpan, source: &str) -> Result {
+    fn add_local(&mut self, name: Identifier, mutable: bool, span: FreeSpan, source: &str) -> Result<(), Error> {
         if self.locals.len() >= usize::from(u16::MAX) {
             return Err(Error::TooManyLocals { span: name.span() });
         }
@@ -200,10 +206,13 @@ impl<'alloc> FnScope<'alloc> {
 }
 
 impl<'alloc> Emitter<'alloc> {
-    fn add_local(&mut self, name: Identifier, mutable: bool, span: FreeSpan) -> Result {
+    fn add_local(&mut self, name: Identifier, mutable: bool, span: FreeSpan) {
         let source = self.source;
-        self.fn_scope_mut()
-            .add_local(name, mutable, span, &source)
+        let res = self.fn_scope_mut()
+            .add_local(name, mutable, span, &source);
+        if let Err(e) = res {
+            self.errors.push(e);
+        }
     }
 
     fn resolve_local(&self, name: Identifier) -> Option<(u16, Local)> {
@@ -281,7 +290,7 @@ impl<'alloc> Emitter<'alloc> {
 }
 
 impl<'alloc> Emitter<'alloc> {
-    fn item(&mut self, item: &Item) -> Result {
+    fn item(&mut self, item: &Item) {
         match item {
             Item::Class(class_item) => self.class_item(class_item),
             Item::Fn(fn_item) => self.fn_item(fn_item),
@@ -290,13 +299,13 @@ impl<'alloc> Emitter<'alloc> {
         }
     }
 
-    fn class_item(&mut self, _class_item: &ClassItem) -> Result {
+    fn class_item(&mut self, _class_item: &ClassItem) {
         todo!("class")
     }
 
-    fn fn_item(&mut self, fn_item: &FnItem) -> Result {
+    fn fn_item(&mut self, fn_item: &FnItem) {
         // Add an immutable local into the outer fn
-        self.add_local(fn_item.name, false, fn_item.span())?;
+        self.add_local(fn_item.name, false, fn_item.span());
 
         let name = fn_item.name.span().anchor(&self.source).as_str().into();
         // Reference to callee in the 0th stack slot
@@ -316,15 +325,15 @@ impl<'alloc> Emitter<'alloc> {
 
         for (i, param) in fn_item.parameters.items.iter().enumerate() {
             if i >= MAX_ARGS {
-                return Err(Error::TooManyParameters {
+                self.errors.push(Error::TooManyParameters {
                     extra_param_span: param.span(),
                     limit: MAX_ARGS,
                 });
             }
-            self.add_local(param.name, param.mut_tok.is_some(), param.span())?;
+            self.add_local(param.name, param.mut_tok.is_some(), param.span());
         }
 
-        self.block_inner(&fn_item.body.body)?;
+        self.block_inner(&fn_item.body.body);
 
         self.emit(OpCode::Unit, fn_item.body.right_brace_tok.span);
         self.emit(OpCode::Return, fn_item.body.right_brace_tok.span);
@@ -347,26 +356,22 @@ impl<'alloc> Emitter<'alloc> {
         ));
         let fn_key = self.insert_constant(function);
         self.emit(OpCode::Closure { fn_key, upvals }, fn_item.span());
-
-        Ok(())
     }
 
-    fn let_item(&mut self, let_item: &LetItem) -> Result {
+    fn let_item(&mut self, let_item: &LetItem) {
         let span = let_item.span();
 
         if let Some(init) = &let_item.init {
-            self.expression(&init.expr)?;
+            self.expression(&init.expr);
         } else {
             // empty initializer, set value to Unit
             self.emit(OpCode::Unit, span);
         }
 
-        self.add_local(let_item.name, let_item.mut_tok.is_some(), let_item.span())?;
-
-        Ok(())
+        self.add_local(let_item.name, let_item.mut_tok.is_some(), let_item.span());
     }
 
-    fn statement(&mut self, stmt: &Statement) -> Result {
+    fn statement(&mut self, stmt: &Statement) {
         match stmt {
             Statement::Expr(expr_stmt) => self.expr_stmt(expr_stmt),
             Statement::For(for_stmt) => self.for_stmt(for_stmt),
@@ -379,101 +384,91 @@ impl<'alloc> Emitter<'alloc> {
         }
     }
 
-    fn expr_stmt(&mut self, expr_stmt: &ExprStmt) -> Result {
-        self.expression(&expr_stmt.expr)?;
+    fn expr_stmt(&mut self, expr_stmt: &ExprStmt) {
+        self.expression(&expr_stmt.expr);
         self.emit(OpCode::Pop, expr_stmt.semicolon_tok.span);
-        Ok(())
     }
 
-    fn for_stmt(&mut self, _for_stmt: &ForStmt) -> Result {
+    fn for_stmt(&mut self, _for_stmt: &ForStmt) {
         todo!()
     }
 
-    fn if_stmt(&mut self, if_stmt: &IfStmt) -> Result {
+    fn if_stmt(&mut self, if_stmt: &IfStmt) {
         // if <pred>
-        self.expression(&if_stmt.pred)?;
+        self.expression(&if_stmt.pred);
         let then_jump = self.emit(OpCode::JumpIfFalse { offset: DUMMY }, if_stmt.if_tok.span);
 
         // then
         self.emit(OpCode::Pop, if_stmt.if_tok.span);
-        self.block(&if_stmt.body)?;
+        self.block(&if_stmt.body);
         let else_jump = self.emit(OpCode::Jump { offset: DUMMY }, if_stmt.if_tok.span);
 
         // else
         self.patch_jump(then_jump);
         self.emit(OpCode::Pop, if_stmt.if_tok.span);
         if let Some(else_branch) = &if_stmt.else_branch {
-            self.block(&else_branch.body)?;
+            self.block(&else_branch.body);
         }
 
         // end
         self.patch_jump(else_jump);
-
-        Ok(())
     }
 
-    fn assert_stmt(&mut self, assert_stmt: &AssertStmt) -> Result {
-        self.expression(&assert_stmt.expr)?;
+    fn assert_stmt(&mut self, assert_stmt: &AssertStmt) {
+        self.expression(&assert_stmt.expr);
         self.emit(OpCode::Assert, assert_stmt.span());
-        Ok(())
     }
 
-    fn print_stmt(&mut self, print_stmt: &PrintStmt) -> Result {
-        self.expression(&print_stmt.expr)?;
+    fn print_stmt(&mut self, print_stmt: &PrintStmt) {
+        self.expression(&print_stmt.expr);
         self.emit(OpCode::Print, print_stmt.span());
-        Ok(())
     }
 
-    fn return_stmt(&mut self, return_stmt: &ReturnStmt) -> Result {
+    fn return_stmt(&mut self, return_stmt: &ReturnStmt) {
         if self.fn_stack.len() == 1 {
-            return Err(Error::ReturnFromScript {
+            self.errors.push(Error::ReturnFromScript {
                 return_span: return_stmt.span(),
             });
         }
         if let Some(expr) = &return_stmt.expr {
-            self.expression(expr)?;
+            self.expression(expr);
         } else {
             self.emit(OpCode::Unit, return_stmt.semicolon_tok.span);
         }
         self.emit(OpCode::Return, return_stmt.return_tok.span);
-        Ok(())
     }
 
-    fn while_stmt(&mut self, while_stmt: &WhileStmt) -> Result {
+    fn while_stmt(&mut self, while_stmt: &WhileStmt) {
         let loop_start = self.loop_point();
 
         // while <pred>
-        self.expression(&while_stmt.pred)?;
+        self.expression(&while_stmt.pred);
         let span = FreeSpan::join(while_stmt.while_tok.span, while_stmt.pred.span());
         let exit_jump = self.emit(OpCode::JumpIfFalse { offset: DUMMY }, span);
 
         // then
         self.emit(OpCode::Pop, while_stmt.body.left_brace_tok.span);
-        self.block(&while_stmt.body)?;
+        self.block(&while_stmt.body);
         self.emit_loop(loop_start, while_stmt.body.right_brace_tok.span);
 
         // end
         self.patch_jump(exit_jump);
         self.emit(OpCode::Pop, while_stmt.body.right_brace_tok.span);
-
-        Ok(())
     }
 
-    fn block(&mut self, block: &Block) -> Result {
+    fn block(&mut self, block: &Block) {
         self.begin_scope();
-        self.block_inner(&block.body)?;
+        self.block_inner(&block.body);
         self.end_scope(block.right_brace_tok.span);
-        Ok(())
     }
 
-    fn block_inner(&mut self, items: &[Item]) -> Result {
+    fn block_inner(&mut self, items: &[Item]) {
         for i in items {
-            self.item(i)?;
+            self.item(i);
         }
-        Ok(())
     }
 
-    fn expression(&mut self, expr: &Expression) -> Result {
+    fn expression(&mut self, expr: &Expression) {
         match expr {
             Expression::Binary(binary_expr) => self.binary_expr(binary_expr),
             Expression::Unary(unary_expr) => self.unary_expr(unary_expr),
@@ -484,7 +479,7 @@ impl<'alloc> Emitter<'alloc> {
         }
     }
 
-    fn binary_expr(&mut self, binary_expr: &BinaryExpr) -> Result {
+    fn binary_expr(&mut self, binary_expr: &BinaryExpr) {
         let op = binary_expr.operator.kind;
 
         if op == TokenKind::Equal {
@@ -492,10 +487,10 @@ impl<'alloc> Emitter<'alloc> {
             if let Expression::Primary(primary) = &*binary_expr.lhs {
                 if primary.token.kind == TokenKind::Identifier {
                     let ident = Identifier { token: primary.token };
-                    self.expression(&binary_expr.rhs)?;
+                    self.expression(&binary_expr.rhs);
                     if let Some((slot, local)) = self.resolve_local(ident) {
                         if !local.mutable {
-                            return Err(Error::AssignImmutableBinding {
+                            self.errors.push(Error::AssignImmutableBinding {
                                 bind_span: local.bind_span,
                                 assign_span: binary_expr.span(),
                             });
@@ -504,13 +499,13 @@ impl<'alloc> Emitter<'alloc> {
                     } else if let Some((_slot, _upvalue)) = self.resolve_upvalue(ident) {
                         todo!() // error: we can't assign upvalues
                     } else {
-                        return Err(Error::UndefinedName { name: ident.span() })
+                        self.errors.push(Error::UndefinedName { name: ident.span() })
                     }
-                    return Ok(())
+                    return
                 }
             }
             // TODO more complex assignment target
-            return Err(Error::InvalidAssignmentTarget {
+            self.errors.push(Error::InvalidAssignmentTarget {
                 span: binary_expr.lhs.span(),
             });
         }
@@ -525,8 +520,8 @@ impl<'alloc> Emitter<'alloc> {
 
         // normal binary operations with eagerly evaluated operands
 
-        self.expression(&binary_expr.lhs)?;
-        self.expression(&binary_expr.rhs)?;
+        self.expression(&binary_expr.lhs);
+        self.expression(&binary_expr.rhs);
 
         let span = binary_expr.span();
         match op {
@@ -565,11 +560,10 @@ impl<'alloc> Emitter<'alloc> {
             }
             _ => unreachable!()
         }
-        Ok(())
     }
 
-    fn and(&mut self, binary_expr: &BinaryExpr) -> Result {
-        self.expression(&binary_expr.lhs)?;
+    fn and(&mut self, binary_expr: &BinaryExpr) {
+        self.expression(&binary_expr.lhs);
 
         // if lhs is false, short-circuit, jump over rhs
         // span both lhs and the `and` operator
@@ -578,14 +572,13 @@ impl<'alloc> Emitter<'alloc> {
 
         // pop lhs result, span of the `and` operator
         self.emit(OpCode::Pop, binary_expr.operator.span);
-        self.expression(&binary_expr.rhs)?;
+        self.expression(&binary_expr.rhs);
 
         self.patch_jump(end_jump);
-        Ok(())
     }
 
-    fn or(&mut self, binary_expr: &BinaryExpr) -> Result {
-        self.expression(&binary_expr.lhs)?;
+    fn or(&mut self, binary_expr: &BinaryExpr) {
+        self.expression(&binary_expr.lhs);
 
         // if lhs is true, short-circuit, jump over rhs
         // span both lhs and the `or` operator
@@ -594,16 +587,15 @@ impl<'alloc> Emitter<'alloc> {
 
         // pop lhs result, span of the `or` operator
         self.emit(OpCode::Pop, binary_expr.operator.span);
-        self.expression(&binary_expr.rhs)?;
+        self.expression(&binary_expr.rhs);
 
         self.patch_jump(end_jump);
-        Ok(())
     }
 
-    fn unary_expr(&mut self, unary_expr: &UnaryExpr) -> Result {
+    fn unary_expr(&mut self, unary_expr: &UnaryExpr) {
         let op = unary_expr.operator.kind;
 
-        self.expression(&unary_expr.expr)?;
+        self.expression(&unary_expr.expr);
 
         let span = unary_expr.span();
         match op {
@@ -615,40 +607,36 @@ impl<'alloc> Emitter<'alloc> {
             }
             _ => unreachable!()
         }
-
-        Ok(())
     }
 
-    fn field_expr(&mut self, _field_expr: &FieldExpr) -> Result {
+    fn field_expr(&mut self, _field_expr: &FieldExpr) {
         todo!()
     }
 
-    fn group_expr(&mut self, group_expr: &GroupExpr) -> Result {
+    fn group_expr(&mut self, group_expr: &GroupExpr) {
         if let Some(expr) = group_expr.expr.as_ref() {
             self.expression(expr)
         } else {
             self.emit(OpCode::Unit, group_expr.span());
-            Ok(())
         }
     }
 
-    fn call_expr(&mut self, call_expr: &CallExpr) -> Result {
-        self.expression(&call_expr.callee)?;
+    fn call_expr(&mut self, call_expr: &CallExpr) {
+        self.expression(&call_expr.callee);
         for (i, arg) in call_expr.arguments.items.iter().enumerate() {
             if i >= MAX_ARGS {
-                return Err(Error::TooManyArguments {
+                self.errors.push(Error::TooManyArguments {
                     extra_arg_span: arg.span(),
                     limit: MAX_ARGS,
                 });
             }
-            self.expression(arg)?;
+            self.expression(arg);
         }
         let args = call_expr.arguments.items.len().try_into().unwrap();
         self.emit(OpCode::Call { args }, call_expr.span());
-        Ok(())
     }
 
-    fn primary_expr(&mut self, primary_expr: &PrimaryExpr) -> Result {
+    fn primary_expr(&mut self, primary_expr: &PrimaryExpr) {
         let op = primary_expr.token.kind;
         let span = primary_expr.span();
 
@@ -666,20 +654,19 @@ impl<'alloc> Emitter<'alloc> {
                 todo!()
             }
             TokenKind::Number => {
-                self.float(primary_expr)?;
+                self.float(primary_expr);
             }
             TokenKind::String => {
-                self.string(primary_expr)?;
+                self.string(primary_expr);
             }
             TokenKind::Identifier => {
-                self.identifier(primary_expr)?;
+                self.identifier(primary_expr);
             }
             _ => unreachable!()
         }
-        Ok(())
     }
 
-    fn float(&mut self, primary: &PrimaryExpr) -> Result {
+    fn float(&mut self, primary: &PrimaryExpr) {
         let span = primary.token.span;
         let slice = span.anchor(&self.source).as_str();
         match slice.parse() {
@@ -689,13 +676,12 @@ impl<'alloc> Emitter<'alloc> {
                 self.emit(OpCode::Constant { key }, span);
             }
             Err(cause) => {
-                return Err(Error::InvalidNumberLiteral { cause, span });
+                self.errors.push(Error::InvalidNumberLiteral { cause, span });
             }
         }
-        Ok(())
     }
 
-    fn string(&mut self, primary: &PrimaryExpr) -> Result {
+    fn string(&mut self, primary: &PrimaryExpr) {
         let span = primary.token.span;
         let slice = span.anchor(&self.source).as_str()
             .strip_prefix('"').unwrap()
@@ -704,20 +690,16 @@ impl<'alloc> Emitter<'alloc> {
         let value = Value::new_object(string);
         let key = self.insert_constant(value);
         self.emit(OpCode::Constant { key }, span);
-        Ok(())
     }
 
-    fn identifier(&mut self, primary: &PrimaryExpr) -> Result {
+    fn identifier(&mut self, primary: &PrimaryExpr) {
         let ident = Identifier { token: primary.token };
         if let Some((slot, _)) = self.resolve_local(ident) {
             self.emit(OpCode::GetLocal { slot }, ident.span());
-            Ok(())
         } else if let Some((slot, _)) = self.resolve_upvalue(ident) {
             self.emit(OpCode::GetUpvalue { slot }, ident.span());
-            Ok(())
         } else {
-            // TODO upvalues
-            Err(Error::UndefinedName { name: ident.span() })
+            self.errors.push(Error::UndefinedName { name: ident.span() })
         }
     }
 }
