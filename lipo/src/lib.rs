@@ -26,8 +26,12 @@ pub mod span;
 pub mod value;
 pub mod vm;
 
+
+#[doc(hidden)]
 pub use object::__derive_object;
+#[doc(hidden)]
 pub use object::__derive_trace;
+
 
 #[cfg(test)]
 mod test;

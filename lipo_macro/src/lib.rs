@@ -16,23 +16,16 @@ fn lipo_crate() -> impl quote::ToTokens {
 }
 
 
-/// Derive macro generating an impl of  the trait `Object`.
+/// Derive macro generating an impl of the trait `Object`.
 ///
 /// # Examples
 ///
 /// ```rust
-/// use lipo::object::{Object, ObjectRef, Trace};
 /// use lipo::object::builtins::String;
+/// use lipo::object::{Object, ObjectRef, Trace};
 ///
-/// #[derive(Object, Debug)]
+/// #[derive(Object, Trace, Debug)]
 /// struct MyString<'alloc>(ObjectRef<'alloc, String>);
-///
-/// // For now trace has to be implemented manually.
-/// unsafe impl<'alloc> Trace for MyString<'alloc> {
-///     fn mark(&self) {
-///         self.0.mark();
-///     }
-/// }
 /// ```
 ///
 /// Object doesn't support type or const generic parameters.
@@ -67,10 +60,10 @@ pub fn derive_object(input: TokenStream) -> TokenStream {
     }
 
     let expanded = quote! {
-        unsafe impl #lifetimes #lipo::object::DynObject for #object_ident #lifetimes {
-            fn __vtable() -> &'static #lipo::object::ObjectVtable {
+        unsafe impl #lifetimes #lipo::__derive_object::DynObject for #object_ident #lifetimes {
+            fn __vtable() -> &'static #lipo::__derive_object::ObjectVtable {
 
-                static VTABLE: #lipo::object::ObjectVtable = #lipo::object::ObjectVtable {
+                static VTABLE: #lipo::__derive_object::ObjectVtable = #lipo::__derive_object::ObjectVtable {
                     typename: #typename,
                     drop: #lipo::__derive_object::drop::<#object_ident>,
                     mark: #lipo::__derive_object::mark::<#object_ident>,
@@ -90,6 +83,7 @@ pub fn derive_object(input: TokenStream) -> TokenStream {
 }
 
 
+/// Derive macro generating an impl of the trait `Object`.
 #[proc_macro_derive(Trace)]
 pub fn derive_trace(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);

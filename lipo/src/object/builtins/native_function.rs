@@ -9,6 +9,7 @@ type Args<'stack, 'alloc> = &'stack [Value<'alloc>];
 // Native function result
 type Result<'alloc> = std::result::Result<Value<'alloc>, NativeError<'alloc>>;
 
+
 #[derive(Object, Trace)]
 pub struct NativeFunction {
     name: &'static str,

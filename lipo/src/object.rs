@@ -1,144 +1,17 @@
-use crate::value::Value;
 use std::fmt::{self, Debug};
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 use std::ops::Deref;
-use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
-use std::{mem, ptr};
+use std::ptr;
 
 
-// Re-export the derive macro
-pub use lipo_macro::Object;
+// Re-export the derive macros
+pub use lipo_macro::{Object, Trace};
 
-/// Implementation of vtable functions
-///
-/// These are used by the derive macro so they must be public but are hidden from the documentation
-/// and should not be used outside of the generated code.
 #[doc(hidden)]
-pub mod __derive_object {
-    #![allow(clippy::missing_safety_doc)]
-
-    use super::*;
-
-    unsafe fn downcast_unchecked<'alloc, O: Object>(this: ObjectRefAny<'alloc>) -> ObjectRef<'alloc, O> {
-        match this.downcast::<O>() {
-            Some(obj) => obj,
-            None => {
-                #[cfg(debug_assertions)] {
-                    unreachable!(
-                        "BUG: incorrect receiver type. expected type {expect} got {found}",
-                        expect = O::__vtable().typename,
-                        found = this.vtable().typename,
-                    )
-                }
-
-                // SAFETY functions from the Object's vtable must be only called with that object
-                // as a receiver (first parameter of every function).
-                #[cfg(not(debug_assertions))]
-                unsafe { std::hint::unreachable_unchecked() }
-            }
-        }
-
-    }
-
-    /// [`ObjectVtable::drop`]
-    pub unsafe fn drop<O: Object>(this: ObjectRefAny<'static>) {
-        // SAFETY caller must use correct receiver type
-        let ObjectRef { _alloc, ptr } = unsafe { downcast_unchecked::<O>(this) };
-
-        // SAFETY GC should only be calling this when the object is unreachable
-        unsafe { Alloc::dealloc::<O>(ptr) }
-    }
-
-    /// [`ObjectVtable::mark`]
-    pub unsafe fn mark<'alloc, O: Object>(this: ObjectRefAny<'alloc>) {
-        // SAFETY caller must use correct receiver type
-        let this = unsafe { downcast_unchecked::<O>(this) };
-
-        this.mark();
-        <O as Trace>::mark(&*this);
-    }
-
-    /// [`ObjectVtable::debug_fmt`]
-    pub unsafe fn debug_fmt<'alloc, O: Object>(this: ObjectRefAny<'alloc>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // SAFETY caller must use correct receiver type
-        let this = unsafe { downcast_unchecked::<O>(this) };
-
-        <O as Debug>::fmt(&*this, f)
-    }
-
-    /// [`ObjectVtable::partial_eq`]
-    pub unsafe fn partial_eq<'alloc, O: Object>(this: ObjectRefAny<'alloc>, other: ObjectRefAny<'alloc>) -> Option<bool> {
-        // SAFETY caller must use correct receiver type
-        let this = unsafe { downcast_unchecked::<O>(this) };
-
-        if <O as ObjectPartialEq>::supported() {
-            if let Some(other) = other.downcast::<O>() {
-                return Some(<O as ObjectPartialEq>::eq(&*this, other));
-            }
-        }
-
-        // Types which don't support equality
-        None
-    }
-
-    /// [`ObjectVtable::hash_code`]
-    pub unsafe fn hash_code<'alloc, O: Object>(this: ObjectRefAny<'alloc>) -> usize {
-        // SAFETY caller must use correct receiver type
-        let this = unsafe { downcast_unchecked::<O>(this) };
-
-        <O as ObjectHashCode>::hash_code(&*this)
-    }
-}
-
-
-// Re-export the derive macro
-pub use lipo_macro::Trace;
-
-/// Helpers for deriving the Trace trait
-///
-/// These are used by the derive macro so they must be public but are hidden from the documentation
-/// and should not be used outside of the generated code.
+pub mod __derive_object;
 #[doc(hidden)]
-pub mod __derive_trace {
-    /// Helper trait for deriving Trace
-    pub trait MaybeTrace {
-        fn maybe_mark(&self);
-    }
-
-    impl<T> MaybeTrace for T
-    where
-        T: 'static,
-    {
-        default fn maybe_mark(&self) {
-            // nop, not a `Trace`able type
-        }
-    }
-
-    impl<T> MaybeTrace for std::marker::PhantomData<T> {
-        fn maybe_mark(&self) {
-            // nop
-        }
-    }
-
-    impl<T> MaybeTrace for T
-    where
-        T: super::Trace,
-    {
-        fn maybe_mark(&self) {
-            self.mark();
-        }
-    }
-
-    impl<T> MaybeTrace for Box<[T]>
-    where
-        T: MaybeTrace,
-    {
-        fn maybe_mark(&self) {
-            self.iter().for_each(MaybeTrace::maybe_mark);
-        }
-    }
-}
+pub mod __derive_trace;
 
 
 pub mod builtins {
@@ -154,236 +27,12 @@ pub mod builtins {
 }
 
 
-////////////////////////////////////////////////////////////////////////////////
-// Alloc/GC
+mod gc;
 
-pub struct Alloc {
-    head: AtomicPtr<ObjectHeader>,
-}
+pub use gc::Alloc;
+pub use gc::Trace;
+use gc::ObjectHeader;
 
-impl Alloc {
-    /// Create a new empty `Alloc`.
-    pub const fn new() -> Alloc {
-        Alloc {
-            head: AtomicPtr::new(ptr::null_mut()),
-        }
-    }
-
-    /// Take the current head of the alloc list and return an `Iterator` over all it's
-    /// [`ObjectHeader`]s.
-    fn take_iter(&self) -> impl Iterator<Item = *mut ObjectHeader> {
-        struct Iter(*mut ObjectHeader);
-
-        impl Iterator for Iter {
-            type Item = *mut ObjectHeader;
-
-            fn next(&mut self) -> Option<Self::Item> {
-                if self.0.is_null() {
-                    return None;
-                }
-
-                // SAFETY `Alloc::insert_atomic` maintains that `next` pointer
-                // is either valid or null
-                let current = unsafe { &*self.0 };
-
-                // Relaxed doesn't race because we own the list while iterating.
-                let next = current.next.load(Ordering::Relaxed);
-
-                Some(mem::replace(&mut self.0, next))
-            }
-        }
-
-        // This Acquire pairs with the Release part of the AcqRel on successful exchange
-        // in [`insert_atomic`]. It ensures all writes to the list are synchronized
-        // before we iterate over it.
-        let list = self.head.swap(ptr::null_mut(), Ordering::Acquire);
-
-        Iter(list)
-    }
-
-    /// Prepend a list of one or more [`ObjectHeader`]s to the list managed by this Alloc.
-    ///
-    /// # Safety
-    /// `ptr` must point to a valid ObjectHeader object
-    unsafe fn insert_atomic(
-        &self,
-        // object to insert at the beginning
-        ptr: *mut ObjectHeader,
-        // the `next` pointer of the last object to be inserted
-        next: &AtomicPtr<ObjectHeader>,
-    ) {
-        let mut old_head = self.head.load(Ordering::Acquire);
-
-        loop {
-            // The next pointer is already synchronized by the Release-Acquire pair in the exchange
-            // here and in the swap in [`take_iter`].
-            next.store(old_head, Ordering::Relaxed);
-
-            // The Release part of the AcqRel on success pairs with either the Acquire on failure,
-            // the Acquire when inserting the next item(s) or with the Acquire in [`take_iter`].
-            match self.head.compare_exchange_weak(old_head, ptr, Ordering::AcqRel, Ordering::Acquire) {
-                Ok(_) => break,
-                Err(new_head) => {
-                    old_head = new_head;
-                }
-            }
-        }
-    }
-}
-
-impl Alloc {
-    /// Allocate new object and track it
-    pub fn alloc<'alloc, O: Object>(&'alloc self, inner: O) -> ObjectRef<'alloc, O> {
-        let wrap = Box::new(ObjectWrap {
-            header: ObjectHeader {
-                vtable: O::__vtable(),
-                next: AtomicPtr::new(ptr::null_mut()),
-                mark: AtomicBool::new(false),
-            },
-            inner,
-        });
-        let obj = ObjectRef {
-            _alloc: PhantomData, // 'alloc - in return type
-            ptr: Box::into_raw(wrap),
-        };
-        // SAFETY ptr is valid because we obtained it from safe ObjectRef belonging to this Alloc
-        unsafe { self.insert_atomic(obj.upcast().ptr, &obj.upcast().header().next); }
-        obj
-    }
-
-    /// Deallocate a previously allocated object
-    ///
-    /// # Safety
-    /// `ptr` must originate from a previous call to `Alloc::alloc` on the same `Alloc` instance.
-    unsafe fn dealloc<O: Object>(ptr: *mut ObjectWrap<O>) {
-        // SAFETY ptr was created from a `Box<ObjectWrap<O>>` in `Alloc::alloc`
-        let _drop = unsafe { Box::from_raw(ptr) };
-    }
-
-    /// Collect unmarked objects
-    ///
-    /// # Safety
-    /// Every reachable object must have been marked prior to calling this function. This function
-    /// will unmark objects as it traverses the heap so objects have to be re-marked before every
-    /// call to `sweep`.
-    pub unsafe fn sweep(&self) {
-        // Extracts the next field from a `*mut ObjectHeader`
-        let header = |ptr: *mut ObjectHeader| {
-            // SAFETY must audit uses of the lambda
-            unsafe { &*ptr }
-        };
-
-        // Linked list of objects left after collection
-        let mut retain_head = ptr::null_mut::<ObjectHeader>();
-        let mut retain_tail = ptr::null_mut();
-
-        // Store object into the retain list.
-        let mut retain = |ptr: *mut ObjectHeader| {
-            assert!(!ptr.is_null(), "cannot retain nullptr");
-
-            if retain_head.is_null() {
-                // insert first element
-                retain_head = ptr;
-                retain_tail = ptr;
-            } else {
-                // SAFETY tail was set in the other branch
-                header(retain_tail).next.store(ptr, Ordering::Relaxed);
-                retain_tail = ptr;
-            }
-        };
-
-        for object in self.take_iter() {
-            // SAFETY iterator only yields non-null pointers
-            if header(object).mark.swap(false, Ordering::Relaxed) {
-                // object is marked, keeping
-                retain(object);
-            } else {
-                // unmarked object, dropping
-
-                // SAFETY object is not null so it must be valid `
-                let to_drop: ObjectRefAny<'static> = unsafe { ObjectRefAny::from_ptr(object) };
-
-
-                log::info!(
-                    "collecting Obj@{:?} {}",
-                    to_drop.ptr,
-                    {
-                        let fmt = format!("{:?}", &to_drop);
-                        if fmt.len() > 32 {
-                            format!("{:.30}...", fmt)
-                        } else {
-                            fmt
-                        }
-                    }
-                );
-
-                // SAFETY Object behind `current` will can never be used again
-                let ObjectVtable { drop, .. } = to_drop.vtable();
-                unsafe { drop(to_drop) }
-            }
-        }
-
-        if !retain_head.is_null() {
-            // some objects were left after collection, insert them back into the alloc list
-
-            // SAFETY reinserting only items from the list which were not dropped
-            unsafe { self.insert_atomic(retain_head, &header(retain_tail).next); }
-        }
-    }
-}
-
-impl Drop for Alloc {
-    /// Deallocates all objects registered to this `Alloc`
-    fn drop(&mut self) {
-        for object in self.take_iter() {
-            // SAFETY `Alloc::alloc` maintains a linked list, ptr either points to a valid object
-            // or is null and we checked for null.
-            //
-            // We use 'static lifetime here because we don't have any name for 'self or similar,
-            // this object reference is valid until we drop it here.
-            let object: ObjectRefAny<'static> = unsafe { ObjectRefAny::from_ptr(object) };
-
-            let ObjectVtable { drop, .. } = object.vtable();
-            // SAFETY Object behind `current` will can never be used again
-            unsafe { drop(object) }
-        }
-    }
-}
-
-
-pub unsafe trait Trace {
-    fn mark(&self);
-}
-
-unsafe impl<'alloc> Trace for ObjectRefAny<'alloc> {
-    fn mark(&self) {
-        let prev_marked = self.header().mark.swap(true, Ordering::Relaxed);
-        if !prev_marked {
-            // if the object wasn't marked previously mark recursively all it's children
-            let ObjectVtable { mark, .. } = self.vtable();
-
-            // SAFETY we're using this Object's own vtable
-            unsafe { mark(*self); }
-        }
-    }
-}
-
-unsafe impl<'alloc, O: Object> Trace for ObjectRef<'alloc, O> {
-    fn mark(&self) {
-        let prev_marked = self.upcast().header().mark.swap(true, Ordering::Relaxed);
-        if !prev_marked {
-            self.deref().mark();
-        }
-    }
-}
-
-unsafe impl<'alloc> Trace for Value<'alloc> {
-    fn mark(&self) {
-        if let Some(o) = self.to_object() {
-            o.mark();
-        }
-    }
-}
 
 ////////////////////////////////////////////////////////////////////////////////
 // Object traits
@@ -487,16 +136,6 @@ where
 struct ObjectWrap<O: Object> {
     header: ObjectHeader,
     inner: O,
-}
-
-/// Header stores the vtable pointer and a intrusive linked list for GC.
-pub(crate) struct ObjectHeader {
-    vtable: &'static ObjectVtable,
-    next: AtomicPtr<ObjectHeader>,
-    /// GC marker
-    ///
-    /// Set to `true` during tracing and objects which are left at `false` get dropped.
-    mark: AtomicBool,
 }
 
 /// Type erased reference to a garbage collected Object
@@ -629,7 +268,7 @@ impl<'alloc> ObjectRefAny<'alloc> {
     }
 
     fn vtable(&self) -> &ObjectVtable {
-        self.header().vtable
+        self.header().vtable()
     }
 
     pub fn is<O: Object>(&self) -> bool {
