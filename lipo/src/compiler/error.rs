@@ -5,8 +5,6 @@ use std::fmt::{self, Debug};
 use std::num::ParseFloatError;
 
 
-pub struct BoxError(pub(super) Box<dyn Error>);
-
 pub trait Error: Debug + Any {
     fn message(&self) -> String;
 
@@ -15,20 +13,27 @@ pub trait Error: Debug + Any {
     fn notes(&self) -> Vec<String>;
 }
 
-impl BoxError {
+
+pub struct CompilerError(Box<dyn Error>);
+
+impl CompilerError {
+    pub(super) fn new(inner: impl Error) -> CompilerError {
+        CompilerError(Box::new(inner))
+    }
+
     pub fn is<E: Error>(&self) -> bool {
         // Propagate the type_id() method call down to the `dyn Error`
         (&*self.0).type_id() == TypeId::of::<E>()
     }
 }
 
-impl Debug for BoxError {
+impl Debug for CompilerError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
     }
 }
 
-impl Diagnostic for BoxError {
+impl Diagnostic for CompilerError {
     fn severity(&self) -> Severity {
         Severity::Error
     }

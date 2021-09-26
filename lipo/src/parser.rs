@@ -1,7 +1,7 @@
+use crate::diagnostic::{Diagnostic, Label, Severity};
 use crate::lexer::{Lexer, Token, TokenKind};
 use crate::object::builtins::String;
 use crate::object::ObjectRef;
-use std::num::ParseFloatError;
 
 
 pub mod ast;
@@ -15,7 +15,7 @@ use ast::*;
 // Precedence on infix expressions is handled using the Pratt binding power algorithm.
 
 #[derive(Debug)]
-pub enum Error {
+pub enum ParserError {
     UnexpectedToken {
         found: Token,
         expected: TokenKind,
@@ -30,18 +30,66 @@ pub enum Error {
     ExpectedInfixOrPostfixOperator {
         found: Token,
     },
-    InvalidNumberLiteral {
-        token: Token,
-        cause: ParseFloatError,
-    },
-    InvalidAssignmentTarget,
 }
+
+impl Diagnostic for ParserError {
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self) -> std::string::String {
+        // TODO it's not great that every parser error boils down to "unexpected token"
+        "unexpected token".to_string()
+    }
+
+    fn labels(&self) -> Vec<Label> {
+        let found = match self {
+            ParserError::UnexpectedToken { found, .. } |
+            ParserError::UnexpectedToken2 { found, .. } |
+            ParserError::ExpectedExpressionStart { found } |
+            ParserError::ExpectedInfixOrPostfixOperator { found } => found,
+        };
+        vec![
+            Label::primary(found.span, format!("unexpected {}", found.kind)),
+        ]
+    }
+
+    fn notes(&self) -> Vec<std::string::String> {
+        vec![match self {
+            ParserError::UnexpectedToken { expected, .. } => {
+                format!("expected {}", expected)
+            },
+            ParserError::UnexpectedToken2 { expected, .. } => {
+                match expected {
+                    [] => unreachable!(),
+                    [t] => format!("expected {}", t),
+                    [t1, t2] => format!("expected {} or {}", t1, t2),
+                    [first, mid @ .., last] => {
+                        let mut acc = format!("expected one of {}", first);
+                        for t in mid {
+                            acc.push_str(&format!(", {}", t));
+                        }
+                        acc.push_str(&format!(" or {}", last));
+                        acc
+                    },
+                }
+            },
+            ParserError::ExpectedExpressionStart { .. } => {
+                "expected expression to start or continue".to_string()
+            },
+            ParserError::ExpectedInfixOrPostfixOperator { .. } => {
+                "expected expression to continue or end".to_string()
+            },
+        }]
+    }
+}
+
 
 struct Parser<'src> {
     lexer: Lexer<'src>,
 }
 
-type Result<T> = std::result::Result<T, Error>;
+type Result<T> = std::result::Result<T, ParserError>;
 
 pub fn parse<'alloc>(source: ObjectRef<'alloc, String>) -> Result<AST> {
     let mut parser = Parser {
@@ -67,7 +115,7 @@ impl<'src> Parser<'src> {
         if token.kind == kind {
             Ok(token)
         } else {
-            Err(Error::UnexpectedToken {
+            Err(ParserError::UnexpectedToken {
                 found: token,
                 expected: kind,
             })
@@ -121,7 +169,7 @@ impl<'src> Parser<'src> {
                 TokenKind::Comma => {
                     parameters.delim.push(self.lexer.next());
                 }
-                _ => return Err(Error::UnexpectedToken2 {
+                _ => return Err(ParserError::UnexpectedToken2 {
                     found: self.lexer.next(),
                     expected: &[TokenKind::Comma, TokenKind::RightParen],
                 })
@@ -270,7 +318,7 @@ impl<'src> Parser<'src> {
                     Expression::Primary(PrimaryExpr { token })
                 }
                 _ => {
-                    return Err(Error::ExpectedExpressionStart {
+                    return Err(ParserError::ExpectedExpressionStart {
                         found: token,
                     });
                 },
@@ -305,7 +353,7 @@ impl<'src> Parser<'src> {
                     break;
                 }
                 _ => {
-                    return Err(Error::ExpectedInfixOrPostfixOperator {
+                    return Err(ParserError::ExpectedInfixOrPostfixOperator {
                         found: operator,
                     });
                 }
@@ -366,7 +414,7 @@ impl<'src> Parser<'src> {
                     args.delim.push(self.expect_next(TokenKind::Comma)?);
                 }
                 TokenKind::RightParen => {},
-                _ => return Err(Error::UnexpectedToken2 {
+                _ => return Err(ParserError::UnexpectedToken2 {
                     found: self.lexer.peek(),
                     expected: &[TokenKind::Comma, TokenKind::RightParen],
                 }),

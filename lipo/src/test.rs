@@ -26,6 +26,11 @@ macro_rules! parse {
         let src = unindent::unindent(&$code);
         let src = String::new_owned(src.into(), &$alloc);
         let ast = parse(src);
+
+        if let Err(err) = &ast {
+            err.report(&src);
+        }
+
         std::assert_matches::assert_matches!(ast, $res);
 
         ast

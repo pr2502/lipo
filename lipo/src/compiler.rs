@@ -11,7 +11,7 @@ use crate::value::Value;
 pub mod error;
 
 use error::*;
-use error::{BoxError, Error};
+use error::{CompilerError, Error};
 
 
 /// Maximum number of function arguments and parameters
@@ -22,7 +22,7 @@ struct Emitter<'alloc> {
     alloc: &'alloc Alloc,
     source: ObjectRef<'alloc, String>,
     fn_stack: Vec<FnScope<'alloc>>,
-    errors: Vec<BoxError>,
+    errors: Vec<CompilerError>,
 }
 
 struct FnScope<'alloc> {
@@ -61,7 +61,7 @@ enum UpvalueRef {
     Upvalue(u8),
 }
 
-pub fn compile<'alloc>(ast: AST<'alloc>, alloc: &'alloc Alloc) -> Result<ObjectRef<'alloc, Closure<'alloc>>, Vec<BoxError>> {
+pub fn compile<'alloc>(ast: AST<'alloc>, alloc: &'alloc Alloc) -> Result<ObjectRef<'alloc, Closure<'alloc>>, Vec<CompilerError>> {
     let mut emitter = Emitter {
         alloc,
         source: ast.source,
@@ -105,8 +105,8 @@ pub fn compile<'alloc>(ast: AST<'alloc>, alloc: &'alloc Alloc) -> Result<ObjectR
 const DUMMY: u16 = u16::MAX;
 
 impl<'alloc> Emitter<'alloc> {
-    fn error<E: Error>(&mut self, err: E) {
-        self.errors.push(BoxError(Box::new(err)));
+    fn error(&mut self, err: impl Error) {
+        self.errors.push(CompilerError::new(err));
     }
 
     fn fn_scope(&self) -> &FnScope<'alloc> {
