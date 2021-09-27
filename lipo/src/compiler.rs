@@ -89,8 +89,8 @@ pub fn compile<'alloc>(ast: AST<'alloc>, alloc: &'alloc Alloc) -> Result<ObjectR
     emitter.emit(OpCode::Unit, ast.eof.span);
     emitter.emit(OpCode::Return, ast.eof.span);
 
-    let script = emitter.fn_stack.pop().unwrap();
-    assert!(emitter.fn_stack.is_empty(), "BUG: unclosed function in compiler");
+    let script = emitter.fn_stack.pop().expect("BUG: missing function");
+    assert!(emitter.fn_stack.is_empty(), "BUG: unfinished function");
 
     if !emitter.errors.is_empty() {
         // Don't even try to check the Chunk for correctness, if there were any errors it likely
@@ -122,7 +122,7 @@ impl<'alloc> Emitter<'alloc> {
     }
 
     fn patch_jump(&mut self, place: PatchPlace) {
-        self.fn_scope_mut().chunk.patch_jump(place)
+        self.fn_scope_mut().chunk.patch_jump(place);
     }
 
     fn loop_point(&self) -> LoopPoint {
@@ -130,7 +130,7 @@ impl<'alloc> Emitter<'alloc> {
     }
 
     fn emit_loop(&mut self, loop_point: LoopPoint, span: FreeSpan) {
-        self.fn_scope_mut().chunk.emit_loop(loop_point, span)
+        self.fn_scope_mut().chunk.emit_loop(loop_point, span);
     }
 
     fn insert_constant(&mut self, value: Value<'alloc>) -> ConstKey {
@@ -171,11 +171,10 @@ impl<'alloc> Emitter<'alloc> {
             .rev()
             .take_while(|loc| loc.depth == self.fn_scope().scope_depth)
             .find(|loc| ident_slice(loc.name) == ident_slice(name));
-        if let Some(local) = shadowing {
-            let shadowed_span = local.name.span();
+        if let Some(local) = shadowing.copied() {
             self.error(Shadowing {
                 shadowing_span: name.span(),
-                shadowed_span,
+                shadowed_span: local.name.span(),
             });
             return
         }
@@ -481,7 +480,7 @@ impl<'alloc> Emitter<'alloc> {
                     } else {
                         self.error(UndefinedName {
                             name_span: ident.span(),
-                        })
+                        });
                     }
                     return
                 }
@@ -598,7 +597,7 @@ impl<'alloc> Emitter<'alloc> {
 
     fn group_expr(&mut self, group_expr: &GroupExpr) {
         if let Some(expr) = group_expr.expr.as_ref() {
-            self.expression(expr)
+            self.expression(expr);
         } else {
             self.emit(OpCode::Unit, group_expr.span());
         }

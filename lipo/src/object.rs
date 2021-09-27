@@ -93,7 +93,7 @@ pub trait ObjectHashCode: Object {
     /// Returns whether hashing is supported for type
     fn supported() -> bool;
 
-    /// Returns the object fxhash::hash, panics if type doesn't support hashing
+    /// Returns the object `fxhash::hash`, panics if type doesn't support hashing
     fn hash_code(&self) -> usize;
 }
 
@@ -141,14 +141,14 @@ struct ObjectWrap<O: Object> {
 /// Type erased reference to a garbage collected Object
 #[derive(Clone, Copy)]
 pub struct ObjectRefAny<'alloc> {
-    _alloc: PhantomData<&'alloc ()>,
+    alloc: PhantomData<&'alloc ()>,
     ptr: *mut ObjectHeader,
 }
 
 
 /// Reference to a garbage collected Object
 pub struct ObjectRef<'alloc, O: Object> {
-    _alloc: PhantomData<&'alloc ()>,
+    alloc: PhantomData<&'alloc ()>,
     ptr: *mut ObjectWrap<O>,
 }
 
@@ -246,7 +246,7 @@ impl<'alloc, O: Object> ObjectRef<'alloc, O> {
     pub fn upcast(self) -> ObjectRefAny<'alloc> {
         // SAFETY upcasting an ObjectRef is always safe, lifetime is maintained
         unsafe {
-            ObjectRefAny::from_ptr(self.ptr as _)
+            ObjectRefAny::from_ptr(self.ptr.cast())
         }
     }
 }
@@ -258,7 +258,7 @@ impl<'alloc> ObjectRefAny<'alloc> {
 
     pub(crate) unsafe fn from_ptr(ptr: *mut ObjectHeader) -> ObjectRefAny<'alloc> {
         ObjectRefAny {
-            _alloc: PhantomData, // 'alloc - in return type
+            alloc: PhantomData, // 'alloc - in return type
             ptr,
         }
     }
@@ -286,8 +286,8 @@ impl<'alloc> ObjectRefAny<'alloc> {
         if self.is::<O>() {
             // SAFETY Just checked the type tag matches.
             Some(ObjectRef {
-                _alloc: self._alloc,
-                ptr: self.ptr as *mut ObjectWrap<O>,
+                alloc: self.alloc,
+                ptr: self.ptr.cast::<ObjectWrap<O>>(),
             })
         } else {
             None
@@ -355,6 +355,6 @@ impl<'alloc, O: Object + Eq> Eq for ObjectRef<'alloc, O> {}
 
 impl<'alloc, O: Object + Hash> Hash for ObjectRef<'alloc, O> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        <O as Hash>::hash(&*self, state)
+        <O as Hash>::hash(&*self, state);
     }
 }

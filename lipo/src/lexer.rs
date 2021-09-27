@@ -172,7 +172,7 @@ impl<'src> Lexer<'src> {
     pub fn new(source: &'src str) -> Lexer<'src> {
         let mut inner = logos::Lexer::new(source);
         let current = inner.next().unwrap_or(TokenKind::Eof);
-        Lexer { current, inner }
+        Lexer { inner, current }
     }
 
     /// Returns the current token

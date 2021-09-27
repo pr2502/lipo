@@ -105,6 +105,16 @@ impl<'alloc> Value<'alloc> {
             // mask of the tagging bits and leave only original ptr
             let ptr = self.repr & !(QUIET_NAN | TAG_OBJECT);
 
+            // We should never be able to truncate the data by casting a u64 to usize on either
+            // 32bit or 64bit platforms. 64bit has the sizes of the types equal and on 32bit the
+            // original pointer we got the Value.repr from a 32bit pointer.
+            debug_assert!(
+                ptr & (usize::MAX as u64) == ptr,
+                "BUG: truncated Value.repr {:?} to {:?}",
+                ptr,
+                ptr as usize,
+            );
+
             // SAFETY pointer was created from an ObjectRefAny with
             // the same lifetime in [`Value::new_object_any`]
             Some(unsafe { ObjectRefAny::from_ptr(ptr as usize as *mut _) })
@@ -165,11 +175,11 @@ impl<'alloc> Hash for Value<'alloc> {
         H: Hasher,
     {
         if let Some(b) = self.to_bool() {
-            state.write_u8(b.into())
+            state.write_u8(b.into());
         } else if let Some(n) = self.to_float() {
-            state.write_u64(n.to_bits())
+            state.write_u64(n.to_bits());
         } else if let Some(o) = self.to_object() {
-            o.hash(state)
+            o.hash(state);
         }
     }
 }

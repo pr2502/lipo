@@ -113,7 +113,7 @@ impl Alloc {
             inner,
         });
         let obj = ObjectRef {
-            _alloc: PhantomData, // 'alloc - in return type
+            alloc: PhantomData, // 'alloc - in return type
             ptr: Box::into_raw(wrap),
         };
         // SAFETY ptr is valid because we obtained it from safe ObjectRef belonging to this Alloc
