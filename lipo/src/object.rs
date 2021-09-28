@@ -37,6 +37,7 @@ use gc::ObjectHeader;
 ////////////////////////////////////////////////////////////////////////////////
 // Object traits
 
+/// Marker trait for objects
 pub trait Object: DynObject {}
 
 
@@ -57,7 +58,7 @@ pub trait ObjectPartialEq: Object {
     fn supported() -> bool;
 
     /// Returns true if types are equal, panics if type doesn't support equality
-    fn eq(&self, rhs: ObjectRef<'_, Self>) -> bool;
+    fn eq(&self, rhs: &Self) -> bool;
 }
 
 impl<O> ObjectPartialEq for O
@@ -68,7 +69,7 @@ where
         false
     }
 
-    default fn eq(&self, rhs: ObjectRef<'_, O>) -> bool {
+    default fn eq(&self, rhs: &Self) -> bool {
         let _ = rhs;
         unimplemented!()
     }
@@ -83,7 +84,7 @@ where
         true
     }
 
-    default fn eq(&self, rhs: ObjectRef<'_, O>) -> bool {
+    default fn eq(&self, rhs: &Self) -> bool {
         *self == *rhs
     }
 }
@@ -145,7 +146,6 @@ pub struct ObjectRefAny<'alloc> {
     ptr: *mut ObjectHeader,
 }
 
-
 /// Reference to a garbage collected Object
 pub struct ObjectRef<'alloc, O: Object> {
     alloc: PhantomData<&'alloc ()>,
@@ -163,13 +163,11 @@ impl<'alloc, O: Object> Clone for ObjectRef<'alloc, O> {
 impl<'alloc, O: Object> Copy for ObjectRef<'alloc, O> {}
 
 
-// SAFETY ObjectRef* don't allow their contents to be mutated and all `Object`s are required to be
+// SAFETY ObjectRef doesn't allow its contents to be mutated and all `Object`s are required to be
 // Send and Sync themselves by the `DynObject` trait so allowing immutable access to them is safe
 // from any thread.
 //
-// For the purposes of synchronization these types behave like `Arc<O>` and `Arc<dyn Object>`.
-unsafe impl<'alloc> Send for ObjectRefAny<'alloc> {}
-unsafe impl<'alloc> Sync for ObjectRefAny<'alloc> {}
+// For the purposes of synchronization `ObjectRef<O>` behaves like `Arc<O>`.
 unsafe impl<'alloc, O: Object> Send for ObjectRef<'alloc, O> {}
 unsafe impl<'alloc, O: Object> Sync for ObjectRef<'alloc, O> {}
 
@@ -271,7 +269,7 @@ impl<'alloc> ObjectRefAny<'alloc> {
         self.header().vtable()
     }
 
-    pub fn is<O: Object>(&self) -> bool {
+    pub(crate) fn is<O: Object>(&self) -> bool {
         // PERF Each Rust type implementing Object must have its own vtable. Therefore TypeIds are
         // equal if and only if the vtable pointers are equal.
         //
@@ -282,7 +280,7 @@ impl<'alloc> ObjectRefAny<'alloc> {
         )
     }
 
-    pub fn downcast<O: Object>(self) -> Option<ObjectRef<'alloc, O>> {
+    pub(crate) fn downcast<O: Object>(self) -> Option<ObjectRef<'alloc, O>> {
         if self.is::<O>() {
             // SAFETY Just checked the type tag matches.
             Some(ObjectRef {

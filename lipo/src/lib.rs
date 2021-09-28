@@ -23,6 +23,7 @@ pub mod lexer;
 pub mod object;
 pub mod opcode;
 pub mod parser;
+pub mod primitive;
 pub mod span;
 pub mod value;
 pub mod vm;

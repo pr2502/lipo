@@ -327,7 +327,7 @@ impl<'alloc> Emitter<'alloc> {
             };
         }
 
-        let function = Value::new_object(Function::new(
+        let function = Value::from(Function::new(
             function.chunk.check(),
             fn_item.parameters.items.len().try_into().unwrap(),
             function.name,
@@ -652,9 +652,9 @@ impl<'alloc> Emitter<'alloc> {
     fn float(&mut self, primary: &PrimaryExpr) {
         let span = primary.token.span;
         let slice = span.anchor(&self.source).as_str();
-        match slice.parse() {
+        match slice.parse::<f64>() {
             Ok(float) => {
-                let value = Value::new_float(float);
+                let value = Value::from(float);
                 let key = self.insert_constant(value);
                 self.emit(OpCode::Constant { key }, span);
             }
@@ -670,7 +670,7 @@ impl<'alloc> Emitter<'alloc> {
             .strip_prefix('"').unwrap()
             .strip_suffix('"').unwrap();
         let string = String::new(slice, self.alloc);
-        let value = Value::new_object(string);
+        let value = Value::from(string);
         let key = self.insert_constant(value);
         self.emit(OpCode::Constant { key }, span);
     }

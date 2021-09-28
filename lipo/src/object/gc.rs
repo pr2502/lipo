@@ -1,7 +1,6 @@
 use super::{Object, ObjectRef, ObjectRefAny, ObjectVtable, ObjectWrap};
 use crate::value::Value;
 use std::marker::PhantomData;
-use std::ops::Deref;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use std::{mem, ptr};
 
@@ -242,7 +241,7 @@ unsafe impl<'alloc, O: Object> Trace for ObjectRef<'alloc, O> {
     fn mark(&self) {
         let prev_marked = self.upcast().header().mark.swap(true, Ordering::Relaxed);
         if !prev_marked {
-            self.deref().mark();
+            <O as Trace>::mark(&*self)
         }
     }
 }

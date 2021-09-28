@@ -38,7 +38,7 @@ pub unsafe fn drop<O: Object>(this: ObjectRefAny<'static>) {
     let ObjectRef { alloc: _, ptr } = unsafe { downcast_unchecked::<O>(this) };
 
     // SAFETY GC should only be calling this when the object is unreachable
-    unsafe { Alloc::dealloc::<O>(ptr) }
+    unsafe { gc::Alloc::dealloc::<O>(ptr) }
 }
 
 /// [`ObjectVtable::mark`]
@@ -74,7 +74,7 @@ pub unsafe fn partial_eq<'alloc, O: Object>(this: ObjectRefAny<'alloc>, other: O
 
     if <O as ObjectPartialEq>::supported() {
         if let Some(other) = other.downcast::<O>() {
-            return Some(<O as ObjectPartialEq>::eq(&*this, other));
+            return Some(<O as ObjectPartialEq>::eq(&*this, &*other));
         }
     }
 

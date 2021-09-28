@@ -60,7 +60,7 @@ impl<'alloc> VM<'alloc> {
 
             alloc,
             call_stack: vec![frame],
-            stack: vec![Value::new_object(closure)],
+            stack: vec![Value::from(closure)],
         }
     }
 
@@ -201,15 +201,15 @@ impl<'alloc> VM<'alloc> {
     }
 
     fn op_unit(&mut self) {
-        self.push(Value::new_unit());
+        self.push(Value::unit());
     }
 
     fn op_true(&mut self) {
-        self.push(Value::new_bool(true));
+        self.push(Value::from(true));
     }
 
     fn op_false(&mut self) {
-        self.push(Value::new_bool(false));
+        self.push(Value::from(false));
     }
 
     fn op_pop(&mut self) {
@@ -250,7 +250,7 @@ impl<'alloc> VM<'alloc> {
         let rhs = self.pop();
         let lhs = self.pop();
         if let Some(result) = lhs.partial_eq(&rhs) {
-            self.push(Value::new_bool(result));
+            self.push(Value::from(result));
             Ok(())
         } else {
             todo!("type error");
@@ -260,8 +260,8 @@ impl<'alloc> VM<'alloc> {
     fn op_greater(&mut self) -> Result<(), VmError<'alloc>> {
         let rhs = self.pop();
         let lhs = self.pop();
-        let result = match (lhs.to_float(), rhs.to_float()) {
-            (Some(lhs), Some(rhs)) => Value::new_bool(lhs > rhs),
+        let result = match (lhs.downcast::<f64>(), rhs.downcast::<f64>()) {
+            (Some(lhs), Some(rhs)) => Value::from(lhs > rhs),
             _ => {
                 return Err(VmError::RuntimeError {
                     source: self.chunk().source(),
@@ -277,8 +277,8 @@ impl<'alloc> VM<'alloc> {
     fn op_less(&mut self) -> Result<(), VmError<'alloc>> {
         let rhs = self.pop();
         let lhs = self.pop();
-        let result = match (lhs.to_float(), rhs.to_float()) {
-            (Some(lhs), Some(rhs)) => Value::new_bool(lhs < rhs),
+        let result = match (lhs.downcast::<f64>(), rhs.downcast::<f64>()) {
+            (Some(lhs), Some(rhs)) => Value::from(lhs < rhs),
             _ => {
                 return Err(VmError::RuntimeError {
                     source: self.chunk().source(),
@@ -294,11 +294,11 @@ impl<'alloc> VM<'alloc> {
     fn op_add(&mut self) -> Result<(), VmError<'alloc>> {
         let rhs = self.pop();
         let lhs = self.pop();
-        let result = if let (Some(lhs), Some(rhs)) = (lhs.to_float(), rhs.to_float()) {
-            Value::new_float(lhs + rhs)
+        let result = if let (Some(lhs), Some(rhs)) = (lhs.downcast::<f64>(), rhs.downcast::<f64>()) {
+            Value::from(lhs + rhs)
         } else if let (Some(lhs), Some(rhs)) = (lhs.downcast::<String>(), rhs.downcast::<String>()) {
             let sum = lhs.as_str().to_string() + rhs.as_str();
-            Value::new_object(String::new_owned(sum.into_boxed_str(), self.alloc))
+            Value::from(String::new_owned(sum.into_boxed_str(), self.alloc))
         } else {
             return Err(VmError::RuntimeError {
                 source: self.chunk().source(),
@@ -313,8 +313,8 @@ impl<'alloc> VM<'alloc> {
     fn op_subtract(&mut self) -> Result<(), VmError<'alloc>> {
         let rhs = self.pop();
         let lhs = self.pop();
-        let result = match (lhs.to_float(), rhs.to_float()) {
-            (Some(lhs), Some(rhs)) => Value::new_float(lhs - rhs),
+        let result = match (lhs.downcast::<f64>(), rhs.downcast::<f64>()) {
+            (Some(lhs), Some(rhs)) => Value::from(lhs - rhs),
             _ => return Err(VmError::RuntimeError {
                 source: self.chunk().source(),
                 span: self.chunk().span(self.offset() - OpCode::Subtract.len()),
@@ -328,8 +328,8 @@ impl<'alloc> VM<'alloc> {
     fn op_multiply(&mut self) -> Result<(), VmError<'alloc>> {
         let rhs = self.pop();
         let lhs = self.pop();
-        let result = match (lhs.to_float(), rhs.to_float()) {
-            (Some(lhs), Some(rhs)) => Value::new_float(lhs * rhs),
+        let result = match (lhs.downcast::<f64>(), rhs.downcast::<f64>()) {
+            (Some(lhs), Some(rhs)) => Value::from(lhs * rhs),
             _ => return Err(VmError::RuntimeError {
                 source: self.chunk().source(),
                 span: self.chunk().span(self.offset() - OpCode::Multiply.len()),
@@ -343,8 +343,8 @@ impl<'alloc> VM<'alloc> {
     fn op_divide(&mut self) -> Result<(), VmError<'alloc>> {
         let rhs = self.pop();
         let lhs = self.pop();
-        let result = match (lhs.to_float(), rhs.to_float()) {
-            (Some(lhs), Some(rhs)) => Value::new_float(lhs / rhs),
+        let result = match (lhs.downcast::<f64>(), rhs.downcast::<f64>()) {
+            (Some(lhs), Some(rhs)) => Value::from(lhs / rhs),
             _ => return Err(VmError::RuntimeError {
                 source: self.chunk().source(),
                 span: self.chunk().span(self.offset() - OpCode::Divide.len()),
@@ -357,14 +357,14 @@ impl<'alloc> VM<'alloc> {
 
     fn op_not(&mut self) {
         let value = self.pop();
-        let value = Value::new_bool(value.is_falsy());
+        let value = Value::from(value.is_falsy());
         self.push(value);
     }
 
     fn op_negate(&mut self) -> Result<(), VmError<'alloc>> {
         let value = self.pop();
-        let value = value.to_float()
-            .map(|n| Value::new_float(-n))
+        let value = value.downcast::<f64>()
+            .map(|n| Value::from(-n))
             .ok_or_else(|| VmError::RuntimeError {
                 source: self.chunk().source(),
                 span: self.chunk().span(self.offset() - OpCode::Negate.len()),
@@ -376,7 +376,7 @@ impl<'alloc> VM<'alloc> {
 
     fn op_assert(&mut self) -> Result<(), VmError<'alloc>> {
         let value = self.pop();
-        match value.to_bool() {
+        match value.downcast::<bool>() {
             Some(true) => {}
             Some(false) => return Err(VmError::RuntimeError {
                 source: self.chunk().source(),
@@ -535,7 +535,7 @@ impl<'alloc> VM<'alloc> {
             },
         };
         let upvalues = self.stack.drain((self.stack.len() - upvals)..).collect();
-        let closure = Value::new_object(Closure::new(function, upvalues, self.alloc));
+        let closure = Value::from(Closure::new(function, upvalues, self.alloc));
         self.push(closure);
     }
 
