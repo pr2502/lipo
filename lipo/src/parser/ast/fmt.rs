@@ -26,6 +26,7 @@ impl SourceDebug for Item {
             Item::Fn(inner) => inner.fmt(source, f),
             Item::Let(inner) => inner.fmt(source, f),
             Item::Statement(inner) => inner.fmt(source, f),
+            Item::Expr(inner) => inner.fmt(source, f),
         }
     }
 }
@@ -80,7 +81,7 @@ impl SourceDebug for LetItem {
 impl SourceDebug for Statement {
     fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Statement::Expr(inner) => inner.fmt(source, f),
+            // Statement::Expr(inner) => inner.fmt(source, f),
             Statement::For(inner) => inner.fmt(source, f),
             Statement::If(inner) => inner.fmt(source, f),
             Statement::Assert(inner) => inner.fmt(source, f),
@@ -92,9 +93,12 @@ impl SourceDebug for Statement {
     }
 }
 
-impl SourceDebug for ExprStmt {
+impl SourceDebug for Expr {
     fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.expr.fmt(source, f)
+        let kind = if self.semicolon_tok.is_some() { "ExprStmt" } else { "Expr" };
+            f.debug_tuple(kind)
+                .field(&self.expr.wrap(source))
+                .finish()
     }
 }
 

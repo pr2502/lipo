@@ -19,9 +19,16 @@ default = ["full-unicode"]
 full-unicode = ["unicode-width"]
 
 # GC stress testing
+#
 # Runs garbage collection on every interpreter cycle. This is super slow but
 # should uncover bugs in the GC faster, hopefully.
 gc-stress = []
+
+# Parser testing
+#
+# Causes the parser to panic when it encounters an error, allowing to get a
+# backtrace of the error.
+parser-error-panic = []
 
 [dev-dependencies]
 pretty_env_logger = "0.4.0"

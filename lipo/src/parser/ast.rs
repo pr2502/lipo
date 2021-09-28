@@ -29,6 +29,7 @@ pub enum Item {
     Fn(FnItem),
     Let(LetItem),
     Statement(Statement),
+    Expr(Expr),
 }
 
 pub struct ClassItem {
@@ -73,10 +74,14 @@ pub struct LetInit {
     pub expr: Expression,
 }
 
+pub struct Expr {
+    pub expr: Expression,
+    pub semicolon_tok: Option<Token>,
+}
+
 // Statements
 
 pub enum Statement {
-    Expr(ExprStmt),
     For(ForStmt),
     If(IfStmt),
     Assert(AssertStmt),
@@ -84,11 +89,6 @@ pub enum Statement {
     Return(ReturnStmt),
     While(WhileStmt),
     Block(Block),
-}
-
-pub struct ExprStmt {
-    pub expr: Expression,
-    pub semicolon_tok: Token,
 }
 
 pub struct ForStmt {

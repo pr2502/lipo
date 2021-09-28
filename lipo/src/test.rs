@@ -390,3 +390,30 @@ compile! {
         .collect::<std::string::String>(),
     Err([e]) if e.is::<TooManyLocals>(),
 }
+
+compile! {
+    c_err_if_scope,
+    "
+        if true {
+            let a = 1;
+        }
+        a;
+    ",
+    Err([e]) if e.is::<UndefinedName>(),
+}
+
+run! {
+    implicit_return_trailing_expr,
+    "
+        fn f() {
+            1
+        }
+        assert f() == 1;
+
+        fn g() {
+            1;
+        }
+        assert g() == ();
+    ",
+    Ok(_),
+}

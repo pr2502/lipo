@@ -77,16 +77,19 @@ pub fn compile<'alloc>(ast: AST<'alloc>, alloc: &'alloc Alloc) -> Result<ObjectR
     };
     emitter.fn_stack.push(FnScope {
         name: "<script>".into(),
-        fndef_span: FreeSpan::default(),
+        fndef_span: FreeSpan::zero(),
         chunk: ChunkBuf::new(emitter.source),
         locals: vec![script],
         upvalues: Vec::default(),
         scope_depth: 0,
     });
 
+    // Empty script outputs Unit
+    emitter.emit(OpCode::Unit, FreeSpan::zero());
+
     emitter.block_inner(&ast.items);
 
-    emitter.emit(OpCode::Unit, ast.eof.span);
+    // Implicit return at the end of script
     emitter.emit(OpCode::Return, ast.eof.span);
 
     let script = emitter.fn_stack.pop().expect("BUG: missing function");
@@ -268,11 +271,15 @@ impl<'alloc> Emitter<'alloc> {
 
 impl<'alloc> Emitter<'alloc> {
     fn item(&mut self, item: &Item) {
+        // Pop the previous item output
+        self.emit(OpCode::Pop, item.span().shrink_to_lo());
+
         match item {
             Item::Class(class_item) => self.class_item(class_item),
             Item::Fn(fn_item) => self.fn_item(fn_item),
             Item::Let(let_item) => self.let_item(let_item),
             Item::Statement(stmt) => self.statement(stmt),
+            Item::Expr(expr) => self.expr_item(expr),
         }
     }
 
@@ -312,9 +319,12 @@ impl<'alloc> Emitter<'alloc> {
             self.add_local(param.name, param.mut_tok.is_some(), param.span());
         }
 
+        // Empty function body implicitly returns Unit
+        self.emit(OpCode::Unit, fn_item.body.left_brace_tok.span);
+
         self.block_inner(&fn_item.body.body);
 
-        self.emit(OpCode::Unit, fn_item.body.right_brace_tok.span);
+        // Implicit Return at the end of function body
         self.emit(OpCode::Return, fn_item.body.right_brace_tok.span);
 
         let function = self.fn_stack.pop().unwrap();
@@ -335,6 +345,9 @@ impl<'alloc> Emitter<'alloc> {
         ));
         let fn_key = self.insert_constant(function);
         self.emit(OpCode::Closure { fn_key, upvals }, fn_item.span());
+
+        // Item output is Unit
+        self.emit(OpCode::Unit, fn_item.span().shrink_to_hi());
     }
 
     fn let_item(&mut self, let_item: &LetItem) {
@@ -348,11 +361,13 @@ impl<'alloc> Emitter<'alloc> {
         }
 
         self.add_local(let_item.name, let_item.mut_tok.is_some(), let_item.span());
+
+        // Item output is Unit
+        self.emit(OpCode::Unit, let_item.span().shrink_to_hi());
     }
 
     fn statement(&mut self, stmt: &Statement) {
         match stmt {
-            Statement::Expr(expr_stmt) => self.expr_stmt(expr_stmt),
             Statement::For(for_stmt) => self.for_stmt(for_stmt),
             Statement::If(if_stmt) => self.if_stmt(if_stmt),
             Statement::Assert(assert_stmt) => self.assert_stmt(assert_stmt),
@@ -361,11 +376,9 @@ impl<'alloc> Emitter<'alloc> {
             Statement::While(while_stmt) => self.while_stmt(while_stmt),
             Statement::Block(block) => self.block(block),
         }
-    }
 
-    fn expr_stmt(&mut self, expr_stmt: &ExprStmt) {
-        self.expression(&expr_stmt.expr);
-        self.emit(OpCode::Pop, expr_stmt.semicolon_tok.span);
+        // Item output is Unit
+        self.emit(OpCode::Unit, stmt.span().shrink_to_hi());
     }
 
     fn for_stmt(&mut self, _for_stmt: &ForStmt) {
@@ -437,13 +450,26 @@ impl<'alloc> Emitter<'alloc> {
 
     fn block(&mut self, block: &Block) {
         self.begin_scope();
+
+        // Empty block evaluates to Unit
+        self.emit(OpCode::Unit, block.span().shrink_to_lo());
+
         self.block_inner(&block.body);
+
         self.end_scope(block.right_brace_tok.span);
     }
 
     fn block_inner(&mut self, items: &[Item]) {
         for i in items {
             self.item(i);
+        }
+    }
+
+    fn expr_item(&mut self, expr: &Expr) {
+        self.expression(&expr.expr);
+        if let Some(semicolon_tok) = &expr.semicolon_tok {
+            self.emit(OpCode::Pop, semicolon_tok.span);
+            self.emit(OpCode::Unit, semicolon_tok.span);
         }
     }
 

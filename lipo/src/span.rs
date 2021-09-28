@@ -7,7 +7,7 @@ pub trait Spanned {
 }
 
 
-#[derive(Clone, Copy, Default, Hash, PartialEq, Eq)]
+#[derive(Clone, Copy, Hash, PartialEq, Eq)]
 pub struct FreeSpan {
     pub start: u32,
     pub end: u32,
@@ -28,6 +28,13 @@ impl From<Range<usize>> for FreeSpan {
 }
 
 impl FreeSpan {
+    pub fn zero() -> FreeSpan {
+        FreeSpan {
+            start: 0,
+            end: 0,
+        }
+    }
+
     pub fn range(self) -> Range<usize> {
         (self.start as usize)..(self.end as usize)
     }
@@ -53,6 +60,16 @@ impl FreeSpan {
             start: Ord::min(a.start, b.start),
             end: Ord::max(a.end, b.end),
         }
+    }
+
+    pub fn shrink_to_lo(mut self) -> FreeSpan {
+        self.end = self.start;
+        self
+    }
+
+    pub fn shrink_to_hi(mut self) -> FreeSpan {
+        self.start = self.end;
+        self
     }
 }
 

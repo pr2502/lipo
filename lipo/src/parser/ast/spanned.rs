@@ -15,6 +15,7 @@ impl Spanned for Item {
             Item::Fn(inner) => inner.span(),
             Item::Let(inner) => inner.span(),
             Item::Statement(inner) => inner.span(),
+            Item::Expr(inner) => inner.span(),
         }
     }
 }
@@ -56,7 +57,6 @@ impl Spanned for LetInit {
 impl Spanned for Statement {
     fn span(&self) -> FreeSpan {
         match self {
-            Statement::Expr(inner) => inner.span(),
             Statement::For(inner) => inner.span(),
             Statement::If(inner) => inner.span(),
             Statement::Assert(inner) => inner.span(),
@@ -68,9 +68,13 @@ impl Spanned for Statement {
     }
 }
 
-impl Spanned for ExprStmt {
+impl Spanned for Expr {
     fn span(&self) -> FreeSpan {
-        join(self.expr.span(), self.semicolon_tok.span)
+        if let Some(semicolon_tok) = self.semicolon_tok {
+            join(self.expr.span(), semicolon_tok.span)
+        } else {
+            self.expr.span()
+        }
     }
 }
 

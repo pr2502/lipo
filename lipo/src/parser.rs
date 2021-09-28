@@ -95,11 +95,7 @@ pub fn parse<'alloc>(source: ObjectRef<'alloc, String>) -> Result<AST> {
     let mut parser = Parser {
         lexer: Lexer::new(&source),
     };
-    let mut items = Vec::new();
-    while parser.peek_kind() != TokenKind::Eof {
-        let item = parser.item()?;
-        items.push(item);
-    }
+    let items = parser.block_inner()?;
     let eof = parser.expect_next(TokenKind::Eof)?;
     Ok(AST {
         source,
@@ -110,15 +106,24 @@ pub fn parse<'alloc>(source: ObjectRef<'alloc, String>) -> Result<AST> {
 
 // Utility functions for parsing
 impl<'src> Parser<'src> {
+    fn error(&mut self, e: ParserError) -> Result<!> {
+        #[cfg(feature = "parser-error-panic")] {
+            use crate::diagnostic::Report;
+            e.report(self.lexer.source());
+            panic!("parser error");
+        }
+        Err(e)
+    }
+
     fn expect_next(&mut self, kind: TokenKind) -> Result<Token> {
         let token = self.lexer.next();
         if token.kind == kind {
             Ok(token)
         } else {
-            Err(ParserError::UnexpectedToken {
+            self.error(ParserError::UnexpectedToken {
                 found: token,
                 expected: kind,
-            })
+            })?;
         }
     }
 
@@ -134,16 +139,42 @@ impl<'src> Parser<'src> {
             None
         }
     }
+
+    fn match_next(&mut self, kind: TokenKind) -> Option<Token> {
+        let token = self.lexer.peek();
+        if token.kind == kind {
+            let _ = self.lexer.next();
+            Some(token)
+        } else {
+            None
+        }
+    }
 }
 
 impl<'src> Parser<'src> {
     fn item(&mut self) -> Result<Item> {
         // TODO recovery
         Ok(match self.peek_kind() {
+            // Items
             TokenKind::Class => Item::Class(self.class_item()?),
             TokenKind::Fn => Item::Fn(self.fn_item()?),
             TokenKind::Let => Item::Let(self.let_item()?),
-            _ => Item::Statement(self.statement()?),
+
+            // Statements
+            TokenKind::For => Item::Statement(Statement::For(self.for_stmt()?)),
+            TokenKind::If => Item::Statement(Statement::If(self.if_stmt()?)),
+            TokenKind::Assert => Item::Statement(Statement::Assert(self.assert_stmt()?)),
+            TokenKind::Print => Item::Statement(Statement::Print(self.print_stmt()?)),
+            TokenKind::Return => Item::Statement(Statement::Return(self.return_stmt()?)),
+            TokenKind::While => Item::Statement(Statement::While(self.while_stmt()?)),
+            TokenKind::LeftBrace => Item::Statement(Statement::Block(self.block()?)),
+
+            // Expr
+            _ => {
+                let expr = self.expression()?;
+                let semicolon_tok = self.match_next(TokenKind::Semicolon);
+                Item::Expr(Expr { expr ,semicolon_tok })
+            }
         })
     }
 
@@ -157,10 +188,7 @@ impl<'src> Parser<'src> {
         let left_paren_tok = self.expect_next(TokenKind::LeftParen)?;
         let mut parameters = Delimited::default();
         while !matches!(self.peek_kind(), TokenKind::Eof | TokenKind::RightParen) {
-            let mut_tok = self.match_peek(TokenKind::Mut);
-            if mut_tok.is_some() {
-                self.lexer.next();
-            }
+            let mut_tok = self.match_next(TokenKind::Mut);
             let name = self.name()?;
             parameters.items.push(FnParam { mut_tok, name });
 
@@ -169,10 +197,12 @@ impl<'src> Parser<'src> {
                 TokenKind::Comma => {
                     parameters.delim.push(self.lexer.next());
                 }
-                _ => return Err(ParserError::UnexpectedToken2 {
-                    found: self.lexer.next(),
-                    expected: &[TokenKind::Comma, TokenKind::RightParen],
-                })
+                _ => {
+                    self.error(ParserError::UnexpectedToken2 {
+                        found: self.lexer.peek(),
+                        expected: &[TokenKind::Comma, TokenKind::RightParen],
+                    })?
+                }
             }
         }
         let right_paren_tok = self.expect_next(TokenKind::RightParen)?;
@@ -188,8 +218,7 @@ impl<'src> Parser<'src> {
             _ => (None, None),
         };
         let name = self.name()?;
-        let init = if let Some(equal_tok) = self.match_peek(TokenKind::Equal) {
-            self.lexer.next();
+        let init = if let Some(equal_tok) = self.match_next(TokenKind::Equal) {
             let expr = self.expression()?;
             Some(LetInit { equal_tok, expr })
         } else {
@@ -197,19 +226,6 @@ impl<'src> Parser<'src> {
         };
         let semicolon_tok = self.expect_next(TokenKind::Semicolon)?;
         Ok(LetItem { let_tok, mut_tok, rec_tok, name, init, semicolon_tok })
-    }
-
-    fn statement(&mut self) -> Result<Statement> {
-        Ok(match self.peek_kind() {
-            TokenKind::For => Statement::For(self.for_stmt()?),
-            TokenKind::If => Statement::If(self.if_stmt()?),
-            TokenKind::Assert => Statement::Assert(self.assert_stmt()?),
-            TokenKind::Print => Statement::Print(self.print_stmt()?),
-            TokenKind::Return => Statement::Return(self.return_stmt()?),
-            TokenKind::While => Statement::While(self.while_stmt()?),
-            TokenKind::LeftBrace => Statement::Block(self.block()?),
-            _ => Statement::Expr(self.expr_stmt()?),
-        })
     }
 
     fn for_stmt(&mut self) -> Result<ForStmt> {
@@ -221,8 +237,7 @@ impl<'src> Parser<'src> {
         let if_tok = self.expect_next(TokenKind::If)?;
         let pred = self.expression()?;
         let body = self.block()?;
-        let else_branch = if let Some(else_tok) = self.match_peek(TokenKind::Else) {
-            self.lexer.next();
+        let else_branch = if let Some(else_tok) = self.match_next(TokenKind::Else) {
             let body = self.block()?;
             Some(ElseBranch { else_tok, body })
         } else {
@@ -265,19 +280,25 @@ impl<'src> Parser<'src> {
 
     fn block(&mut self) -> Result<Block> {
         let left_brace_tok = self.expect_next(TokenKind::LeftBrace)?;
-        let mut body = Vec::new();
-        while !matches!(self.peek_kind(), TokenKind::RightBrace | TokenKind::Eof) {
-            let item = self.item()?;
-            body.push(item);
-        }
+        let body = self.block_inner()?;
         let right_brace_tok = self.expect_next(TokenKind::RightBrace)?;
         Ok(Block { left_brace_tok, body, right_brace_tok })
     }
 
-    fn expr_stmt(&mut self) -> Result<ExprStmt> {
-        let expr = self.expression()?;
-        let semicolon_tok = self.expect_next(TokenKind::Semicolon)?;
-        Ok(ExprStmt { expr, semicolon_tok })
+    fn block_inner(&mut self) -> Result<Vec<Item>> {
+        let mut body = Vec::new();
+        let mut terminated = true;
+        while !matches!(self.peek_kind(), TokenKind::RightBrace | TokenKind::Eof) {
+            let item = self.item()?;
+            assert!(terminated, "BUG: previous item was not terminated yet we parsed another one");
+            terminated = match &item {
+                Item::Expr(Expr { semicolon_tok: None, .. }) => false,
+                // all other items are self-terminating
+                _ => true,
+            };
+            body.push(item);
+        }
+        Ok(body)
     }
 
     fn expression(&mut self) -> Result<Expression> {
@@ -318,9 +339,9 @@ impl<'src> Parser<'src> {
                     Expression::Primary(PrimaryExpr { token })
                 }
                 _ => {
-                    return Err(ParserError::ExpectedExpressionStart {
+                    self.error(ParserError::ExpectedExpressionStart {
                         found: token,
-                    });
+                    })?;
                 },
             }
         };
@@ -349,13 +370,14 @@ impl<'src> Parser<'src> {
                 TokenKind::Comma |
                 TokenKind::RightParen |
                 TokenKind::LeftBrace |
+                TokenKind::RightBrace |
                 TokenKind::Eof => {
                     break;
                 }
                 _ => {
-                    return Err(ParserError::ExpectedInfixOrPostfixOperator {
+                    self.error(ParserError::ExpectedInfixOrPostfixOperator {
                         found: operator,
-                    });
+                    })?;
                 }
             }
 
@@ -378,7 +400,7 @@ impl<'src> Parser<'src> {
                     break;
                 }
 
-                self.lexer.next(); // throw away the peeked operator token
+                let _ = self.lexer.next(); // throw away the peeked operator token
 
                 let rhs = self.expr_bp(r_bp)?;
                 lhs = Expression::Binary(BinaryExpr {
@@ -414,10 +436,12 @@ impl<'src> Parser<'src> {
                     args.delim.push(self.expect_next(TokenKind::Comma)?);
                 }
                 TokenKind::RightParen => {},
-                _ => return Err(ParserError::UnexpectedToken2 {
-                    found: self.lexer.peek(),
-                    expected: &[TokenKind::Comma, TokenKind::RightParen],
-                }),
+                _ => {
+                    self.error(ParserError::UnexpectedToken2 {
+                        found: self.lexer.peek(),
+                        expected: &[TokenKind::Comma, TokenKind::RightParen],
+                    })?;
+                }
             }
         }
 

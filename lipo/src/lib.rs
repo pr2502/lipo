@@ -1,6 +1,7 @@
 #![feature(assert_matches)]
 #![feature(const_type_id)]
 #![feature(drain_filter)]
+#![feature(never_type)]
 #![feature(new_uninit)]
 #![feature(option_result_unwrap_unchecked)]
 

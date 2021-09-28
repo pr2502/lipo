@@ -175,6 +175,10 @@ impl<'src> Lexer<'src> {
         Lexer { inner, current }
     }
 
+    pub fn source(&self) -> &'src str {
+        self.inner.source()
+    }
+
     /// Returns the current token
     pub fn peek(&self) -> Token {
         Token {
@@ -185,6 +189,7 @@ impl<'src> Lexer<'src> {
 
     /// Returns the current token and advance the lexer
     #[allow(clippy::should_implement_trait)] // Iterator returns an Option we always return a Token
+    #[must_use]
     pub fn next(&mut self) -> Token {
         let last = self.peek();
         self.current = self.inner.next().unwrap_or(TokenKind::Eof);
