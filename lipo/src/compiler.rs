@@ -488,7 +488,7 @@ impl<'alloc> Emitter<'alloc> {
         let op = binary_expr.operator.kind;
 
         if op == TokenKind::Equal {
-            // for now only allow assigning to an identifier
+            // For now only allow assigning to an identifier
             if let Expression::Primary(primary) = &*binary_expr.lhs {
                 if primary.token.kind == TokenKind::Identifier {
                     let ident = Identifier { token: primary.token };
@@ -526,7 +526,7 @@ impl<'alloc> Emitter<'alloc> {
             return self.and(binary_expr);
         }
 
-        // normal binary operations with eagerly evaluated operands
+        // Normal binary operations with eagerly evaluated operands
 
         self.expression(&binary_expr.lhs);
         self.expression(&binary_expr.rhs);
@@ -573,8 +573,8 @@ impl<'alloc> Emitter<'alloc> {
     fn and(&mut self, binary_expr: &BinaryExpr) {
         self.expression(&binary_expr.lhs);
 
-        // if lhs is false, short-circuit, jump over rhs
-        // span both lhs and the `and` operator
+        // If lhs is false, short-circuit, jump over rhs
+        // Span both lhs and the `and` operator
         let span = FreeSpan::join(binary_expr.lhs.span(), binary_expr.operator.span);
         let end_jump = self.emit(OpCode::JumpIfFalse { offset: DUMMY }, span);
 
@@ -588,12 +588,12 @@ impl<'alloc> Emitter<'alloc> {
     fn or(&mut self, binary_expr: &BinaryExpr) {
         self.expression(&binary_expr.lhs);
 
-        // if lhs is true, short-circuit, jump over rhs
-        // span both lhs and the `or` operator
+        // If lhs is true, short-circuit, jump over rhs
+        // Span of both lhs and the `or` operator
         let span = FreeSpan::join(binary_expr.lhs.span(), binary_expr.operator.span);
         let end_jump = self.emit(OpCode::JumpIfTrue { offset: DUMMY }, span);
 
-        // pop lhs result, span of the `or` operator
+        // Pop lhs result, span of the `or` operator
         self.emit(OpCode::Pop, binary_expr.operator.span);
         self.expression(&binary_expr.rhs);
 
@@ -630,6 +630,7 @@ impl<'alloc> Emitter<'alloc> {
     }
 
     fn call_expr(&mut self, call_expr: &CallExpr) {
+        // TODO PERF special-case Expr::Field as a direct method lookup on the lhs type
         self.expression(&call_expr.callee);
         for (i, arg) in call_expr.arguments.items.iter().enumerate() {
             if i >= MAX_ARGS {

@@ -391,6 +391,10 @@ impl<'src> Parser<'src> {
                         lhs = Expression::Call(self.call_expr(Box::new(lhs))?);
                         continue;
                     }
+                    TokenKind::Dot => {
+                        lhs = Expression::Field(self.field_expr(Box::new(lhs))?);
+                        continue;
+                    }
                     _ => unreachable!(),
                 }
             }
@@ -448,6 +452,12 @@ impl<'src> Parser<'src> {
         Ok(args)
     }
 
+    fn field_expr(&mut self, expr: Box<Expression>) -> Result<FieldExpr> {
+        let dot_tok = self.expect_next(TokenKind::Dot)?;
+        let field = self.name()?;
+        Ok(FieldExpr { expr, dot_tok, field })
+    }
+
     fn name(&mut self) -> Result<Identifier> {
         let token = self.expect_next(TokenKind::Identifier)?;
         Ok(Identifier { token })
@@ -481,7 +491,8 @@ fn prefix_binding_power(kind: TokenKind) -> ((), u8) {
 fn postfix_binding_power(kind: TokenKind) -> Option<(u8, ())> {
     Some(match kind {
         // call
-        TokenKind::LeftParen => (16, ()),
+        TokenKind::LeftParen |
+        TokenKind::Dot => (16, ()),
 
         _ => return None,
     })
