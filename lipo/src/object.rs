@@ -14,19 +14,6 @@ pub mod __derive_object;
 pub mod __derive_trace;
 
 
-pub mod builtins {
-    mod function;
-    mod native_function;
-    mod string;
-
-    pub use function::{Closure, Function};
-    pub use native_function::{NativeError, NativeFunction};
-    pub use string::String;
-
-    pub use crate::chunk::Chunk;
-}
-
-
 mod gc;
 
 pub use gc::Alloc;

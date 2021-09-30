@@ -7,8 +7,8 @@
 //!
 //! [Appendix I]: https://craftinginterpreters.com/appendix-i.html
 
+use crate::builtins::String;
 use crate::lexer::Token;
-use crate::object::builtins::String;
 use crate::object::ObjectRef;
 
 

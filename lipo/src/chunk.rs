@@ -1,4 +1,4 @@
-use crate::object::builtins::{Function, String};
+use crate::builtins::{Function, String};
 use crate::object::{Object, ObjectRef, Trace};
 use crate::opcode::OpCode;
 use crate::span::FreeSpan;

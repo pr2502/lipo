@@ -1,6 +1,6 @@
+use crate::builtins::String;
 use crate::diagnostic::{Diagnostic, Label, Severity};
 use crate::lexer::{Lexer, Token, TokenKind};
-use crate::object::builtins::String;
 use crate::object::ObjectRef;
 
 

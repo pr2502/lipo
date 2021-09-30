@@ -1,6 +1,6 @@
+use crate::builtins::{Closure, Function, String};
 use crate::chunk::{ChunkBuf, ConstKey, LoopPoint, PatchPlace};
 use crate::lexer::TokenKind;
-use crate::object::builtins::{Closure, Function, String};
 use crate::object::{Alloc, ObjectRef};
 use crate::opcode::OpCode;
 use crate::parser::ast::*;

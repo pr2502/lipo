@@ -1,5 +1,5 @@
+use crate::builtins::{Closure, Function, NativeFunction, String};
 use crate::chunk::{Chunk, ConstKey};
-use crate::object::builtins::{Closure, Function, NativeFunction, String};
 use crate::object::{Alloc, ObjectRef, Trace};
 use crate::opcode::OpCode;
 use crate::value::Value;

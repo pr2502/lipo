@@ -21,7 +21,7 @@ fn lipo_crate() -> impl quote::ToTokens {
 /// # Examples
 ///
 /// ```rust
-/// use lipo::object::builtins::String;
+/// use lipo::builtins::String;
 /// use lipo::object::{Object, ObjectRef, Trace};
 ///
 /// #[derive(Object, Trace, Debug)]
