@@ -22,7 +22,7 @@ fn lipo_crate() -> impl quote::ToTokens {
 ///
 /// ```rust
 /// use lipo::builtins::String;
-/// use lipo::object::{Object, ObjectRef, Trace};
+/// use lipo::{Object, ObjectRef, Trace};
 ///
 /// #[derive(Object, Trace, Debug)]
 /// struct MyString<'alloc>(ObjectRef<'alloc, String>);
@@ -31,7 +31,7 @@ fn lipo_crate() -> impl quote::ToTokens {
 /// Object doesn't support type or const generic parameters.
 ///
 /// ```rust,compile_fail
-/// use lipo::object::Object;
+/// use lipo::Object;
 ///
 /// #[derive(Object)]
 /// struct Bad<T>(T);
@@ -76,7 +76,7 @@ pub fn derive_object(input: TokenStream) -> TokenStream {
             }
         }
 
-        impl #lifetimes #lipo::object::Object for #object_ident #lifetimes {}
+        impl #lifetimes #lipo::__derive_object::Object for #object_ident #lifetimes {}
     };
 
     TokenStream::from(expanded)
@@ -110,7 +110,7 @@ pub fn derive_trace(input: TokenStream) -> TokenStream {
     let mark_children = mark_children(&input.data);
 
     let expanded = quote! {
-        unsafe impl #lifetimes #lipo::object::Trace for #ty_ident #lifetimes {
+        unsafe impl #lifetimes #lipo::__derive_trace::Trace for #ty_ident #lifetimes {
             fn mark(&self) {
                 #mark_children
             }

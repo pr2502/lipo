@@ -5,7 +5,7 @@
 
 use super::*;
 
-pub use super::{DynObject, ObjectVtable};
+pub use super::{DynObject, Object, ObjectVtable};
 
 unsafe fn downcast_unchecked<'alloc, O: Object>(this: ObjectRefAny<'alloc>) -> ObjectRef<'alloc, O> {
     match this.downcast::<O>() {

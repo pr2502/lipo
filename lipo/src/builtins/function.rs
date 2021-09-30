@@ -1,6 +1,5 @@
 use crate::chunk::Chunk;
-use crate::object::{Alloc, Object, ObjectRef, Trace};
-use crate::value::Value;
+use crate::{Alloc, Object, ObjectRef, Trace, Value};
 use std::fmt::{self, Debug};
 
 

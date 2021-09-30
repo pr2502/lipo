@@ -1,8 +1,8 @@
-use crate::builtins::{Closure, Function, NativeFunction, String};
+use crate::builtins::{Closure, Float, Function, NativeFunction, String};
 use crate::chunk::{Chunk, ConstKey};
-use crate::object::{Alloc, ObjectRef, Trace};
 use crate::opcode::OpCode;
-use crate::value::Value;
+use crate::Value;
+use crate::{Alloc, ObjectRef, Trace};
 
 
 pub mod error;
@@ -252,8 +252,8 @@ impl<'alloc> VM<'alloc> {
     fn op_greater(&mut self) -> Result<(), VmError> {
         let rhs = self.pop();
         let lhs = self.pop();
-        let result = match (lhs.downcast::<f64>(), rhs.downcast::<f64>()) {
-            (Some(lhs), Some(rhs)) => Value::from(lhs > rhs),
+        let result = match (lhs.downcast::<Float>(), rhs.downcast::<Float>()) {
+            (Some(lhs), Some(rhs)) => Value::from(*lhs > *rhs),
             _ => {
                 return Err(VmError::new(TypeError {
                     span: self.chunk().span(self.offset() - OpCode::Greater.len()),
@@ -268,8 +268,8 @@ impl<'alloc> VM<'alloc> {
     fn op_less(&mut self) -> Result<(), VmError> {
         let rhs = self.pop();
         let lhs = self.pop();
-        let result = match (lhs.downcast::<f64>(), rhs.downcast::<f64>()) {
-            (Some(lhs), Some(rhs)) => Value::from(lhs < rhs),
+        let result = match (lhs.downcast::<Float>(), rhs.downcast::<Float>()) {
+            (Some(lhs), Some(rhs)) => Value::from(*lhs < *rhs),
             _ => {
                 return Err(VmError::new(TypeError {
                     span: self.chunk().span(self.offset() - OpCode::Less.len()),
@@ -284,8 +284,16 @@ impl<'alloc> VM<'alloc> {
     fn op_add(&mut self) -> Result<(), VmError> {
         let rhs = self.pop();
         let lhs = self.pop();
-        let result = if let (Some(lhs), Some(rhs)) = (lhs.downcast::<f64>(), rhs.downcast::<f64>()) {
-            Value::from(lhs + rhs)
+        let result = if let (Some(lhs), Some(rhs)) = (lhs.downcast::<Float>(), rhs.downcast::<Float>()) {
+            match Float::new(lhs.inner() + rhs.inner(), self.alloc) {
+                Some(float) => Value::from(float),
+                None => {
+                    return Err(VmError::new(MathError {
+                        span: self.chunk().span(self.offset() - OpCode::Add.len()),
+                        msg: "operation resulted in a NaN",
+                    }));
+                }
+            }
         } else if let (Some(lhs), Some(rhs)) = (lhs.downcast::<String>(), rhs.downcast::<String>()) {
             let sum = lhs.as_str().to_string() + rhs.as_str();
             Value::from(String::new_owned(sum.into_boxed_str(), self.alloc))
@@ -302,8 +310,18 @@ impl<'alloc> VM<'alloc> {
     fn op_subtract(&mut self) -> Result<(), VmError> {
         let rhs = self.pop();
         let lhs = self.pop();
-        let result = match (lhs.downcast::<f64>(), rhs.downcast::<f64>()) {
-            (Some(lhs), Some(rhs)) => Value::from(lhs - rhs),
+        let result = match (lhs.downcast::<Float>(), rhs.downcast::<Float>()) {
+            (Some(lhs), Some(rhs)) => {
+                match Float::new(lhs.inner() - rhs.inner(), self.alloc) {
+                    Some(float) => Value::from(float),
+                    None => {
+                        return Err(VmError::new(MathError {
+                            span: self.chunk().span(self.offset() - OpCode::Add.len()),
+                            msg: "operation resulted in a NaN",
+                        }));
+                    }
+                }
+            }
             _ => return Err(VmError::new(TypeError {
                 span: self.chunk().span(self.offset() - OpCode::Subtract.len()),
                 msg: "subtraction only supported on Numbers",
@@ -316,8 +334,18 @@ impl<'alloc> VM<'alloc> {
     fn op_multiply(&mut self) -> Result<(), VmError> {
         let rhs = self.pop();
         let lhs = self.pop();
-        let result = match (lhs.downcast::<f64>(), rhs.downcast::<f64>()) {
-            (Some(lhs), Some(rhs)) => Value::from(lhs * rhs),
+        let result = match (lhs.downcast::<Float>(), rhs.downcast::<Float>()) {
+            (Some(lhs), Some(rhs)) => {
+                match Float::new(lhs.inner() * rhs.inner(), self.alloc) {
+                    Some(float) => Value::from(float),
+                    None => {
+                        return Err(VmError::new(MathError {
+                            span: self.chunk().span(self.offset() - OpCode::Add.len()),
+                            msg: "operation resulted in a NaN",
+                        }));
+                    }
+                }
+            }
             _ => return Err(VmError::new(TypeError {
                 span: self.chunk().span(self.offset() - OpCode::Multiply.len()),
                 msg: "multiplication only supported on Numbers",
@@ -330,8 +358,18 @@ impl<'alloc> VM<'alloc> {
     fn op_divide(&mut self) -> Result<(), VmError> {
         let rhs = self.pop();
         let lhs = self.pop();
-        let result = match (lhs.downcast::<f64>(), rhs.downcast::<f64>()) {
-            (Some(lhs), Some(rhs)) => Value::from(lhs / rhs),
+        let result = match (lhs.downcast::<Float>(), rhs.downcast::<Float>()) {
+            (Some(lhs), Some(rhs)) => {
+                match Float::new(lhs.inner() / rhs.inner(), self.alloc) {
+                    Some(float) => Value::from(float),
+                    None => {
+                        return Err(VmError::new(MathError {
+                            span: self.chunk().span(self.offset() - OpCode::Add.len()),
+                            msg: "operation resulted in a NaN",
+                        }));
+                    }
+                }
+            }
             _ => return Err(VmError::new(TypeError {
                 span: self.chunk().span(self.offset() - OpCode::Divide.len()),
                 msg: "division only supported on Numbers",
@@ -355,8 +393,8 @@ impl<'alloc> VM<'alloc> {
 
     fn op_negate(&mut self) -> Result<(), VmError> {
         let value = self.pop();
-        let value = value.downcast::<f64>()
-            .map(|n| Value::from(-n))
+        let value = value.downcast::<Float>()
+            .map(|n| Value::from(Float::new(-n.inner(), self.alloc).unwrap()))
             .ok_or_else(|| VmError::new(TypeError {
                 span: self.chunk().span(self.offset() - OpCode::Negate.len()),
                 msg: "negation only supported on Numbers",

@@ -135,7 +135,6 @@ define_error! {
     ],
 }
 
-
 define_error! {
     ValueNotCallable {
         span: FreeSpan,
@@ -147,5 +146,16 @@ define_error! {
     ],
     notes: [
         format!("note: attempted to call {}", dbg),
+    ],
+}
+
+define_error! {
+    MathError {
+        span: FreeSpan,
+        msg: &'static str,
+    },
+    message: "math error",
+    labels: [
+        Label::primary(span, msg),
     ],
 }

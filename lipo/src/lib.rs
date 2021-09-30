@@ -1,4 +1,5 @@
 #![feature(assert_matches)]
+#![feature(const_panic)]
 #![feature(const_type_id)]
 #![feature(drain_filter)]
 #![feature(never_type)]
@@ -21,19 +22,19 @@ pub mod compiler;
 pub mod diagnostic;
 pub mod fmt;
 pub mod lexer;
-pub mod object;
 pub mod opcode;
 pub mod parser;
-pub mod primitive;
 pub mod span;
-pub mod value;
+mod value;
 pub mod vm;
 
 pub mod builtins {
+    mod float;
     mod function;
     mod native_function;
     mod string;
 
+    pub use float::Float;
     pub use function::{Closure, Function};
     pub use native_function::{NativeError, NativeFunction};
     pub use string::String;
@@ -42,10 +43,16 @@ pub mod builtins {
 }
 
 
-#[doc(hidden)]
-pub use object::__derive_object;
-#[doc(hidden)]
-pub use object::__derive_trace;
+// derive macros
+#[doc(hidden)] pub use value::object::__derive_object;
+#[doc(hidden)] pub use value::object::__derive_trace;
+pub use lipo_macro::{Object, Trace};
+
+// reexport types
+pub use value::object::gc::{Alloc, Trace};
+pub use value::object::{Object, ObjectRef};
+pub use value::primitive::Primitive;
+pub use value::Value;
 
 
 #[cfg(test)]

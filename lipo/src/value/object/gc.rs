@@ -1,5 +1,5 @@
 use super::{Object, ObjectRef, ObjectRefAny, ObjectVtable, ObjectWrap};
-use crate::value::Value;
+use crate::value::{Value, ValueKind};
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use std::{mem, ptr};
@@ -248,7 +248,7 @@ unsafe impl<'alloc, O: Object> Trace for ObjectRef<'alloc, O> {
 
 unsafe impl<'alloc> Trace for Value<'alloc> {
     fn mark(&self) {
-        if let Some(o) = self.to_object() {
+        if let ValueKind::Object(o) = self.kind() {
             o.mark();
         }
     }

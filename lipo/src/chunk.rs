@@ -1,8 +1,7 @@
 use crate::builtins::{Function, String};
-use crate::object::{Object, ObjectRef, Trace};
 use crate::opcode::OpCode;
 use crate::span::FreeSpan;
-use crate::value::Value;
+use crate::{Object, ObjectRef, Trace, Value};
 use fxhash::FxHashMap as HashMap;
 use std::assert_matches::assert_matches;
 use std::collections::hash_map::Entry;

@@ -1,4 +1,5 @@
-use crate::object::{Alloc, Object, ObjectHashCode, ObjectRef, Trace};
+use crate::value::object::ObjectHashCode;
+use crate::{Alloc, Object, ObjectRef, Trace};
 use std::fmt::{self, Debug, Display};
 use std::hash::{Hash, Hasher};
 use std::ops::Deref;

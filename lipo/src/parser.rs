@@ -1,7 +1,7 @@
 use crate::builtins::String;
 use crate::diagnostic::{Diagnostic, Label, Severity};
 use crate::lexer::{Lexer, Token, TokenKind};
-use crate::object::ObjectRef;
+use crate::ObjectRef;
 
 
 pub mod ast;

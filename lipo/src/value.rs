@@ -1,11 +1,16 @@
-use crate::object::{Object, ObjectRef, ObjectRefAny};
+use crate::value::object::{Object, ObjectRef};
 use std::fmt::{self, Debug};
 use std::hash::{Hash, Hasher};
 
 
+pub mod primitive;
+pub mod object;
 mod repr;
 
-pub use repr::Value;
+pub use repr::{TypeTag, Value};
+pub(crate) use repr::ValueKind;
+
+use primitive::Primitive;
 
 
 mod sealed {
@@ -33,11 +38,11 @@ impl<'alloc> Value<'alloc> {
     ///
     /// # Example
     /// ```rust
-    /// # use lipo::value::Value;
+    /// # use lipo::Value;
     /// let unit = Value::unit();
     ///
     /// assert_eq!(unit.is::<()>(), true);
-    /// assert_eq!(unit.is::<f64>(), false);
+    /// assert_eq!(unit.is::<bool>(), false);
     /// ```
     pub fn is<T>(&self) -> bool
     where
@@ -51,16 +56,16 @@ impl<'alloc> Value<'alloc> {
     /// The `Output` type depends on the `T`
     /// - if `T` [implements `Object`](Object#implementors) then `Output` is `ObjectRef<T>` with
     /// the same lifetime as `Value`
-    /// - If `T` [implements `Primitive`](crate::primitive::Primitive#implementors) then `Output`
+    /// - If `T` [implements `Primitive`](Primitive#implementors) then `Output`
     /// is `T`
     ///
     /// # Example
     /// ```rust
-    /// # use lipo::value::Value;
-    /// let float = Value::from(1.2f64);
+    /// # use lipo::Value;
+    /// let boolean = Value::from(true);
     ///
-    /// assert_eq!(float.downcast::<f64>(), Some(1.2));
-    /// assert_eq!(float.downcast::<bool>(), None);
+    /// assert_eq!(boolean.downcast::<bool>(), Some(true));
+    /// assert_eq!(boolean.downcast::<()>(), None);
     /// ```
     pub fn downcast<T>(self) -> Option<<Self as Downcast<T>>::Output>
     where
@@ -69,17 +74,19 @@ impl<'alloc> Value<'alloc> {
         self.__downcast()
     }
 
+    /// Compares to `Value`s for equality
+    ///
+    /// Returns `None` if either `lhs` and `rhs` types don't match or if the concrete types (in
+    /// case of `Object`s) don't support comparing for equality.
     pub fn partial_eq(&self, other: &Self) -> Option<bool> {
-        if self.is_unit() && other.is_unit() {
-            Some(true)
-        } else if let (Some(lhs), Some(rhs)) = (self.to_bool(), other.to_bool()) {
-            Some(lhs == rhs)
-        } else if let (Some(lhs), Some(rhs)) = (self.to_float(), other.to_float()) {
-            Some((lhs - rhs).abs() <= f64::EPSILON)
-        } else if let (Some(lhs), Some(rhs)) = (self.to_object(), other.to_object()) {
-            lhs.partial_eq(&rhs)
-        } else {
-            None
+        match (self.kind(), other.kind()) {
+            (ValueKind::Object(lhs), ValueKind::Object(rhs)) => {
+                lhs.partial_eq(&rhs)
+            }
+            (ValueKind::Primitive(lhs), ValueKind::Primitive(rhs)) => {
+                lhs.partial_eq(rhs)
+            }
+            _ => None,
         }
     }
 }
@@ -87,36 +94,17 @@ impl<'alloc> Value<'alloc> {
 
 impl<'alloc> Debug for Value<'alloc> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.is_unit() {
-            write!(f, "()")
-        } else if let Some(b) = self.downcast::<bool>() {
-            b.fmt(f)
-        } else if let Some(n) = self.downcast::<f64>() {
-            n.fmt(f)
-        } else if let Some(o) = self.to_object() {
-            o.fmt(f)
-        } else {
-            unreachable!()
+        match self.kind() {
+            ValueKind::Object(o) => o.fmt(f),
+            ValueKind::Primitive(p) => p.debug_fmt(f),
         }
     }
 }
 
 
-impl<'alloc> From<()> for Value<'alloc> {
-    fn from(_: ()) -> Self {
-        Value::unit()
-    }
-}
-
-impl<'alloc> From<bool> for Value<'alloc> {
-    fn from(b: bool) -> Self {
-        Value::new_bool(b)
-    }
-}
-
-impl<'alloc> From<f64> for Value<'alloc> {
-    fn from(f: f64) -> Self {
-        Value::new_float(f)
+impl<'alloc, P: Primitive> From<P> for Value<'alloc> {
+    fn from(p: P) -> Self {
+        Value::new_primitive(p)
     }
 }
 
@@ -126,38 +114,38 @@ impl<'alloc, O: Object> From<ObjectRef<'alloc, O>> for Value<'alloc> {
     }
 }
 
+// Rust can't yet express that two traits are mutually exclusive like `Object` and `Primitive`.
+//
+// Since `Object` is open to be implemented outside of this crate we have to use a blanket impl for
+// it and because `Primitive` is implemented for a known set of types we're going to implement
+// `Downcast` for those.
+macro_rules! impl_downcast_primitive {
+    ( $($P:ty),* $(,)? ) => { $(
 
-impl<'alloc> Downcast<()> for Value<'alloc> {
-    type Output = ();
+        impl<'alloc> Downcast<$P> for Value<'alloc> {
+            type Output = $P;
 
-    fn __is(&self) -> bool {
-        self.is_unit()
-    }
-    fn __downcast(self) -> Option<()> {
-        self.is_unit().then(|| ())
-    }
+            default fn __is(&self) -> bool {
+                match self.kind() {
+                    ValueKind::Primitive(p) => p.is::<$P>(),
+                    _ => false,
+                }
+            }
+
+            default fn __downcast(self) -> Option<$P> {
+                match self.kind() {
+                    ValueKind::Primitive(p) => p.downcast::<$P>(),
+                    _ => None,
+                }
+            }
+        }
+
+    )* };
 }
 
-impl<'alloc> Downcast<bool> for Value<'alloc> {
-    type Output = bool;
-
-    fn __is(&self) -> bool {
-        self.is_bool()
-    }
-    fn __downcast(self) -> Option<bool> {
-        self.to_bool()
-    }
-}
-
-impl<'alloc> Downcast<f64> for Value<'alloc> {
-    type Output = f64;
-
-    fn __is(&self) -> bool {
-        self.is_float()
-    }
-    fn __downcast(self) -> Option<f64> {
-        self.to_float()
-    }
+impl_downcast_primitive! {
+    (),
+    bool,
 }
 
 impl<'alloc, O> Downcast<O> for Value<'alloc>
@@ -167,15 +155,17 @@ where
     type Output = ObjectRef<'alloc, O>;
 
     fn __is(&self) -> bool {
-        self.to_object()
-            .as_ref()
-            .map(ObjectRefAny::is::<O>)
-            .unwrap_or(false)
+        match self.kind() {
+            ValueKind::Object(o) => o.is::<O>(),
+            _ => false,
+        }
     }
 
     fn __downcast(self) -> Option<ObjectRef<'alloc, O>> {
-        self.to_object()
-            .and_then(ObjectRefAny::downcast)
+        match self.kind() {
+            ValueKind::Object(o) => o.downcast::<O>(),
+            _ => None,
+        }
     }
 }
 
@@ -197,12 +187,9 @@ impl<'alloc> Hash for Value<'alloc> {
     where
         H: Hasher,
     {
-        if let Some(b) = self.to_bool() {
-            state.write_u8(b.into());
-        } else if let Some(n) = self.to_float() {
-            state.write_u64(n.to_bits());
-        } else if let Some(o) = self.to_object() {
-            o.hash(state);
+        match self.kind() {
+            ValueKind::Object(o) => o.hash(state),
+            ValueKind::Primitive(p) => state.write_usize(p.hash_code()),
         }
     }
 }

@@ -9,7 +9,7 @@
 
 use crate::builtins::String;
 use crate::lexer::Token;
-use crate::object::ObjectRef;
+use crate::ObjectRef;
 
 
 mod fmt;

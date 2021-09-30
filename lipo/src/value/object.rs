@@ -5,20 +5,13 @@ use std::ops::Deref;
 use std::ptr;
 
 
-// Re-export the derive macros
-pub use lipo_macro::{Object, Trace};
-
-#[doc(hidden)]
-pub mod __derive_object;
-#[doc(hidden)]
-pub mod __derive_trace;
+#[doc(hidden)] pub mod __derive_object;
+#[doc(hidden)] pub mod __derive_trace;
 
 
-mod gc;
+pub mod gc;
 
-pub use gc::Alloc;
-pub use gc::Trace;
-use gc::ObjectHeader;
+use gc::{Trace, ObjectHeader};
 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -228,7 +221,7 @@ pub struct ObjectVtable {
 }
 
 impl<'alloc, O: Object> ObjectRef<'alloc, O> {
-    pub fn upcast(self) -> ObjectRefAny<'alloc> {
+    pub(crate) fn upcast(self) -> ObjectRefAny<'alloc> {
         // SAFETY upcasting an ObjectRef is always safe, lifetime is maintained
         unsafe {
             ObjectRefAny::from_ptr(self.ptr.cast())
@@ -278,6 +271,13 @@ impl<'alloc> ObjectRefAny<'alloc> {
             None
         }
     }
+
+    pub fn partial_eq(&self, other: &ObjectRefAny<'alloc>) -> Option<bool> {
+        let ObjectVtable { partial_eq, .. } = self.vtable();
+
+        // SAFETY we're using this Object's own vtable
+        unsafe { partial_eq(*self, *other) }
+    }
 }
 
 impl<'alloc> Debug for ObjectRefAny<'alloc> {
@@ -289,21 +289,7 @@ impl<'alloc> Debug for ObjectRefAny<'alloc> {
     }
 }
 
-impl<'alloc> ObjectRefAny<'alloc> {
-    pub fn partial_eq(&self, other: &ObjectRefAny<'alloc>) -> Option<bool> {
-        let ObjectVtable { partial_eq, .. } = self.vtable();
-
-        // SAFETY we're using this Object's own vtable
-        unsafe { partial_eq(*self, *other) }
-    }
-}
-
-impl<'alloc> PartialEq for ObjectRefAny<'alloc> {
-    fn eq(&self, other: &Self) -> bool {
-        self.partial_eq(other).unwrap_or(false)
-    }
-}
-
+// TODO remove this impl, not all objects can be hashed
 impl<'alloc> Hash for ObjectRefAny<'alloc> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         let ObjectVtable { hash_code, .. } = self.vtable();
@@ -314,6 +300,7 @@ impl<'alloc> Hash for ObjectRefAny<'alloc> {
         state.write_usize(code);
     }
 }
+
 
 impl<'alloc, O: Object> Deref for ObjectRef<'alloc, O> {
     type Target = O;

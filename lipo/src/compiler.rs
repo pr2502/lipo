@@ -1,7 +1,7 @@
-use crate::builtins::{Closure, Function, String};
+use crate::builtins::{Closure, Float, Function, String};
 use crate::chunk::{ChunkBuf, ConstKey, LoopPoint, PatchPlace};
 use crate::lexer::TokenKind;
-use crate::object::{Alloc, ObjectRef};
+use crate::{Alloc, ObjectRef};
 use crate::opcode::OpCode;
 use crate::parser::ast::*;
 use crate::span::{FreeSpan, Spanned};
@@ -697,6 +697,8 @@ impl<'alloc> Emitter<'alloc> {
         let slice = span.anchor(&self.source).as_str();
         match slice.parse::<f64>() {
             Ok(float) => {
+                let float = Float::new(float, self.alloc)
+                    .expect("impossible number literal");
                 let value = Value::from(float);
                 let key = self.insert_constant(value);
                 self.emit(OpCode::Constant { key }, span);

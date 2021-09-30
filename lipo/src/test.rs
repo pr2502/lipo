@@ -1,7 +1,7 @@
 use crate::builtins::String;
 use crate::compiler::{compile, error::*};
 use crate::diagnostic::Report;
-use crate::object::Alloc;
+use crate::Alloc;
 use crate::parser::parse;
 use crate::vm::{error::*, VM};
 
