@@ -149,13 +149,13 @@ impl<'alloc> VM<'alloc> {
                 OpCode::SUBTRACT        => self.op_subtract()?,
                 OpCode::MULTIPLY        => self.op_multiply()?,
                 OpCode::DIVIDE          => self.op_divide()?,
-                OpCode::NOT             => self.op_not(),
+                OpCode::NOT             => self.op_not()?,
                 OpCode::NEGATE          => self.op_negate()?,
                 OpCode::ASSERT          => self.op_assert()?,
                 OpCode::PRINT           => self.op_print(),
                 OpCode::JUMP            => self.op_jump(),
-                OpCode::JUMP_IF_TRUE    => self.op_jump_if_true(),
-                OpCode::JUMP_IF_FALSE   => self.op_jump_if_false(),
+                OpCode::JUMP_IF_TRUE    => self.op_jump_if_true()?,
+                OpCode::JUMP_IF_FALSE   => self.op_jump_if_false()?,
                 OpCode::LOOP            => self.op_loop(),
                 OpCode::CALL            => self.op_call()?,
                 OpCode::CLOSURE         => self.op_closure(),
@@ -341,10 +341,16 @@ impl<'alloc> VM<'alloc> {
         Ok(())
     }
 
-    fn op_not(&mut self) {
+    fn op_not(&mut self) -> Result<(), VmError> {
         let value = self.pop();
-        let value = Value::from(value.is_falsy());
+        let value = value.downcast::<bool>()
+            .map(|b| Value::from(!b))
+            .ok_or_else(|| VmError::new(TypeError {
+                span: self.chunk().span(self.offset() - OpCode::Not.len()),
+                msg: "not only supported on Bool",
+            }))?;
         self.push(value);
+        Ok(())
     }
 
     fn op_negate(&mut self) -> Result<(), VmError> {
@@ -387,26 +393,46 @@ impl<'alloc> VM<'alloc> {
         self.ip = unsafe { self.ip.add(offset) };
     }
 
-    fn op_jump_if_true(&mut self) {
+    fn op_jump_if_true(&mut self) -> Result<(), VmError> {
         let offset = usize::from(self.read_u16());
 
         let value = self.peek();
-        if !value.is_falsy() {
-            // SAFETY Chunk is checked when VM is constructed.
-            // - every jump must be at the start of a valid instruction
-            self.ip = unsafe { self.ip.add(offset) };
+        match value.downcast::<bool>() {
+            Some(true) => {
+                // SAFETY Chunk is checked when VM is constructed.
+                // - every jump must be at the start of a valid instruction
+                self.ip = unsafe { self.ip.add(offset) };
+            }
+            Some(false) => {}
+            None => {
+                return Err(VmError::new(TypeError {
+                    span: self.chunk().span(self.offset() - OpCode::JumpIfTrue { offset: 0 }.len()),
+                    msg: "if predicate must be a Bool",
+                }));
+            }
         }
+        Ok(())
     }
 
-    fn op_jump_if_false(&mut self) {
+    fn op_jump_if_false(&mut self) -> Result<(), VmError> {
         let offset = usize::from(self.read_u16());
 
         let value = self.peek();
-        if value.is_falsy() {
-            // SAFETY Chunk is checked when VM is constructed.
-            // - every jump must be at the start of a valid instruction
-            self.ip = unsafe { self.ip.add(offset) };
+        match value.downcast::<bool>() {
+            Some(true) => {}
+            Some(false) => {
+                // SAFETY Chunk is checked when VM is constructed.
+                // - every jump must be at the start of a valid instruction
+                self.ip = unsafe { self.ip.add(offset) };
+            }
+            None => {
+                return Err(VmError::new(TypeError {
+                    span: self.chunk().span(self.offset() - OpCode::JumpIfFalse { offset: 0 }.len()),
+                    msg: "if predicate must be a Bool",
+                }));
+            }
         }
+        Ok(())
     }
 
     fn op_loop(&mut self) {

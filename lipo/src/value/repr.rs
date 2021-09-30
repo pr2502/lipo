@@ -76,12 +76,6 @@ impl<'alloc> Value<'alloc> {
         }
     }
 
-    // TODO we don't want to keep the concept of Falsiness, remove this eventually
-    #[doc(hidden)]
-    pub fn is_falsy(&self) -> bool {
-        matches!(self.repr, UNIT_REPR | FALSE_REPR)
-    }
-
     pub(super) fn is_float(self) -> bool {
         (self.repr & QUIET_NAN) != QUIET_NAN
     }

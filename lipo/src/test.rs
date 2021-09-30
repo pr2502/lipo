@@ -135,7 +135,7 @@ run! {
 
 run! {
     weird_expr,
-    "assert not (5 - 4 > 3 * 2 == not ());",
+    "assert not (5 - 4 > 3 * 2 == not false);",
     Ok(_),
 }
 
@@ -200,7 +200,7 @@ run! {
 run! {
     ifs,
     "
-        if () {
+        if false {
             assert false;
         };
         if true {
@@ -214,7 +214,7 @@ run! {
     ifelse,
     "
         let mut a;
-        if () {
+        if false {
             assert false;
         } else {
             a = true;
