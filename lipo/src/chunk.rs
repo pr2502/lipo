@@ -42,8 +42,8 @@ impl<'alloc> Chunk<'alloc> {
     ///
     /// Will panic if the byte offset code incorrect.
     pub fn span(&self, byte_offset: usize) -> FreeSpan {
-        let (_, idx) = OffsetIter::new(&self.code)
-            .find(|(_, offset)| offset == &byte_offset)
+        let idx = OffsetIter::new(&self.code)
+            .position(|(_, offset)| offset == byte_offset)
             .expect("invalid OpCode byte offset");
 
         // TODO don't panic if debuginfo is missing

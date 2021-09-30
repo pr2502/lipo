@@ -259,12 +259,26 @@ impl<'alloc> Emitter<'alloc> {
     fn end_scope(&mut self, span: FreeSpan) {
         assert!(self.fn_scope().scope_depth > 0);
         self.fn_scope_mut().scope_depth -= 1;
-        while let Some(local) = self.fn_scope().locals.last() {
-            if local.depth <= self.fn_scope().scope_depth {
-                break
-            }
-            self.fn_scope_mut().locals.pop();
-            self.emit(OpCode::Pop, span);
+
+        let scope_depth = self.fn_scope().scope_depth;
+        let locals = &mut self.fn_scope_mut().locals;
+
+        let pop = locals
+            .iter()
+            .rev()
+            .take_while(|local| local.depth > scope_depth)
+            .count();
+
+        locals.truncate(locals.len() - pop);
+
+        let mut left = pop;
+        while left > 0 {
+            let pop1 = Ord::min((u8::MAX as usize) + 1, left);
+            left -= pop1;
+
+            let n = (pop1 - 1).try_into().unwrap();
+            // PopBlock pops `n+1` because we can encode `0` pops as not emitting it
+            self.emit(OpCode::PopBlock { n }, span);
         }
     }
 }
@@ -374,7 +388,6 @@ impl<'alloc> Emitter<'alloc> {
             Statement::Print(print_stmt) => self.print_stmt(print_stmt),
             Statement::Return(return_stmt) => self.return_stmt(return_stmt),
             Statement::While(while_stmt) => self.while_stmt(while_stmt),
-            Statement::Block(block) => self.block(block),
         }
 
         // Item output is Unit
@@ -479,6 +492,7 @@ impl<'alloc> Emitter<'alloc> {
             Expression::Unary(unary_expr) => self.unary_expr(unary_expr),
             Expression::Field(field_expr) => self.field_expr(field_expr),
             Expression::Group(group_expr) => self.group_expr(group_expr),
+            Expression::Block(block) => self.block(block),
             Expression::Call(call_expr) => self.call_expr(call_expr),
             Expression::Primary(primary_expr) => self.primary_expr(primary_expr),
         }

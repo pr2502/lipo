@@ -88,7 +88,6 @@ impl SourceDebug for Statement {
             Statement::Print(inner) => inner.fmt(source, f),
             Statement::Return(inner) => inner.fmt(source, f),
             Statement::While(inner) => inner.fmt(source, f),
-            Statement::Block(inner) => inner.fmt(source, f),
         }
     }
 }
@@ -170,11 +169,11 @@ impl SourceDebug for Expression {
         match self {
             Expression::Binary(inner) => inner.fmt(source, f),
             Expression::Unary(inner) => inner.fmt(source, f),
-            // Expression::Field(inner) => inner.fmt(source, f),
+            Expression::Field(inner) => inner.fmt(source, f),
             Expression::Group(inner) => inner.fmt(source, f),
+            Expression::Block(inner) => inner.fmt(source, f),
             Expression::Call(inner) => inner.fmt(source, f),
             Expression::Primary(inner) => inner.fmt(source, f),
-            _ => Ok(())
         }
     }
 }
@@ -192,6 +191,15 @@ impl SourceDebug for UnaryExpr {
     fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple(self.operator.span.anchor(source).as_str())
             .field(&self.expr.wrap(source))
+            .finish()
+    }
+}
+
+impl SourceDebug for FieldExpr {
+    fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple(".")
+            .field(&self.expr.wrap(source))
+            .field(&self.field.wrap(source))
             .finish()
     }
 }

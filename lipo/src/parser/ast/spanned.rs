@@ -63,7 +63,6 @@ impl Spanned for Statement {
             Statement::Print(inner) => inner.span(),
             Statement::Return(inner) => inner.span(),
             Statement::While(inner) => inner.span(),
-            Statement::Block(inner) => inner.span(),
         }
     }
 }
@@ -138,6 +137,7 @@ impl Spanned for Expression {
             Expression::Unary(inner) => inner.span(),
             Expression::Field(inner) => inner.span(),
             Expression::Group(inner) => inner.span(),
+            Expression::Block(inner) => inner.span(),
             Expression::Call(inner) => inner.span(),
             Expression::Primary(inner) => inner.span(),
         }

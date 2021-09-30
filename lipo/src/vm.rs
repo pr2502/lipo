@@ -1,9 +1,14 @@
 use crate::chunk::{Chunk, ConstKey};
-use crate::object::builtins::{Closure, Function, NativeError, NativeFunction, String};
+use crate::object::builtins::{Closure, Function, NativeFunction, String};
 use crate::object::{Alloc, ObjectRef, Trace};
 use crate::opcode::OpCode;
-use crate::span::FreeSpan;
 use crate::value::Value;
+
+
+pub mod error;
+
+use error::*;
+pub use error::VmError;
 
 
 pub struct VM<'alloc> {
@@ -22,28 +27,6 @@ struct Frame<'alloc> {
     closure: ObjectRef<'alloc, Closure<'alloc>>,
     ip: *const u8,
     stack_offset: usize,
-}
-
-#[derive(Debug)]
-pub enum VmError<'alloc> {
-    RuntimeError {
-        source: ObjectRef<'alloc, String>,
-        span: FreeSpan,
-        kind: RuntimeErrorKind<'alloc>,
-    },
-    NativeError(NativeError<'alloc>),
-}
-
-#[derive(Debug)]
-pub enum RuntimeErrorKind<'alloc> {
-    AssertionError,
-    TypeError(&'static str),
-    UndefinedGlobalVariable(std::string::String),
-    ValueNotCallable(Value<'alloc>),
-    WrongArity {
-        arity: usize,
-        args: usize,
-    },
 }
 
 impl<'alloc> VM<'alloc> {
@@ -140,7 +123,7 @@ impl<'alloc> VM<'alloc> {
         ConstKey::from_le_bytes([a, b])
     }
 
-    pub fn run(mut self) -> Result<(), VmError<'alloc>> {
+    pub fn run(mut self) -> Result<(), VmError> {
         log::debug!("script = {:?}", &self.chunk());
 
         loop {
@@ -155,6 +138,7 @@ impl<'alloc> VM<'alloc> {
                 OpCode::TRUE            => self.op_true(),
                 OpCode::FALSE           => self.op_false(),
                 OpCode::POP             => self.op_pop(),
+                OpCode::POP_BLOCK       => self.op_pop_block(),
                 OpCode::GET_LOCAL       => self.op_get_local(),
                 OpCode::SET_LOCAL       => self.op_set_local(),
                 OpCode::GET_UPVALUE     => self.op_get_upval(),
@@ -216,6 +200,14 @@ impl<'alloc> VM<'alloc> {
         self.pop();
     }
 
+    fn op_pop_block(&mut self) {
+        let n = usize::from(self.read_u8());
+
+        let top = self.pop();
+        self.stack.truncate(self.stack.len() - n - 1);
+        self.push(top);
+    }
+
     fn op_get_local(&mut self) {
         let slot = usize::from(self.read_u16());
 
@@ -246,7 +238,7 @@ impl<'alloc> VM<'alloc> {
         self.push(value);
     }
 
-    fn op_equal(&mut self) -> Result<(), VmError<'alloc>> {
+    fn op_equal(&mut self) -> Result<(), VmError> {
         let rhs = self.pop();
         let lhs = self.pop();
         if let Some(result) = lhs.partial_eq(&rhs) {
@@ -257,41 +249,39 @@ impl<'alloc> VM<'alloc> {
         }
     }
 
-    fn op_greater(&mut self) -> Result<(), VmError<'alloc>> {
+    fn op_greater(&mut self) -> Result<(), VmError> {
         let rhs = self.pop();
         let lhs = self.pop();
         let result = match (lhs.downcast::<f64>(), rhs.downcast::<f64>()) {
             (Some(lhs), Some(rhs)) => Value::from(lhs > rhs),
             _ => {
-                return Err(VmError::RuntimeError {
-                    source: self.chunk().source(),
+                return Err(VmError::new(TypeError {
                     span: self.chunk().span(self.offset() - OpCode::Greater.len()),
-                    kind: RuntimeErrorKind::TypeError("comparison only supported on Numbers"),
-                })
+                    msg: "comparison only supported on Numbers",
+                }));
             },
         };
         self.push(result);
         Ok(())
     }
 
-    fn op_less(&mut self) -> Result<(), VmError<'alloc>> {
+    fn op_less(&mut self) -> Result<(), VmError> {
         let rhs = self.pop();
         let lhs = self.pop();
         let result = match (lhs.downcast::<f64>(), rhs.downcast::<f64>()) {
             (Some(lhs), Some(rhs)) => Value::from(lhs < rhs),
             _ => {
-                return Err(VmError::RuntimeError {
-                    source: self.chunk().source(),
+                return Err(VmError::new(TypeError {
                     span: self.chunk().span(self.offset() - OpCode::Less.len()),
-                    kind: RuntimeErrorKind::TypeError("comparison only supported on Numbers"),
-                })
+                    msg: "comparison only supported on Numbers",
+                }));
             },
         };
         self.push(result);
         Ok(())
     }
 
-    fn op_add(&mut self) -> Result<(), VmError<'alloc>> {
+    fn op_add(&mut self) -> Result<(), VmError> {
         let rhs = self.pop();
         let lhs = self.pop();
         let result = if let (Some(lhs), Some(rhs)) = (lhs.downcast::<f64>(), rhs.downcast::<f64>()) {
@@ -300,56 +290,52 @@ impl<'alloc> VM<'alloc> {
             let sum = lhs.as_str().to_string() + rhs.as_str();
             Value::from(String::new_owned(sum.into_boxed_str(), self.alloc))
         } else {
-            return Err(VmError::RuntimeError {
-                source: self.chunk().source(),
+            return Err(VmError::new(TypeError {
                 span: self.chunk().span(self.offset() - OpCode::Add.len()),
-                kind: RuntimeErrorKind::TypeError("addition only supported on Numbers and Strings"),
-            });
+                msg: "addition only supported on Numbers and Strings",
+            }));
         };
         self.push(result);
         Ok(())
     }
 
-    fn op_subtract(&mut self) -> Result<(), VmError<'alloc>> {
+    fn op_subtract(&mut self) -> Result<(), VmError> {
         let rhs = self.pop();
         let lhs = self.pop();
         let result = match (lhs.downcast::<f64>(), rhs.downcast::<f64>()) {
             (Some(lhs), Some(rhs)) => Value::from(lhs - rhs),
-            _ => return Err(VmError::RuntimeError {
-                source: self.chunk().source(),
+            _ => return Err(VmError::new(TypeError {
                 span: self.chunk().span(self.offset() - OpCode::Subtract.len()),
-                kind: RuntimeErrorKind::TypeError("subtraction only supported on Numbers"),
-            }),
+                msg: "subtraction only supported on Numbers",
+            })),
         };
         self.push(result);
         Ok(())
     }
 
-    fn op_multiply(&mut self) -> Result<(), VmError<'alloc>> {
+    fn op_multiply(&mut self) -> Result<(), VmError> {
         let rhs = self.pop();
         let lhs = self.pop();
         let result = match (lhs.downcast::<f64>(), rhs.downcast::<f64>()) {
             (Some(lhs), Some(rhs)) => Value::from(lhs * rhs),
-            _ => return Err(VmError::RuntimeError {
-                source: self.chunk().source(),
+            _ => return Err(VmError::new(TypeError {
                 span: self.chunk().span(self.offset() - OpCode::Multiply.len()),
-                kind: RuntimeErrorKind::TypeError("multiplication only supported on Numbers"),
-            }),
+                msg: "multiplication only supported on Numbers",
+            })),
         };
         self.push(result);
         Ok(())
     }
 
-    fn op_divide(&mut self) -> Result<(), VmError<'alloc>> {
+    fn op_divide(&mut self) -> Result<(), VmError> {
         let rhs = self.pop();
         let lhs = self.pop();
         let result = match (lhs.downcast::<f64>(), rhs.downcast::<f64>()) {
             (Some(lhs), Some(rhs)) => Value::from(lhs / rhs),
-            _ => return Err(VmError::RuntimeError {
-                source: self.chunk().source(),
+            _ => return Err(VmError::new(TypeError {
                 span: self.chunk().span(self.offset() - OpCode::Divide.len()),
-                kind: RuntimeErrorKind::TypeError("division only supported on Numbers"),
-            }),
+                msg: "division only supported on Numbers",
+            })),
         };
         self.push(result);
         Ok(())
@@ -361,33 +347,29 @@ impl<'alloc> VM<'alloc> {
         self.push(value);
     }
 
-    fn op_negate(&mut self) -> Result<(), VmError<'alloc>> {
+    fn op_negate(&mut self) -> Result<(), VmError> {
         let value = self.pop();
         let value = value.downcast::<f64>()
             .map(|n| Value::from(-n))
-            .ok_or_else(|| VmError::RuntimeError {
-                source: self.chunk().source(),
+            .ok_or_else(|| VmError::new(TypeError {
                 span: self.chunk().span(self.offset() - OpCode::Negate.len()),
-                kind: RuntimeErrorKind::TypeError("negation only supported on Numbers"),
-            })?;
+                msg: "negation only supported on Numbers",
+            }))?;
         self.push(value);
         Ok(())
     }
 
-    fn op_assert(&mut self) -> Result<(), VmError<'alloc>> {
+    fn op_assert(&mut self) -> Result<(), VmError> {
         let value = self.pop();
         match value.downcast::<bool>() {
             Some(true) => {}
-            Some(false) => return Err(VmError::RuntimeError {
-                source: self.chunk().source(),
+            Some(false) => return Err(VmError::new(AssertionError {
                 span: self.chunk().span(self.offset() - OpCode::Assert.len()),
-                kind: RuntimeErrorKind::AssertionError
-            }),
-            _ => return Err(VmError::RuntimeError {
-                source: self.chunk().source(),
+            })),
+            _ => return Err(VmError::new(TypeError {
                 span: self.chunk().span(self.offset() - OpCode::Assert.len()),
-                kind: RuntimeErrorKind::TypeError("asserted expression must return a Bool"),
-            }),
+                msg: "asserted expression must return a Bool",
+            })),
         }
         Ok(())
     }
@@ -435,7 +417,7 @@ impl<'alloc> VM<'alloc> {
         self.ip = unsafe { self.ip.sub(offset) };
     }
 
-    fn op_call(&mut self) -> Result<(), VmError<'alloc>> {
+    fn op_call(&mut self) -> Result<(), VmError> {
         let args = usize::from(self.read_u8());
 
         // The stack layou before call:
@@ -470,17 +452,17 @@ impl<'alloc> VM<'alloc> {
                     Ok(())
                 }
                 Err(err) => {
-                    Err(VmError::NativeError(err))
+                    Err(VmError::new(NativeError { msg: err.msg }))
                 }
             }
         } else if let Some(closure) = callee.downcast::<Closure>() {
             let arity = usize::try_from(closure.function.arity).unwrap();
             if arity != args {
-                return Err(VmError::RuntimeError {
-                    source: self.chunk().source(),
+                return Err(VmError::new(WrongArity {
                     span: self.chunk().span(self.offset() - OpCode::Call { args: 0 }.len()),
-                    kind: RuntimeErrorKind::WrongArity { arity, args },
-                });
+                    arity,
+                    args,
+                }));
             }
 
             // Include callee in the new stack frame at slot 0.
@@ -509,11 +491,10 @@ impl<'alloc> VM<'alloc> {
 
             Ok(())
         } else {
-            Err(VmError::RuntimeError {
-                source: self.chunk().source(),
+            Err(VmError::new(ValueNotCallable {
                 span: self.chunk().span(self.offset() - OpCode::Call { args: 0 }.len()),
-                kind: RuntimeErrorKind::ValueNotCallable(callee),
-            })
+                dbg: format!("{:?}", callee),
+            }))
         }
     }
 

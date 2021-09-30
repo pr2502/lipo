@@ -167,13 +167,12 @@ impl<'src> Parser<'src> {
             TokenKind::Print => Item::Statement(Statement::Print(self.print_stmt()?)),
             TokenKind::Return => Item::Statement(Statement::Return(self.return_stmt()?)),
             TokenKind::While => Item::Statement(Statement::While(self.while_stmt()?)),
-            TokenKind::LeftBrace => Item::Statement(Statement::Block(self.block()?)),
 
             // Expr
             _ => {
                 let expr = self.expression()?;
                 let semicolon_tok = self.match_next(TokenKind::Semicolon);
-                Item::Expr(Expr { expr ,semicolon_tok })
+                Item::Expr(Expr { expr, semicolon_tok })
             }
         })
     }
@@ -301,31 +300,34 @@ impl<'src> Parser<'src> {
         Ok(body)
     }
 
+    fn group_expr(&mut self) -> Result<GroupExpr> {
+        let left_paren_tok = self.expect_next(TokenKind::LeftParen)?;
+        let expr = if self.match_peek(TokenKind::RightParen).is_some() {
+            // allow an empty group `( )`
+            None
+        } else {
+            Some(Box::new(self.expr_bp(0)?))
+        };
+        let right_paren_tok = self.expect_next(TokenKind::RightParen)?;
+        Ok(GroupExpr { left_paren_tok, expr, right_paren_tok })
+    }
+
     fn expression(&mut self) -> Result<Expression> {
         self.expr_bp(0) // start with binding power none = 0
     }
 
     fn expr_bp(&mut self, min_bp: u8) -> Result<Expression> {
         let mut lhs = {
-            let token = self.lexer.next();
-            match token.kind {
-                TokenKind::LeftParen => {
-                    let left_paren_tok = token;
-                    let expr = if self.match_peek(TokenKind::RightParen).is_some() {
-                        // allow an empty group `( )`
-                        None
-                    } else {
-                        Some(Box::new(self.expr_bp(0)?))
-                    };
-                    let right_paren_tok = self.expect_next(TokenKind::RightParen)?;
-                    Expression::Group(GroupExpr { left_paren_tok, expr, right_paren_tok })
-                }
+            match self.peek_kind() {
+                TokenKind::LeftParen => Expression::Group(self.group_expr()?),
+                TokenKind::LeftBrace => Expression::Block(self.block()?),
                 TokenKind::Minus |
                 TokenKind::Not => {
-                    let ((), r_bp) = prefix_binding_power(token.kind);
+                    let operator = self.lexer.next();
+                    let ((), r_bp) = prefix_binding_power(operator.kind);
                     let expr = self.expr_bp(r_bp)?;
                     Expression::Unary(UnaryExpr {
-                        operator: token,
+                        operator,
                         expr: Box::new(expr),
                     })
                 }
@@ -336,12 +338,12 @@ impl<'src> Parser<'src> {
                 TokenKind::Number |
                 TokenKind::String |
                 TokenKind::Identifier => {
+                    let token = self.lexer.next();
                     Expression::Primary(PrimaryExpr { token })
                 }
                 _ => {
-                    self.error(ParserError::ExpectedExpressionStart {
-                        found: token,
-                    })?;
+                    let found = self.lexer.next();
+                    self.error(ParserError::ExpectedExpressionStart { found })?;
                 },
             }
         };

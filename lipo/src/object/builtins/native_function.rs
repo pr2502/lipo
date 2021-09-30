@@ -41,7 +41,7 @@ impl NativeFunction {
 
 #[derive(Object, Trace)]
 pub struct NativeError<'alloc> {
-    msg: String,
+    pub(crate) msg: String,
     _todo: PhantomData<&'alloc ()>, // some objects in the future maybe
 }
 

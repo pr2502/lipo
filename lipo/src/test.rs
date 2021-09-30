@@ -3,7 +3,7 @@ use crate::diagnostic::Report;
 use crate::object::builtins::String;
 use crate::object::Alloc;
 use crate::parser::parse;
-use crate::vm::{RuntimeErrorKind, VmError, VM};
+use crate::vm::{error::*, VM};
 
 
 fn init() {
@@ -14,11 +14,6 @@ fn init() {
     });
 }
 
-macro_rules! res {
-    ( $($res:tt)+ ) => { $($res)* };
-    ( ) => { Ok(_) };
-}
-
 macro_rules! parse {
     ( @$alloc:ident, $code:expr, $res:pat ) => {{
         init();
@@ -27,8 +22,10 @@ macro_rules! parse {
         let src = String::new_owned(src.into(), &$alloc);
         let ast = parse(src);
 
-        if let Err(err) = &ast {
-            err.report(&src);
+        if std::env::var("RUST_LOG").is_ok() {
+            if let Err(err) = &ast {
+                err.report(&src);
+            }
         }
 
         std::assert_matches::assert_matches!(ast, $res);
@@ -92,25 +89,33 @@ macro_rules! compile {
 }
 
 macro_rules! run {
-    ( @$alloc:ident, $code:literal, $res:pat ) => {{
+    ( @$alloc:ident, $code:literal, $($res:tt)* ) => {{
         let script = compile!(@$alloc, $code, Ok(_)).unwrap();
 
         let vm = VM::new(script, &$alloc);
         let res = vm.run();
-        std::assert_matches::assert_matches!(res, $res);
+
+        if std::env::var("RUST_LOG").is_ok() {
+            if let Err(err) = &res {
+                let src = unindent::unindent($code);
+                err.report(&src);
+            }
+        }
+
+        std::assert_matches::assert_matches!(res, $($res)*);
     }};
 
     (
         $(#[$m:meta])*
         $name:ident,
-        $code:literal
-        $(, $res:pat)? $(,)?
+        $code:literal,
+        $($res:tt)*
     ) => {
         $(#[$m])*
         #[test]
         fn $name() {
             let alloc = Alloc::new();
-            run!(@alloc, $code, res!($($res)*))
+            run!(@alloc, $code, $($res)*)
         }
     };
 }
@@ -119,12 +124,13 @@ macro_rules! run {
 run! {
     rt_err_type_error,
     "1 / true;",
-    Err(VmError::RuntimeError { kind: RuntimeErrorKind::TypeError(_), .. }),
+    Err(e) if e.is::<TypeError>(),
 }
 
 run! {
     weird_expr,
     "assert not (5 - 4 > 3 * 2 == not ());",
+    Ok(_),
 }
 
 run! {
@@ -134,6 +140,7 @@ run! {
         assert "string1" /= "string2";
         assert "foo" + "bar" == "foobar";
     "#,
+    Ok(_),
 }
 
 run! {
@@ -142,6 +149,7 @@ run! {
         print 1 + 2;
         print 3 + 4;
     "#,
+    Ok(_),
 }
 
 run! {
@@ -155,6 +163,7 @@ run! {
         b = 3;
         print b;
     ",
+    Ok(_),
 }
 
 run! {
@@ -166,6 +175,7 @@ run! {
             print a;
         }
     }",
+    Ok(_),
 }
 
 run! {
@@ -178,6 +188,7 @@ run! {
         assert b == 2;
         assert c == 3;
     ",
+    Ok(_),
 }
 
 run! {
@@ -190,6 +201,7 @@ run! {
             assert true;
         }
     ",
+    Ok(_),
 }
 
 run! {
@@ -203,6 +215,7 @@ run! {
         }
         assert a;
     ",
+    Ok(_),
 }
 
 run! {
@@ -216,6 +229,7 @@ run! {
         }
         assert b;
     ",
+    Ok(_),
 }
 
 run! {
@@ -224,6 +238,7 @@ run! {
         assert true and true;
         assert false or true;
     ",
+    Ok(_),
 }
 
 run! {
@@ -235,6 +250,7 @@ run! {
             a = a - 1;
         }
     ",
+    Ok(_),
 }
 
 compile! {
@@ -255,6 +271,7 @@ run! {
         }
         assert foo();
     "#,
+    Ok(_),
 }
 
 run! {
@@ -270,6 +287,7 @@ run! {
         }
         assert first(1,2,3) == 1;
     ",
+    Ok(_),
 }
 
 run! {
@@ -284,6 +302,7 @@ run! {
         }
         assert fib(5) == 8;
     ",
+    Ok(_),
 }
 
 run! {
@@ -301,6 +320,7 @@ run! {
         assert closure() == "a";
         assert closure2() == "b";
     "#,
+    Ok(_),
 }
 
 compile! {
@@ -414,6 +434,19 @@ run! {
             1;
         }
         assert g() == ();
+    ",
+    Ok(_),
+}
+
+run! {
+    block_expr,
+    "
+        let a = {
+            let a = 1;
+            let b = 2;
+            a + b
+        };
+        assert a == 3;
     ",
     Ok(_),
 }

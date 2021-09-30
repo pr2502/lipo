@@ -23,6 +23,7 @@ pub enum OpCode {
     True,
     False,
     Pop,
+    PopBlock { n: u8 },
     GetLocal { slot: u16 },
     SetLocal { slot: u16 },
     GetUpvalue { slot: u8 },
@@ -52,6 +53,7 @@ opcodes! {
     TRUE,
     FALSE,
     POP,
+    POP_BLOCK,
     GET_LOCAL,
     SET_LOCAL,
     GET_UPVALUE,
@@ -85,6 +87,7 @@ impl OpCode {
             [Self::TRUE, rest @ .. ]      => (OpCode::True, rest),
             [Self::FALSE, rest @ .. ]     => (OpCode::False, rest),
             [Self::POP, rest @ .. ]       => (OpCode::Pop, rest),
+            [Self::POP_BLOCK, x, rest @ .. ] => (OpCode::PopBlock { n: *x }, rest),
             [Self::GET_LOCAL, x, y, rest @ .. ] => {
                 (OpCode::GetLocal { slot: u16::from_le_bytes([*x, *y]) }, rest)
             }
@@ -130,6 +133,7 @@ impl OpCode {
         code.push(self.tag());
         match self {
             OpCode::Call { args: u8_arg } |
+            OpCode::PopBlock { n: u8_arg } |
             OpCode::GetUpvalue { slot: u8_arg } => {
                 code.push(u8_arg);
             }
@@ -159,6 +163,7 @@ impl OpCode {
             OpCode::True                => Self::TRUE,
             OpCode::False               => Self::FALSE,
             OpCode::Pop                 => Self::POP,
+            OpCode::PopBlock { .. }     => Self::POP_BLOCK,
             OpCode::GetLocal { .. }     => Self::GET_LOCAL,
             OpCode::SetLocal { .. }     => Self::SET_LOCAL,
             OpCode::GetUpvalue { .. }   => Self::GET_UPVALUE,
@@ -207,6 +212,7 @@ impl OpCode {
 
             // one byte argument
             OpCode::Call { .. } |
+            OpCode::PopBlock { .. } |
             OpCode::GetUpvalue { .. } => 2,
 
             // two byte argument
@@ -262,6 +268,9 @@ impl OpCode {
 
             // call, pops `args`, pushes one
             OpCode::Call { args } => -isize::from(args) + 1,
+
+            // PopBlock pops N+1
+            OpCode::PopBlock { n } => -isize::from(n) - 1,
 
             // closure, pops `upvals`, pushes one
             OpCode::Closure { upvals, .. } => -isize::from(upvals) + 1,

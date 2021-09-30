@@ -88,7 +88,6 @@ pub enum Statement {
     Print(PrintStmt),
     Return(ReturnStmt),
     While(WhileStmt),
-    Block(Block),
 }
 
 pub struct ForStmt {
@@ -152,6 +151,7 @@ pub enum Expression {
     Unary(UnaryExpr),
     Field(FieldExpr),
     Group(GroupExpr),
+    Block(Block),
     Call(CallExpr),
     Primary(PrimaryExpr),
 }
