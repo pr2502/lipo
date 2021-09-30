@@ -83,7 +83,6 @@ pub struct Expr {
 
 pub enum Statement {
     For(ForStmt),
-    If(IfStmt),
     Assert(AssertStmt),
     Print(PrintStmt),
     Return(ReturnStmt),
@@ -95,18 +94,6 @@ pub struct ForStmt {
     pub elem: Identifier,
     pub in_tok: Token,
     pub iter: Expression,
-    pub body: Block,
-}
-
-pub struct IfStmt {
-    pub if_tok: Token,
-    pub pred: Expression,
-    pub body: Block,
-    pub else_branch: Option<ElseBranch>,
-}
-
-pub struct ElseBranch {
-    pub else_tok: Token,
     pub body: Block,
 }
 
@@ -152,6 +139,7 @@ pub enum Expression {
     Field(FieldExpr),
     Group(GroupExpr),
     Block(Block),
+    If(IfExpr),
     Call(CallExpr),
     Primary(PrimaryExpr),
 }
@@ -186,6 +174,18 @@ pub struct GroupExpr {
     pub left_paren_tok: Token,
     pub expr: Option<Box<Expression>>,
     pub right_paren_tok: Token,
+}
+
+pub struct IfExpr {
+    pub if_tok: Token,
+    pub pred: Box<Expression>,
+    pub body: Block,
+    pub else_branch: Option<ElseBranch>,
+}
+
+pub struct ElseBranch {
+    pub else_tok: Token,
+    pub body: Block,
 }
 
 pub struct CallExpr {

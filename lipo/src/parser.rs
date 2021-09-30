@@ -162,7 +162,6 @@ impl<'src> Parser<'src> {
 
             // Statements
             TokenKind::For => Item::Statement(Statement::For(self.for_stmt()?)),
-            TokenKind::If => Item::Statement(Statement::If(self.if_stmt()?)),
             TokenKind::Assert => Item::Statement(Statement::Assert(self.assert_stmt()?)),
             TokenKind::Print => Item::Statement(Statement::Print(self.print_stmt()?)),
             TokenKind::Return => Item::Statement(Statement::Return(self.return_stmt()?)),
@@ -232,19 +231,6 @@ impl<'src> Parser<'src> {
         todo!()
     }
 
-    fn if_stmt(&mut self) -> Result<IfStmt> {
-        let if_tok = self.expect_next(TokenKind::If)?;
-        let pred = self.expression()?;
-        let body = self.block()?;
-        let else_branch = if let Some(else_tok) = self.match_next(TokenKind::Else) {
-            let body = self.block()?;
-            Some(ElseBranch { else_tok, body })
-        } else {
-            None
-        };
-        Ok(IfStmt { if_tok, pred, body, else_branch })
-    }
-
     fn assert_stmt(&mut self) -> Result<AssertStmt> {
         let assert_tok = self.expect_next(TokenKind::Assert)?;
         let expr = self.expression()?;
@@ -312,6 +298,19 @@ impl<'src> Parser<'src> {
         Ok(GroupExpr { left_paren_tok, expr, right_paren_tok })
     }
 
+    fn if_expr(&mut self) -> Result<IfExpr> {
+        let if_tok = self.expect_next(TokenKind::If)?;
+        let pred = Box::new(self.expression()?);
+        let body = self.block()?;
+        let else_branch = if let Some(else_tok) = self.match_next(TokenKind::Else) {
+            let body = self.block()?;
+            Some(ElseBranch { else_tok, body })
+        } else {
+            None
+        };
+        Ok(IfExpr { if_tok, pred, body, else_branch })
+    }
+
     fn expression(&mut self) -> Result<Expression> {
         self.expr_bp(0) // start with binding power none = 0
     }
@@ -321,6 +320,7 @@ impl<'src> Parser<'src> {
             match self.peek_kind() {
                 TokenKind::LeftParen => Expression::Group(self.group_expr()?),
                 TokenKind::LeftBrace => Expression::Block(self.block()?),
+                TokenKind::If => Expression::If(self.if_expr()?),
                 TokenKind::Minus |
                 TokenKind::Not => {
                     let operator = self.lexer.next();

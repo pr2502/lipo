@@ -42,9 +42,10 @@ where
             notes: self.notes(),
         };
 
-        let mut stderr = StandardStream::stderr(ColorChoice::Auto);
-        writeln!(&mut stderr).unwrap();
-        term::emit(&mut stderr, &term::Config::default(), &file, &diagnostic).unwrap();
+        let stdout = StandardStream::stdout(ColorChoice::Auto);
+        let mut stdout = stdout.lock();
+        writeln!(&mut stdout).unwrap();
+        term::emit(&mut stdout, &term::Config::default(), &file, &diagnostic).unwrap();
     }
 }
 

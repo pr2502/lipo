@@ -81,9 +81,7 @@ impl SourceDebug for LetItem {
 impl SourceDebug for Statement {
     fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            // Statement::Expr(inner) => inner.fmt(source, f),
             Statement::For(inner) => inner.fmt(source, f),
-            Statement::If(inner) => inner.fmt(source, f),
             Statement::Assert(inner) => inner.fmt(source, f),
             Statement::Print(inner) => inner.fmt(source, f),
             Statement::Return(inner) => inner.fmt(source, f),
@@ -108,18 +106,6 @@ impl SourceDebug for ForStmt {
             .field("iter", &self.iter.wrap(source))
             .field("body", &self.body.wrap(source))
             .finish()
-    }
-}
-
-impl SourceDebug for IfStmt {
-    fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut w = f.debug_struct("If");
-        w.field("pred", &self.pred.wrap(source));
-        w.field("then", &self.body.wrap(source));
-        if let Some(else_branch) = &self.else_branch {
-            w.field("else", &else_branch.body.wrap(source));
-        }
-        w.finish()
     }
 }
 
@@ -172,6 +158,7 @@ impl SourceDebug for Expression {
             Expression::Field(inner) => inner.fmt(source, f),
             Expression::Group(inner) => inner.fmt(source, f),
             Expression::Block(inner) => inner.fmt(source, f),
+            Expression::If(inner) => inner.fmt(source, f),
             Expression::Call(inner) => inner.fmt(source, f),
             Expression::Primary(inner) => inner.fmt(source, f),
         }
@@ -211,6 +198,18 @@ impl SourceDebug for GroupExpr {
         } else {
             f.write_str("Unit")
         }
+    }
+}
+
+impl SourceDebug for IfExpr {
+    fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut w = f.debug_struct("If");
+        w.field("pred", &self.pred.wrap(source));
+        w.field("then", &self.body.wrap(source));
+        if let Some(else_branch) = &self.else_branch {
+            w.field("else", &else_branch.body.wrap(source));
+        }
+        w.finish()
     }
 }
 

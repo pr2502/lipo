@@ -58,7 +58,6 @@ impl Spanned for Statement {
     fn span(&self) -> FreeSpan {
         match self {
             Statement::For(inner) => inner.span(),
-            Statement::If(inner) => inner.span(),
             Statement::Assert(inner) => inner.span(),
             Statement::Print(inner) => inner.span(),
             Statement::Return(inner) => inner.span(),
@@ -80,23 +79,6 @@ impl Spanned for Expr {
 impl Spanned for ForStmt {
     fn span(&self) -> FreeSpan {
         join(self.for_tok.span, self.body.span())
-    }
-}
-
-impl Spanned for IfStmt {
-    fn span(&self) -> FreeSpan {
-        join(
-            self.if_tok.span,
-            self.else_branch
-                .as_ref().map(Spanned::span)
-                .unwrap_or_else(|| self.body.span()),
-        )
-    }
-}
-
-impl Spanned for ElseBranch {
-    fn span(&self) -> FreeSpan {
-        join(self.else_tok.span, self.body.span())
     }
 }
 
@@ -138,6 +120,7 @@ impl Spanned for Expression {
             Expression::Field(inner) => inner.span(),
             Expression::Group(inner) => inner.span(),
             Expression::Block(inner) => inner.span(),
+            Expression::If(inner) => inner.span(),
             Expression::Call(inner) => inner.span(),
             Expression::Primary(inner) => inner.span(),
         }
@@ -167,6 +150,24 @@ impl Spanned for GroupExpr {
         join(self.left_paren_tok.span, self.right_paren_tok.span)
     }
 }
+
+impl Spanned for IfExpr {
+    fn span(&self) -> FreeSpan {
+        join(
+            self.if_tok.span,
+            self.else_branch
+                .as_ref().map(Spanned::span)
+                .unwrap_or_else(|| self.body.span()),
+        )
+    }
+}
+
+impl Spanned for ElseBranch {
+    fn span(&self) -> FreeSpan {
+        join(self.else_tok.span, self.body.span())
+    }
+}
+
 
 impl Spanned for CallExpr {
     fn span(&self) -> FreeSpan {

@@ -383,7 +383,6 @@ impl<'alloc> Emitter<'alloc> {
     fn statement(&mut self, stmt: &Statement) {
         match stmt {
             Statement::For(for_stmt) => self.for_stmt(for_stmt),
-            Statement::If(if_stmt) => self.if_stmt(if_stmt),
             Statement::Assert(assert_stmt) => self.assert_stmt(assert_stmt),
             Statement::Print(print_stmt) => self.print_stmt(print_stmt),
             Statement::Return(return_stmt) => self.return_stmt(return_stmt),
@@ -396,27 +395,6 @@ impl<'alloc> Emitter<'alloc> {
 
     fn for_stmt(&mut self, _for_stmt: &ForStmt) {
         todo!()
-    }
-
-    fn if_stmt(&mut self, if_stmt: &IfStmt) {
-        // if <pred>
-        self.expression(&if_stmt.pred);
-        let then_jump = self.emit(OpCode::JumpIfFalse { offset: DUMMY }, if_stmt.if_tok.span);
-
-        // then
-        self.emit(OpCode::Pop, if_stmt.if_tok.span);
-        self.block(&if_stmt.body);
-        let else_jump = self.emit(OpCode::Jump { offset: DUMMY }, if_stmt.if_tok.span);
-
-        // else
-        self.patch_jump(then_jump);
-        self.emit(OpCode::Pop, if_stmt.if_tok.span);
-        if let Some(else_branch) = &if_stmt.else_branch {
-            self.block(&else_branch.body);
-        }
-
-        // end
-        self.patch_jump(else_jump);
     }
 
     fn assert_stmt(&mut self, assert_stmt: &AssertStmt) {
@@ -493,6 +471,7 @@ impl<'alloc> Emitter<'alloc> {
             Expression::Field(field_expr) => self.field_expr(field_expr),
             Expression::Group(group_expr) => self.group_expr(group_expr),
             Expression::Block(block) => self.block(block),
+            Expression::If(if_expr) => self.if_expr(if_expr),
             Expression::Call(call_expr) => self.call_expr(call_expr),
             Expression::Primary(primary_expr) => self.primary_expr(primary_expr),
         }
@@ -641,6 +620,29 @@ impl<'alloc> Emitter<'alloc> {
         } else {
             self.emit(OpCode::Unit, group_expr.span());
         }
+    }
+
+    fn if_expr(&mut self, if_expr: &IfExpr) {
+        // if <pred>
+        self.expression(&if_expr.pred);
+        let then_jump = self.emit(OpCode::JumpIfFalse { offset: DUMMY }, if_expr.if_tok.span);
+
+        // then
+        self.emit(OpCode::Pop, if_expr.if_tok.span);
+        self.block(&if_expr.body);
+        let else_jump = self.emit(OpCode::Jump { offset: DUMMY }, if_expr.if_tok.span);
+
+        // else
+        self.patch_jump(then_jump);
+        self.emit(OpCode::Pop, if_expr.if_tok.span);
+        if let Some(else_branch) = &if_expr.else_branch {
+            self.block(&else_branch.body);
+        } else {
+            self.emit(OpCode::Unit, if_expr.span().shrink_to_hi());
+        }
+
+        // end
+        self.patch_jump(else_jump);
     }
 
     fn call_expr(&mut self, call_expr: &CallExpr) {

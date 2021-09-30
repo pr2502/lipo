@@ -14,21 +14,26 @@ fn init() {
     });
 }
 
+macro_rules! if_ok {
+    ( (Ok $($_:tt)*) $($tt:tt)* ) => { $($tt)* };
+    ( (Err $($_:tt)*) $($__:tt)* ) => {};
+}
+
 macro_rules! parse {
-    ( @$alloc:ident, $code:expr, $res:pat ) => {{
+    ( @$alloc:ident, $code:expr, $($res:tt)* ) => {{
         init();
 
         let src = unindent::unindent(&$code);
         let src = String::new_owned(src.into(), &$alloc);
         let ast = parse(src);
 
-        if std::env::var("RUST_LOG").is_ok() {
+        if_ok! { ($($res)*)
             if let Err(err) = &ast {
                 err.report(&src);
             }
         }
 
-        std::assert_matches::assert_matches!(ast, $res);
+        std::assert_matches::assert_matches!(ast, $($res)*);
 
         ast
     }};
@@ -36,14 +41,14 @@ macro_rules! parse {
     (
         $(#[$m:meta])*
         $name:ident,
-        $code:literal
-        $(, $res:pat)? $(,)?
+        $code:literal,
+        $($res:tt)*
     ) => {
         $(#[$m])*
         #[test]
         fn $name() {
             let alloc = Alloc::new();
-            let _ = parse!(@alloc, $code, res!($($res)*));
+            let _ = parse!(@alloc, $code, $($res)*);
         }
     };
 }
@@ -52,6 +57,7 @@ macro_rules! compile {
     ( @$alloc:ident, $code:expr, $($res:tt)* ) => {{
         let ast = parse!(@$alloc, $code, Ok(_)).unwrap();
 
+        #[allow(unused_variables)]
         let source = ast.source;
         let script = compile(ast, &$alloc);
 
@@ -60,7 +66,7 @@ macro_rules! compile {
         let res = match &script {
             Ok(script) => Ok(*script),
             Err(e) => {
-                if std::env::var("RUST_LOG").is_ok() {
+                if_ok! { ($($res)*)
                     for err in e.iter() {
                         err.report(&source);
                     }
@@ -95,7 +101,7 @@ macro_rules! run {
         let vm = VM::new(script, &$alloc);
         let res = vm.run();
 
-        if std::env::var("RUST_LOG").is_ok() {
+        if_ok! { ($($res)*)
             if let Err(err) = &res {
                 let src = unindent::unindent($code);
                 err.report(&src);
@@ -196,10 +202,10 @@ run! {
     "
         if () {
             assert false;
-        }
+        };
         if true {
             assert true;
-        }
+        };
     ",
     Ok(_),
 }
@@ -212,7 +218,7 @@ run! {
             assert false;
         } else {
             a = true;
-        }
+        };
         assert a;
     ",
     Ok(_),
@@ -226,7 +232,7 @@ run! {
             b = true;
         } else {
             assert false;
-        }
+        };
         assert b;
     ",
     Ok(_),
@@ -416,7 +422,7 @@ compile! {
     "
         if true {
             let a = 1;
-        }
+        };
         a;
     ",
     Err([e]) if e.is::<UndefinedName>(),
@@ -447,6 +453,22 @@ run! {
             a + b
         };
         assert a == 3;
+    ",
+    Ok(_),
+}
+
+run! {
+    if_expr,
+    "
+        let a = if true { 1 } else { 0 };
+        let b = if false { 1 } else { 0 };
+        assert a == 1;
+        assert b == 0;
+
+        let c = if true { 1 };
+        let d = if false { 1 };
+        assert c == 1;
+        assert d == ();
     ",
     Ok(_),
 }
