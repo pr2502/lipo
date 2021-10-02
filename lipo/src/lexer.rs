@@ -31,7 +31,7 @@ pub enum TokenKind {
     // Literals
     #[regex(r"[a-zA-Z_][a-zA-Z_0-9]*")]
     Identifier,
-    #[regex(r#""[^"]*""#)]
+    #[regex(r#"[a-z]?#*"[^"]*""#, string_lit)]
     String,
     #[regex(r"[0-9][0-9_]*")]
     #[regex(r"[0-9]+\.[0-9]*")]
@@ -65,6 +65,38 @@ pub enum TokenKind {
     #[regex(r"[ \t\n\r]+", skip)] // whitespace
     #[regex(r"//[^\n]*", skip)] // comments
     Error,
+}
+
+/// Lex string literals with `#` delimiters
+fn string_lit(lex: &mut logos::Lexer<TokenKind>) {
+    let matched = lex.slice();
+
+    // Skip the modifier char
+    let matched = match matched.as_bytes() {
+        [b'a'..=b'z', ..] => &matched[1..],
+        _ => matched,
+    };
+
+    // The token regex starts with `#*"` so it must contain a `"` to match
+    let prefix_hashes = matched.find(|c| c == '"').unwrap();
+
+    if prefix_hashes == 0 {
+        return;
+    }
+
+    if lex.remainder().starts_with(&matched[..prefix_hashes]) {
+        lex.bump(prefix_hashes);
+        return;
+    }
+
+    let terminator = String::with_capacity(prefix_hashes + 1) + "\"" + &matched[..prefix_hashes];
+
+    if let Some(position) = lex.remainder().find(&terminator) {
+        lex.bump(position + prefix_hashes + 1); // +1 for the '"'
+    } else {
+        // No string terminator found, eat the rest of the input, let the parser report an error
+        lex.bump(lex.remainder().len());
+    }
 }
 
 impl Display for TokenKind {

@@ -35,9 +35,9 @@ impl Spanned for FnItem {
 impl Spanned for FnParam {
     fn span(&self) -> FreeSpan {
         if let Some(mut_tok) = &self.mut_tok {
-            join(mut_tok.span, self.name.token.span)
+            join(mut_tok.span, self.name.span)
         } else {
-            self.name.token.span
+            self.name.span
         }
     }
 }
@@ -122,6 +122,7 @@ impl Spanned for Expression {
             Expression::Block(inner) => inner.span(),
             Expression::If(inner) => inner.span(),
             Expression::Call(inner) => inner.span(),
+            Expression::String(inner) => inner.span(),
             Expression::Primary(inner) => inner.span(),
         }
     }
@@ -141,7 +142,7 @@ impl Spanned for UnaryExpr {
 
 impl Spanned for FieldExpr {
     fn span(&self) -> FreeSpan {
-        join(self.expr.span(), self.field.span())
+        join(self.expr.span(), self.field.span)
     }
 }
 
@@ -181,8 +182,11 @@ impl Spanned for PrimaryExpr {
     }
 }
 
-impl Spanned for Identifier {
+impl Spanned for StringExpr {
     fn span(&self) -> FreeSpan {
-        self.token.span
+        join(
+            self.modifier_span.unwrap_or(self.open_delim_span),
+            self.close_delim_span,
+        )
     }
 }

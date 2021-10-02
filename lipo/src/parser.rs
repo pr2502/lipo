@@ -1,7 +1,10 @@
 use crate::builtins::String;
 use crate::diagnostic::{Diagnostic, Label, Severity};
 use crate::lexer::{Lexer, Token, TokenKind};
+use crate::span::FreeSpan;
 use crate::ObjectRef;
+use logos::Logos;
+use std::mem;
 
 
 pub mod ast;
@@ -30,6 +33,12 @@ pub enum ParserError {
     ExpectedInfixOrPostfixOperator {
         found: Token,
     },
+    UnterminatedStringExpression {
+        span: FreeSpan,
+    },
+    InvalidEscape {
+        span: FreeSpan,
+    },
 }
 
 impl Diagnostic for ParserError {
@@ -38,28 +47,40 @@ impl Diagnostic for ParserError {
     }
 
     fn message(&self) -> std::string::String {
-        // TODO it's not great that every parser error boils down to "unexpected token"
-        "unexpected token".to_string()
+        match self {
+            ParserError::UnexpectedToken { .. } |
+            ParserError::UnexpectedToken2 { .. } |
+            ParserError::ExpectedExpressionStart { .. } |
+            ParserError::ExpectedInfixOrPostfixOperator { .. } => "unexpected token".to_string(),
+            ParserError::UnterminatedStringExpression { .. } => "unterminated string".to_string(),
+            ParserError::InvalidEscape { .. } => "invalid escape or interpolation".to_string(),
+        }
     }
 
     fn labels(&self) -> Vec<Label> {
-        let found = match self {
+        match self {
             ParserError::UnexpectedToken { found, .. } |
             ParserError::UnexpectedToken2 { found, .. } |
             ParserError::ExpectedExpressionStart { found } |
-            ParserError::ExpectedInfixOrPostfixOperator { found } => found,
-        };
-        vec![
-            Label::primary(found.span, format!("unexpected {}", found.kind)),
-        ]
+            ParserError::ExpectedInfixOrPostfixOperator { found } => vec![
+                Label::primary(found.span, format!("unexpected {}", found.kind)),
+            ],
+            ParserError::UnterminatedStringExpression { span } => vec![
+                Label::primary(span.shrink_to_hi(), "unterminated string"),
+                Label::secondary(span.shrink_to_lo(), "file ends here"),
+            ],
+            ParserError::InvalidEscape { span } => vec![
+                Label::primary(span, "unrecognized escape or invalid interpolation"),
+            ],
+        }
     }
 
     fn notes(&self) -> Vec<std::string::String> {
-        vec![match self {
-            ParserError::UnexpectedToken { expected, .. } => {
+        match self {
+            ParserError::UnexpectedToken { expected, .. } => vec![
                 format!("expected {}", expected)
-            },
-            ParserError::UnexpectedToken2 { expected, .. } => {
+            ],
+            ParserError::UnexpectedToken2 { expected, .. } => vec![
                 match expected {
                     [] => unreachable!(),
                     [t] => format!("expected {}", t),
@@ -73,14 +94,16 @@ impl Diagnostic for ParserError {
                         acc
                     },
                 }
-            },
-            ParserError::ExpectedExpressionStart { .. } => {
+            ],
+            ParserError::ExpectedExpressionStart { .. } => vec![
                 "expected expression to start or continue".to_string()
-            },
-            ParserError::ExpectedInfixOrPostfixOperator { .. } => {
+            ],
+            ParserError::ExpectedInfixOrPostfixOperator { .. } => vec![
                 "expected expression to continue or end".to_string()
-            },
-        }]
+            ],
+            ParserError::UnterminatedStringExpression { .. } => vec![],
+            ParserError::InvalidEscape { .. } => vec![],
+        }
     }
 }
 
@@ -336,11 +359,11 @@ impl<'src> Parser<'src> {
                 TokenKind::This |
                 TokenKind::Super |
                 TokenKind::Number |
-                TokenKind::String |
                 TokenKind::Identifier => {
                     let token = self.lexer.next();
                     Expression::Primary(PrimaryExpr { token })
                 }
+                TokenKind::String => Expression::String(self.string_expr()?),
                 _ => {
                     let found = self.lexer.next();
                     self.error(ParserError::ExpectedExpressionStart { found })?;
@@ -462,9 +485,10 @@ impl<'src> Parser<'src> {
 
     fn name(&mut self) -> Result<Identifier> {
         let token = self.expect_next(TokenKind::Identifier)?;
-        Ok(Identifier { token })
+        Ok(Identifier { span: token.span })
     }
 }
+
 
 // # Precedence
 // Sorted from lowest binding power (lowest precedence) to highest.
@@ -527,4 +551,170 @@ fn infix_binding_power(kind: TokenKind) -> Option<(u8, u8)> {
 
         _ => return None,
     })
+}
+
+
+// String interpolation parsing
+impl<'src> Parser<'src> {
+    fn string_expr(&mut self) -> Result<StringExpr> {
+        let span = self.expect_next(TokenKind::String)?.span;
+        let slice = span.anchor(self.lexer.source()).as_str();
+
+        let (modifier, slice) = match slice.as_bytes() {
+            [modifier @ b'a'..=b'z', ..] => (Some(modifier), &slice[1..]),
+            _ => (None, slice),
+        };
+
+        // The token regex starts with `#*"` so it must contain a `"` to match
+        let hashes = slice.find('"').unwrap();
+
+        let inner_slice = match slice[(hashes + 1)..]
+            .strip_suffix(&slice[..hashes])
+            .and_then(|s| s.strip_suffix('"'))
+        {
+            Some(slice) => slice,
+            None => self.error(ParserError::UnterminatedStringExpression { span })?,
+        };
+
+        let modifier_len = modifier.is_some() as u32;
+        let hashes = hashes as u32;
+
+        let modifier_span = modifier.map(|_| FreeSpan {
+            start: span.start,
+            end: span.start + 1,
+        });
+        let open_delim_span = FreeSpan {
+            start: span.start + modifier_len,
+            end: span.start + modifier_len + hashes + 1,
+        };
+        let inner_span = FreeSpan {
+            start: open_delim_span.end,
+            end: span.end - 1 - hashes,
+        };
+        let close_delim_span = FreeSpan {
+            start: inner_span.end,
+            end: span.end,
+        };
+
+        let fragments = match modifier {
+            Some(b'r') => raw_string_fragments(inner_slice, inner_span),
+            Some(m) => todo!("error: unknown string modifier {}", *m as char),
+            None => default_string_fragments(inner_slice, inner_span)?,
+        };
+
+        Ok(StringExpr {
+            modifier_span,
+            open_delim_span,
+            fragments,
+            close_delim_span,
+        })
+    }
+}
+
+fn raw_string_fragments(slice: &str, span: FreeSpan) -> Vec<StringFragment> {
+    let unescaped = slice.to_owned();
+    vec![StringFragment::Literal { span, unescaped }]
+}
+
+
+#[derive(Logos, Debug, PartialEq, Eq, Clone, Copy)]
+enum StringPieceToken {
+    #[token(r"{{")] EscBraceOpen,
+    #[token(r"}}")] EscBraceClose,
+
+    #[regex(r"\{[^{}]*\}")] Interpolation,
+
+    #[regex(r".")] Plain,
+
+    #[error]
+    Error,
+}
+
+fn default_string_fragments(slice: &str, span: FreeSpan) -> Result<Vec<StringFragment>> {
+    use StringPieceToken::*;
+
+    let mut fragments = Vec::new();
+
+    let mut lex = logos::Lexer::<StringPieceToken>::new(slice);
+    let mut unescaped = std::string::String::with_capacity(slice.len());
+    let mut span = span.shrink_to_lo();
+
+    while let Some(tok) = lex.next() {
+        match tok {
+            EscBraceOpen => {
+                unescaped.push('{');
+                span.end += 2;
+            }
+            EscBraceClose => {
+                unescaped.push('}');
+                span.end += 2;
+            }
+            Interpolation => {
+                if !unescaped.is_empty() {
+                    let unescaped = mem::take(&mut unescaped);
+                    fragments.push(StringFragment::Literal { span, unescaped });
+                    span = span.shrink_to_hi();
+                }
+
+                let slice = lex.slice();
+                span.end += slice.len() as u32;
+
+                let interpolation = string_interpolation(slice, span)?;
+                fragments.push(interpolation);
+
+                span = span.shrink_to_hi();
+            },
+            Plain => {
+                unescaped.push_str(lex.slice());
+                span.end += 1;
+            }
+            Error => {
+                span.end += lex.slice().len() as u32;
+                return Err(ParserError::InvalidEscape { span });
+            }
+        }
+    }
+
+    if !unescaped.is_empty() {
+        let unescaped = mem::take(&mut unescaped);
+        fragments.push(StringFragment::Literal { span, unescaped });
+    }
+
+    Ok(fragments)
+}
+
+fn string_interpolation(slice: &str, span: FreeSpan) -> Result<StringFragment> {
+    // Caller is responsible for the interpolation being wrapped in `{}`
+    let slice = slice
+        .strip_prefix(r"{").unwrap()
+        .strip_suffix(r"}").unwrap();
+    let span = FreeSpan {
+        start: span.start + 1, // skip '{'
+        end: span.end - 1, // skip '}'
+    };
+
+    let ident = |len| -> Result<_> {
+        let slice = &slice[..len];
+        let mut lex = logos::Lexer::<TokenKind>::new(slice);
+        if !(matches!(lex.next(), Some(TokenKind::Identifier)) && matches!(lex.next(), None)) {
+            todo!("error: invalid identifier in string interpolation");
+        }
+        let span = FreeSpan {
+            start: span.start,
+            end: span.start + (len as u32),
+        };
+        Ok(Identifier { span })
+    };
+
+    if let Some(colon_idx) = slice.find(':') {
+        let ident = ident(colon_idx)?;
+        let fmt = Some(FreeSpan {
+            start: span.start + (colon_idx as u32),
+            end: span.end,
+        });
+        Ok(StringFragment::Interpolation { ident, fmt })
+    } else {
+        let ident = ident(slice.len())?;
+        Ok(StringFragment::Interpolation { ident, fmt: None })
+    }
 }

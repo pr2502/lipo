@@ -31,6 +31,7 @@ pub enum OpCode {
     Greater,
     Less,
     Add,
+    Concat { n: u8 },
     Subtract,
     Multiply,
     Divide,
@@ -61,6 +62,7 @@ opcodes! {
     GREATER,
     LESS,
     ADD,
+    CONCAT,
     SUBTRACT,
     MULTIPLY,
     DIVIDE,
@@ -101,6 +103,7 @@ impl OpCode {
             [Self::GREATER, rest @ .. ]   => (OpCode::Greater, rest),
             [Self::LESS, rest @ .. ]      => (OpCode::Less, rest),
             [Self::ADD, rest @ .. ]       => (OpCode::Add, rest),
+            [Self::CONCAT, x, rest @ .. ] => (OpCode::Concat { n: *x }, rest),
             [Self::SUBTRACT, rest @ .. ]  => (OpCode::Subtract, rest),
             [Self::MULTIPLY, rest @ .. ]  => (OpCode::Multiply, rest),
             [Self::DIVIDE, rest @ .. ]    => (OpCode::Divide, rest),
@@ -133,6 +136,7 @@ impl OpCode {
         code.push(self.tag());
         match self {
             OpCode::Call { args: u8_arg } |
+            OpCode::Concat { n: u8_arg } |
             OpCode::PopBlock { n: u8_arg } |
             OpCode::GetUpvalue { slot: u8_arg } => {
                 code.push(u8_arg);
@@ -171,6 +175,7 @@ impl OpCode {
             OpCode::Greater             => Self::GREATER,
             OpCode::Less                => Self::LESS,
             OpCode::Add                 => Self::ADD,
+            OpCode::Concat { .. }       => Self::CONCAT,
             OpCode::Subtract            => Self::SUBTRACT,
             OpCode::Multiply            => Self::MULTIPLY,
             OpCode::Divide              => Self::DIVIDE,
@@ -212,6 +217,7 @@ impl OpCode {
 
             // one byte argument
             OpCode::Call { .. } |
+            OpCode::Concat { .. } |
             OpCode::PopBlock { .. } |
             OpCode::GetUpvalue { .. } => 2,
 
@@ -268,6 +274,9 @@ impl OpCode {
 
             // call, pops `args`, pushes one
             OpCode::Call { args } => -isize::from(args) + 1,
+
+            // concat, pops N+2, pushes one
+            OpCode::Concat { n } => -isize::from(n) - 1,
 
             // PopBlock pops N+1
             OpCode::PopBlock { n } => -isize::from(n) - 1,

@@ -70,7 +70,7 @@ pub fn compile<'alloc>(ast: AST<'alloc>, alloc: &'alloc Alloc) -> Result<ObjectR
     };
 
     let script = Local {
-        name: Identifier { token: ast.eof },
+        name: Identifier { span: FreeSpan::zero() },
         bind_span: ast.eof.span,
         mutable: false,
         depth: 0,
@@ -143,7 +143,7 @@ impl<'alloc> Emitter<'alloc> {
 
 impl<'alloc> FnScope<'alloc> {
     fn find_local(&self, name: Identifier, source: &str) -> Option<(u16, Local)> {
-        let ident_slice = |ident: Identifier| ident.token.span.anchor(source).as_str();
+        let ident_slice = |ident: Identifier| ident.span.anchor(source).as_str();
         self.locals.iter()
             .enumerate()
             .find(|(_, loc)| ident_slice(loc.name) == ident_slice(name))
@@ -151,7 +151,7 @@ impl<'alloc> FnScope<'alloc> {
     }
 
     fn find_upvalue(&self, name: Identifier, source: &str) -> Option<(u8, Upvalue)> {
-        let ident_slice = |ident: Identifier| ident.token.span.anchor(source).as_str();
+        let ident_slice = |ident: Identifier| ident.span.anchor(source).as_str();
         self.upvalues.iter()
             .enumerate()
             .find(|(_, upval)| ident_slice(upval.name) == ident_slice(name))
@@ -163,12 +163,12 @@ impl<'alloc> Emitter<'alloc> {
     fn add_local(&mut self, name: Identifier, mutable: bool, span: FreeSpan) {
         if self.fn_scope().locals.len() >= MAX_LOCALS {
             self.error(TooManyLocals {
-                span: name.span(),
+                span: name.span,
                 limit: MAX_LOCALS,
             });
             return
         }
-        let ident_slice = |ident: Identifier| ident.token.span.anchor(&self.source).as_str();
+        let ident_slice = |ident: Identifier| ident.span.anchor(&self.source).as_str();
         let shadowing = self.fn_scope()
             .locals.iter()
             .rev()
@@ -176,8 +176,8 @@ impl<'alloc> Emitter<'alloc> {
             .find(|loc| ident_slice(loc.name) == ident_slice(name));
         if let Some(local) = shadowing.copied() {
             self.error(Shadowing {
-                shadowing_span: name.span(),
-                shadowed_span: local.name.span(),
+                shadowing_span: name.span,
+                shadowed_span: local.name.span,
             });
             return
         }
@@ -219,7 +219,7 @@ impl<'alloc> Emitter<'alloc> {
             self.error(CaptureMutable {
                 bind_span: local.bind_span,
                 closure_def_span: self.fn_scope().fndef_span,
-                capture_span: name.span(),
+                capture_span: name.span,
             });
         }
 
@@ -305,7 +305,7 @@ impl<'alloc> Emitter<'alloc> {
         // Add an immutable local into the outer fn
         self.add_local(fn_item.name, false, fn_item.span());
 
-        let name = fn_item.name.span().anchor(&self.source).as_str().into();
+        let name = fn_item.name.span.anchor(&self.source).as_str().into();
         // Reference to callee in the 0th stack slot
         let recur = Local {
             name: fn_item.name,
@@ -346,8 +346,8 @@ impl<'alloc> Emitter<'alloc> {
 
         for upval in &function.upvalues {
             match upval.reference {
-                UpvalueRef::Local(slot) => self.emit(OpCode::GetLocal { slot }, upval.name.span()),
-                UpvalueRef::Upvalue(slot) => self.emit(OpCode::GetUpvalue { slot }, upval.name.span()),
+                UpvalueRef::Local(slot) => self.emit(OpCode::GetLocal { slot }, upval.name.span),
+                UpvalueRef::Upvalue(slot) => self.emit(OpCode::GetUpvalue { slot }, upval.name.span),
             };
         }
 
@@ -473,6 +473,7 @@ impl<'alloc> Emitter<'alloc> {
             Expression::Block(block) => self.block(block),
             Expression::If(if_expr) => self.if_expr(if_expr),
             Expression::Call(call_expr) => self.call_expr(call_expr),
+            Expression::String(string_expr) => self.string_expr(string_expr),
             Expression::Primary(primary_expr) => self.primary_expr(primary_expr),
         }
     }
@@ -484,7 +485,7 @@ impl<'alloc> Emitter<'alloc> {
             // For now only allow assigning to an identifier
             if let Expression::Primary(primary) = &*binary_expr.lhs {
                 if primary.token.kind == TokenKind::Identifier {
-                    let ident = Identifier { token: primary.token };
+                    let ident = Identifier { span: primary.token.span };
                     self.expression(&binary_expr.rhs);
                     if let Some((slot, local)) = self.resolve_local(ident) {
                         if !local.mutable {
@@ -498,7 +499,7 @@ impl<'alloc> Emitter<'alloc> {
                         todo!() // error: we can't assign upvalues
                     } else {
                         self.error(UndefinedName {
-                            name_span: ident.span(),
+                            name_span: ident.span,
                         });
                     }
                     return
@@ -662,6 +663,49 @@ impl<'alloc> Emitter<'alloc> {
         self.emit(OpCode::Call { args }, call_expr.span());
     }
 
+    fn string_expr(&mut self, string_expr: &StringExpr) {
+        let fragments = &string_expr.fragments;
+
+        if fragments.is_empty() {
+            self.string_frag_literal("", string_expr.span());
+            return;
+        }
+
+        if let [StringFragment::Literal { unescaped, .. }] = fragments.as_slice() {
+            self.string_frag_literal(unescaped, string_expr.span());
+            return;
+        }
+        for frag in fragments {
+            match frag {
+                StringFragment::Literal { span, unescaped } => self.string_frag_literal(unescaped, *span),
+                StringFragment::Interpolation { ident, fmt: None } => {
+                    self.identifier(*ident);
+                    // TODO format with empty fmt
+                }
+                StringFragment::Interpolation { ident: _, fmt: Some(_fmt) } => {
+                    todo!("string interpolation fmt");
+                }
+            }
+        }
+
+        if fragments.len() == 1 {
+            // No need to concat 1 String
+            return;
+        }
+
+        let n = (fragments.len() - 2).try_into()
+            .expect("error: too many string fragments");
+
+        self.emit(OpCode::Concat { n }, string_expr.span());
+    }
+
+    fn string_frag_literal(&mut self, unescaped: &str, span: FreeSpan) {
+        let string = String::new(unescaped, self.alloc);
+        let value = Value::from(string);
+        let key = self.insert_constant(value);
+        self.emit(OpCode::Constant { key }, span);
+    }
+
     fn primary_expr(&mut self, primary_expr: &PrimaryExpr) {
         let op = primary_expr.token.kind;
         let span = primary_expr.span();
@@ -682,11 +726,9 @@ impl<'alloc> Emitter<'alloc> {
             TokenKind::Number => {
                 self.float(primary_expr);
             }
-            TokenKind::String => {
-                self.string(primary_expr);
-            }
             TokenKind::Identifier => {
-                self.identifier(primary_expr);
+                let ident = Identifier { span };
+                self.identifier(ident);
             }
             _ => unreachable!()
         }
@@ -709,26 +751,14 @@ impl<'alloc> Emitter<'alloc> {
         }
     }
 
-    fn string(&mut self, primary: &PrimaryExpr) {
-        let span = primary.token.span;
-        let slice = span.anchor(&self.source).as_str()
-            .strip_prefix('"').unwrap()
-            .strip_suffix('"').unwrap();
-        let string = String::new(slice, self.alloc);
-        let value = Value::from(string);
-        let key = self.insert_constant(value);
-        self.emit(OpCode::Constant { key }, span);
-    }
-
-    fn identifier(&mut self, primary: &PrimaryExpr) {
-        let ident = Identifier { token: primary.token };
+    fn identifier(&mut self, ident: Identifier) {
         if let Some((slot, _)) = self.resolve_local(ident) {
-            self.emit(OpCode::GetLocal { slot }, ident.span());
+            self.emit(OpCode::GetLocal { slot }, ident.span);
         } else if let Some((slot, _)) = self.resolve_upvalue(ident) {
-            self.emit(OpCode::GetUpvalue { slot }, ident.span());
+            self.emit(OpCode::GetUpvalue { slot }, ident.span);
         } else {
             self.error(UndefinedName {
-                name_span: ident.span()
+                name_span: ident.span
             });
         }
     }

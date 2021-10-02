@@ -9,6 +9,7 @@
 
 use crate::builtins::String;
 use crate::lexer::Token;
+use crate::span::FreeSpan;
 use crate::ObjectRef;
 
 
@@ -141,6 +142,7 @@ pub enum Expression {
     Block(Block),
     If(IfExpr),
     Call(CallExpr),
+    String(StringExpr),
     Primary(PrimaryExpr),
 }
 
@@ -195,6 +197,24 @@ pub struct CallExpr {
     pub right_paren_tok: Token,
 }
 
+pub struct StringExpr {
+    pub modifier_span: Option<FreeSpan>,
+    pub open_delim_span: FreeSpan,
+    pub fragments: Vec<StringFragment>,
+    pub close_delim_span: FreeSpan,
+}
+
+pub enum StringFragment {
+    Literal {
+        span: FreeSpan,
+        unescaped: std::string::String,
+    },
+    Interpolation {
+        ident: Identifier,
+        fmt: Option<FreeSpan>,
+    },
+}
+
 // PrimaryExpr can have the following tokens:
 // - True, False
 // - This, Super
@@ -227,5 +247,5 @@ impl<D, I> Default for Delimited<D, I> {
 /// Parser ensures `self.token.kind == TokenKind::Ident`.
 #[derive(Clone, Copy)]
 pub struct Identifier {
-    pub token: Token,
+    pub span: FreeSpan,
 }

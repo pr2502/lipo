@@ -146,6 +146,7 @@ impl<'alloc> VM<'alloc> {
                 OpCode::GREATER         => self.op_greater()?,
                 OpCode::LESS            => self.op_less()?,
                 OpCode::ADD             => self.op_add()?,
+                OpCode::CONCAT          => self.op_concat()?,
                 OpCode::SUBTRACT        => self.op_subtract()?,
                 OpCode::MULTIPLY        => self.op_multiply()?,
                 OpCode::DIVIDE          => self.op_divide()?,
@@ -294,16 +295,35 @@ impl<'alloc> VM<'alloc> {
                     }));
                 }
             }
-        } else if let (Some(lhs), Some(rhs)) = (lhs.downcast::<String>(), rhs.downcast::<String>()) {
-            let sum = lhs.as_str().to_string() + rhs.as_str();
-            Value::from(String::new_owned(sum.into_boxed_str(), self.alloc))
         } else {
             return Err(VmError::new(TypeError {
                 span: self.chunk().span(self.offset() - OpCode::Add.len()),
-                msg: "addition only supported on Numbers and Strings",
+                msg: "addition only supported on Numbers",
             }));
         };
         self.push(result);
+        Ok(())
+    }
+
+    fn op_concat(&mut self) -> Result<(), VmError> {
+        let strings = usize::from(self.read_u8()) + 2;
+
+        let mut buffer = std::string::String::new();
+
+        let from = self.stack.len().checked_sub(strings)
+            .expect("peek past the start of stack");
+        for value in self.stack.drain(from..) {
+            if let Some(string) = value.downcast::<String>() {
+                buffer.push_str(&string);
+            } else {
+                // Should be unreachable since only StringExpr compiles to OpCode::Concat and it
+                // converts all interpolations to String. But it's not yet in ChunkBuf::check.
+                unreachable!("tried to concat non-String Values");
+            }
+        }
+
+        let value = Value::from(String::new_owned(buffer.into_boxed_str(), self.alloc));
+        self.push(value);
         Ok(())
     }
 

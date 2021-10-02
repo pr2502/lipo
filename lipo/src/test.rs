@@ -144,7 +144,8 @@ run! {
     r#"
         assert "string" == "string";
         assert "string1" /= "string2";
-        assert "foo" + "bar" == "foobar";
+        let f = "foo"; let b = "bar";
+        assert "{f}{b}" == "foobar";
     "#,
     Ok(_),
 }
@@ -470,5 +471,27 @@ run! {
         assert c == 1;
         assert d == ();
     ",
+    Ok(_),
+}
+
+run! {
+    string_literals,
+    r####"
+        print ##"foo"##;
+        print "bar";
+        print ###"baz"###;
+        print ##"a"#b"##;
+    "####,
+    Ok(_),
+}
+
+run! {
+    string_interpolation,
+    r#"
+        let _ = "";
+        let a = "a";
+        let b = "b";
+        assert "{a}{{abcd}}{b}" == r"a{abcd}b";
+    "#,
     Ok(_),
 }
