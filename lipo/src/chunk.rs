@@ -49,9 +49,8 @@ impl<'alloc> Chunk<'alloc> {
         self.spans[idx]
     }
 
-    pub fn get_constant(&self, key: ConstKey) -> Option<Value<'alloc>> {
-        let ConstKey { index } = key;
-        self.constants.get(usize::from(index)).copied()
+    pub fn get_constant(&self, key: u16) -> Option<Value<'alloc>> {
+        self.constants.get(usize::from(key)).copied()
     }
 }
 
@@ -107,7 +106,7 @@ pub struct ChunkBuf<'alloc> {
     constants: Vec<Value<'alloc>>,
 
     /// Deduplicating map for constant pool
-    constant_hash: HashMap<Value<'alloc>, ConstKey>,
+    constant_hash: HashMap<Value<'alloc>, u16>,
 
     /// Source code
     source: ObjectRef<'alloc, String>,
@@ -208,7 +207,7 @@ impl<'alloc> ChunkBuf<'alloc> {
                     _ => None,
                 }
             })
-            .any(|key| usize::from(key.index) >= self.constants.len());
+            .any(|key| usize::from(key) >= self.constants.len());
         assert!(
             !missing_constants,
             "constant index out of range",
@@ -226,7 +225,7 @@ impl<'alloc> ChunkBuf<'alloc> {
                     _ => None,
                 }
             })
-            .any(|fn_key| self.constants[usize::from(fn_key.index)].downcast::<Function>().is_none());
+            .any(|fn_key| self.constants[usize::from(fn_key)].downcast::<Function>().is_none());
         assert!(
             !wrong_constant_types,
             "constant has an incorrect type",
@@ -343,40 +342,12 @@ impl<'alloc> ChunkBuf<'alloc> {
 
         self.emit(OpCode::Loop { offset }, span);
     }
-}
 
-
-#[derive(Clone, Copy, PartialEq)]
-pub struct ConstKey {
-    /// Index into the constant pool
-    index: u16,
-}
-
-impl ConstKey {
-    pub fn to_le_bytes(self) -> [u8; 2] {
-        self.index.to_le_bytes()
-    }
-
-    pub fn from_le_bytes(bytes: [u8; 2]) -> ConstKey {
-        ConstKey {
-            index: u16::from_le_bytes(bytes),
-        }
-    }
-}
-
-impl Debug for ConstKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "#{}", self.index)
-    }
-}
-
-impl<'alloc> ChunkBuf<'alloc> {
-    pub fn insert_constant(&mut self, value: Value<'alloc>) -> ConstKey {
+    pub fn insert_constant(&mut self, value: Value<'alloc>) -> u16 {
         match self.constant_hash.entry(value) {
             Entry::Vacant(e) => {
-                let index = self.constants.len();
-                let index = index.try_into().expect("constant pool size limit reached");
-                let key = ConstKey { index };
+                let key = self.constants.len();
+                let key = key.try_into().expect("constant pool size limit reached");
                 self.constants.push(value);
                 e.insert(key);
                 key

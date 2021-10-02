@@ -1,5 +1,5 @@
 use crate::builtins::{Closure, Float, Function, NativeFunction, String};
-use crate::chunk::{Chunk, ConstKey};
+use crate::chunk::Chunk;
 use crate::opcode::OpCode;
 use crate::Value;
 use crate::{Alloc, ObjectRef, Trace};
@@ -66,7 +66,7 @@ impl<'alloc> VM<'alloc> {
         &self.call_stack.last().unwrap().closure.function.chunk
     }
 
-    fn get_constant(&self, key: ConstKey) -> Value<'alloc> {
+    fn get_constant(&self, key: u16) -> Value<'alloc> {
         match self.chunk().get_constant(key) {
             Some(constant) => constant,
             None => {
@@ -115,12 +115,6 @@ impl<'alloc> VM<'alloc> {
         let a = self.read_u8();
         let b = self.read_u8();
         u16::from_le_bytes([a, b])
-    }
-
-    fn read_const_key(&mut self) -> ConstKey {
-        let a = self.read_u8();
-        let b = self.read_u8();
-        ConstKey::from_le_bytes([a, b])
     }
 
     pub fn run(mut self) -> Result<(), VmError> {
@@ -179,7 +173,7 @@ impl<'alloc> VM<'alloc> {
     // Instruction implementation
 
     fn op_constant(&mut self) {
-        let key = self.read_const_key();
+        let key = self.read_u16();
 
         let constant = self.get_constant(key);
         self.push(constant);
@@ -583,7 +577,7 @@ impl<'alloc> VM<'alloc> {
     }
 
     fn op_closure(&mut self) {
-        let key = self.read_const_key();
+        let key = self.read_u16();
         let upvals = usize::from(self.read_u8());
 
         let constant = self.get_constant(key);

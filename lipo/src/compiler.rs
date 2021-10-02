@@ -1,11 +1,11 @@
 use crate::builtins::{Closure, Float, Function, String};
-use crate::chunk::{ChunkBuf, ConstKey, LoopPoint, PatchPlace};
+use crate::chunk::{ChunkBuf, LoopPoint, PatchPlace};
 use crate::lexer::TokenKind;
-use crate::{Alloc, ObjectRef};
 use crate::opcode::OpCode;
 use crate::parser::ast::*;
 use crate::span::{FreeSpan, Spanned};
 use crate::value::Value;
+use crate::{Alloc, ObjectRef};
 
 
 pub mod error;
@@ -136,7 +136,7 @@ impl<'alloc> Emitter<'alloc> {
         self.fn_scope_mut().chunk.emit_loop(loop_point, span);
     }
 
-    fn insert_constant(&mut self, value: Value<'alloc>) -> ConstKey {
+    fn insert_constant(&mut self, value: Value<'alloc>) -> u16 {
         self.fn_scope_mut().chunk.insert_constant(value)
     }
 }

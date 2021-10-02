@@ -1,6 +1,3 @@
-use crate::chunk::ConstKey;
-
-
 /// Helper macro for defining u8 `const`s with unique values
 macro_rules! opcodes {
     ( $( $ops:ident ),+ $(,)? ) => {
@@ -18,7 +15,7 @@ macro_rules! opcodes {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum OpCode {
-    Constant { key: ConstKey },
+    Constant { key: u16 },
     Unit,
     True,
     False,
@@ -44,7 +41,7 @@ pub enum OpCode {
     JumpIfFalse { offset: u16 },
     Loop { offset: u16 },
     Call { args: u8 },
-    Closure { fn_key: ConstKey, upvals: u8 },
+    Closure { fn_key: u16, upvals: u8 },
     Return,
 }
 
@@ -83,7 +80,7 @@ impl OpCode {
     pub fn decode(code: &[u8]) -> Option<(OpCode, &[u8])> {
         Some(match code {
             [Self::CONSTANT, x, y, rest @ .. ]  => {
-                (OpCode::Constant { key: ConstKey::from_le_bytes([*x, *y]) }, rest)
+                (OpCode::Constant { key: u16::from_le_bytes([*x, *y]) }, rest)
             }
             [Self::UNIT, rest @ .. ]      => (OpCode::Unit, rest),
             [Self::TRUE, rest @ .. ]      => (OpCode::True, rest),
@@ -125,7 +122,7 @@ impl OpCode {
             }
             [Self::CALL, x, rest @ .. ] => (OpCode::Call { args: *x }, rest),
             [Self::CLOSURE, x, y, z, rest @ .. ]  => {
-                (OpCode::Closure { fn_key: ConstKey::from_le_bytes([*x, *y]), upvals: *z }, rest)
+                (OpCode::Closure { fn_key: u16::from_le_bytes([*x, *y]), upvals: *z }, rest)
             }
             [Self::RETURN, rest @ .. ]    => (OpCode::Return, rest),
             _ => return None,
@@ -141,9 +138,7 @@ impl OpCode {
             OpCode::GetUpvalue { slot: u8_arg } => {
                 code.push(u8_arg);
             }
-            OpCode::Constant { key: key_arg } => {
-                code.extend(key_arg.to_le_bytes());
-            }
+            OpCode::Constant { key: u16_arg } |
             OpCode::GetLocal { slot: u16_arg } |
             OpCode::SetLocal { slot: u16_arg } |
             OpCode::Jump { offset: u16_arg } |
