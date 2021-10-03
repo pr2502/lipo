@@ -51,7 +51,7 @@ pub struct FnItem {
     pub fn_tok: Token,
     pub name: Identifier,
     pub left_paren_tok: Token,
-    pub parameters: Delimited<Token, FnParam>,
+    pub parameters: Delimited<Comma, FnParam>,
     pub right_paren_tok: Token,
     pub body: Block,
 }
@@ -122,6 +122,22 @@ pub struct WhileStmt {
     pub body: Block,
 }
 
+pub struct RecordExpr {
+    pub left_brace_tok: Token,
+    pub entries: Delimited<Comma, RecordEntry>,
+    pub right_brace_tok: Token,
+}
+
+pub struct RecordEntry {
+    pub entry: Identifier,
+    pub value: Option<EntryInit>,
+}
+
+pub struct EntryInit {
+    pub colon_tok: Token,
+    pub init: Box<Expression>,
+}
+
 pub struct Block {
     pub left_brace_tok: Token,
     pub body: Vec<Item>,
@@ -138,7 +154,10 @@ pub enum Expression {
     Binary(BinaryExpr),
     Unary(UnaryExpr),
     Field(FieldExpr),
+    Unit(UnitExpr),
     Group(GroupExpr),
+    Tuple(TupleExpr),
+    Record(RecordExpr),
     Block(Block),
     If(IfExpr),
     Call(CallExpr),
@@ -172,9 +191,20 @@ pub struct FieldExpr {
     pub field: Identifier,
 }
 
+pub struct UnitExpr {
+    pub left_paren_tok: Token,
+    pub right_paren_tok: Token,
+}
+
 pub struct GroupExpr {
     pub left_paren_tok: Token,
-    pub expr: Option<Box<Expression>>,
+    pub expr: Box<Expression>,
+    pub right_paren_tok: Token,
+}
+
+pub struct TupleExpr {
+    pub left_paren_tok: Token,
+    pub exprs: Delimited<Comma, Expression>,
     pub right_paren_tok: Token,
 }
 
@@ -193,7 +223,7 @@ pub struct ElseBranch {
 pub struct CallExpr {
     pub callee: Box<Expression>,
     pub left_paren_tok: Token,
-    pub arguments: Delimited<Token, Expression>,
+    pub arguments: Delimited<Comma, Expression>,
     pub right_paren_tok: Token,
 }
 
@@ -242,10 +272,14 @@ impl<D, I> Default for Delimited<D, I> {
     }
 }
 
-/// Wrapper around Token
-///
-/// Parser ensures `self.token.kind == TokenKind::Ident`.
+/// Specialized Token where kind == Identifier
 #[derive(Clone, Copy)]
 pub struct Identifier {
+    pub span: FreeSpan,
+}
+
+/// Specialized Token where kind == Comma
+#[derive(Clone, Copy)]
+pub struct Comma {
     pub span: FreeSpan,
 }

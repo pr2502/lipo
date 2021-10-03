@@ -1,4 +1,4 @@
-use crate::builtins::{Closure, Float, Function, NativeFunction, String};
+use crate::builtins::{Closure, Float, Function, NativeFunction, String, Tuple};
 use crate::chunk::Chunk;
 use crate::opcode::OpCode;
 use crate::Value;
@@ -146,6 +146,7 @@ impl<'alloc> VM<'alloc> {
                 OpCode::DIVIDE          => self.op_divide()?,
                 OpCode::NOT             => self.op_not()?,
                 OpCode::NEGATE          => self.op_negate()?,
+                OpCode::TUPLE           => self.op_tuple(),
                 OpCode::ASSERT          => self.op_assert()?,
                 OpCode::PRINT           => self.op_print(),
                 OpCode::JUMP            => self.op_jump(),
@@ -415,6 +416,18 @@ impl<'alloc> VM<'alloc> {
             }))?;
         self.push(value);
         Ok(())
+    }
+
+    fn op_tuple(&mut self) {
+        let len = usize::from(self.read_u8());
+
+        let from = self.stack.len().checked_sub(len)
+            .expect("peek past the start of stack");
+
+        let items = self.stack.drain(from..).collect();
+
+        let value = Value::from(Tuple::new(items, self.alloc));
+        self.push(value);
     }
 
     fn op_assert(&mut self) -> Result<(), VmError> {

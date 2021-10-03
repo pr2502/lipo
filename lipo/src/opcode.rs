@@ -34,6 +34,7 @@ pub enum OpCode {
     Divide,
     Not,
     Negate,
+    Tuple { len: u8 },
     Assert,
     Print,
     Jump { offset: u16 },
@@ -65,6 +66,7 @@ opcodes! {
     DIVIDE,
     NOT,
     NEGATE,
+    TUPLE,
     ASSERT,
     PRINT,
     JUMP,
@@ -106,6 +108,7 @@ impl OpCode {
             [Self::DIVIDE, rest @ .. ]    => (OpCode::Divide, rest),
             [Self::NOT, rest @ .. ]       => (OpCode::Not, rest),
             [Self::NEGATE, rest @ .. ]    => (OpCode::Negate, rest),
+            [Self::TUPLE, x, rest @ .. ]  => (OpCode::Tuple { len: *x }, rest),
             [Self::ASSERT, rest @ .. ]    => (OpCode::Assert, rest),
             [Self::PRINT, rest @ .. ]     => (OpCode::Print, rest),
             [Self::JUMP, x, y, rest @ .. ] => {
@@ -132,6 +135,7 @@ impl OpCode {
     pub fn encode(self, code: &mut Vec<u8>) {
         code.push(self.tag());
         match self {
+            OpCode::Tuple { len: u8_arg } |
             OpCode::Call { args: u8_arg } |
             OpCode::Concat { n: u8_arg } |
             OpCode::PopBlock { n: u8_arg } |
@@ -177,6 +181,7 @@ impl OpCode {
             OpCode::Not                 => Self::NOT,
             OpCode::Negate              => Self::NEGATE,
             OpCode::Assert              => Self::ASSERT,
+            OpCode::Tuple { .. }        => Self::TUPLE,
             OpCode::Print               => Self::PRINT,
             OpCode::Jump { .. }         => Self::JUMP,
             OpCode::JumpIfTrue { .. }   => Self::JUMP_IF_TRUE,
@@ -211,6 +216,7 @@ impl OpCode {
             OpCode::Return => 1,
 
             // one byte argument
+            OpCode::Tuple { .. } |
             OpCode::Call { .. } |
             OpCode::Concat { .. } |
             OpCode::PopBlock { .. } |
@@ -266,6 +272,9 @@ impl OpCode {
             OpCode::Subtract |
             OpCode::Multiply |
             OpCode::Divide => -1,
+
+            // tuple, pops `len`, pushes one
+            OpCode::Tuple { len } => -isize::from(len) + 1,
 
             // call, pops `args`, pushes one
             OpCode::Call { args } => -isize::from(args) + 1,

@@ -14,9 +14,12 @@ use error::*;
 use error::{CompilerError, Error};
 
 
+// Limits
 /// Maximum number of function arguments and parameters
 const MAX_ARGS: usize = u8::MAX as usize;
 const MAX_LOCALS: usize = u16::MAX as usize;
+const MAX_TUPLE_ITEMS: usize = u8::MAX as usize;
+
 
 struct Emitter<'alloc> {
     alloc: &'alloc Alloc,
@@ -469,7 +472,10 @@ impl<'alloc> Emitter<'alloc> {
             Expression::Binary(binary_expr) => self.binary_expr(binary_expr),
             Expression::Unary(unary_expr) => self.unary_expr(unary_expr),
             Expression::Field(field_expr) => self.field_expr(field_expr),
+            Expression::Unit(unit_expr) => self.unit_expr(unit_expr),
             Expression::Group(group_expr) => self.group_expr(group_expr),
+            Expression::Tuple(tuple_expr) => self.tuple_expr(tuple_expr),
+            Expression::Record(record_expr) => self.record_expr(record_expr),
             Expression::Block(block) => self.block(block),
             Expression::If(if_expr) => self.if_expr(if_expr),
             Expression::Call(call_expr) => self.call_expr(call_expr),
@@ -615,12 +621,32 @@ impl<'alloc> Emitter<'alloc> {
         todo!()
     }
 
+    fn unit_expr(&mut self, unit_expr: &UnitExpr) {
+        self.emit(OpCode::Unit, unit_expr.span());
+    }
+
     fn group_expr(&mut self, group_expr: &GroupExpr) {
-        if let Some(expr) = group_expr.expr.as_ref() {
-            self.expression(expr);
-        } else {
-            self.emit(OpCode::Unit, group_expr.span());
+        self.expression(&group_expr.expr);
+    }
+
+    fn tuple_expr(&mut self, tuple_expr: &TupleExpr) {
+        for (i, item) in tuple_expr.exprs.items.iter().enumerate() {
+            if i >= MAX_TUPLE_ITEMS {
+                self.error(TooManyTupleItems {
+                    extra_item_span: item.span(),
+                    tuple_expr_span: tuple_expr.span(),
+                    limit: MAX_ARGS,
+                });
+                return;
+            }
+            self.expression(item);
         }
+        let len = tuple_expr.exprs.items.len().try_into().unwrap();
+        self.emit(OpCode::Tuple { len }, tuple_expr.span());
+    }
+
+    fn record_expr(&mut self, _record_expr: &RecordExpr) {
+        todo!()
     }
 
     fn if_expr(&mut self, if_expr: &IfExpr) {
@@ -656,10 +682,11 @@ impl<'alloc> Emitter<'alloc> {
                     call_span: call_expr.span(),
                     limit: MAX_ARGS,
                 });
+                return;
             }
             self.expression(arg);
         }
-        let args = call_expr.arguments.items.len().try_into().unwrap_or(u8::MAX);
+        let args = call_expr.arguments.items.len().try_into().unwrap();
         self.emit(OpCode::Call { args }, call_expr.span());
     }
 

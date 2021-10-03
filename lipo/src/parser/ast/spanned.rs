@@ -118,7 +118,10 @@ impl Spanned for Expression {
             Expression::Binary(inner) => inner.span(),
             Expression::Unary(inner) => inner.span(),
             Expression::Field(inner) => inner.span(),
+            Expression::Unit(inner) => inner.span(),
             Expression::Group(inner) => inner.span(),
+            Expression::Tuple(inner) => inner.span(),
+            Expression::Record(inner) => inner.span(),
             Expression::Block(inner) => inner.span(),
             Expression::If(inner) => inner.span(),
             Expression::Call(inner) => inner.span(),
@@ -146,9 +149,27 @@ impl Spanned for FieldExpr {
     }
 }
 
+impl Spanned for UnitExpr {
+    fn span(&self) -> FreeSpan {
+        join(self.left_paren_tok.span, self.right_paren_tok.span)
+    }
+}
+
 impl Spanned for GroupExpr {
     fn span(&self) -> FreeSpan {
         join(self.left_paren_tok.span, self.right_paren_tok.span)
+    }
+}
+
+impl Spanned for TupleExpr {
+    fn span(&self) -> FreeSpan {
+        join(self.left_paren_tok.span, self.right_paren_tok.span)
+    }
+}
+
+impl Spanned for RecordExpr {
+    fn span(&self) -> FreeSpan {
+        join(self.left_brace_tok.span, self.right_brace_tok.span)
     }
 }
 

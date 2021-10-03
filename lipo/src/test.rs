@@ -495,3 +495,24 @@ run! {
     "#,
     Ok(_),
 }
+
+run! {
+    record,
+    "
+        let block = { (); };
+        let record = { block, };
+    ",
+    Ok(_),
+}
+
+run! {
+    tuple,
+    "
+        let parens = (1);
+        let tuple = (1,);
+
+        print parens;
+        print tuple;
+    ",
+    Ok(_),
+}

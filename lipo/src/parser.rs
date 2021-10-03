@@ -107,7 +107,6 @@ impl Diagnostic for ParserError {
     }
 }
 
-
 struct Parser<'src> {
     lexer: Lexer<'src>,
 }
@@ -152,15 +151,6 @@ impl<'src> Parser<'src> {
 
     fn peek_kind(&self) -> TokenKind {
         self.lexer.peek().kind
-    }
-
-    fn match_peek(&self, kind: TokenKind) -> Option<Token> {
-        let token = self.lexer.peek();
-        if token.kind == kind {
-            Some(token)
-        } else {
-            None
-        }
     }
 
     fn match_next(&mut self, kind: TokenKind) -> Option<Token> {
@@ -216,7 +206,9 @@ impl<'src> Parser<'src> {
             match self.peek_kind() {
                 TokenKind::RightParen => break,
                 TokenKind::Comma => {
-                    parameters.delim.push(self.lexer.next());
+                    let comma_tok = self.expect_next(TokenKind::Comma).unwrap();
+                    let comma = Comma { span: comma_tok.span };
+                    parameters.delim.push(comma);
                 }
                 _ => {
                     self.error(ParserError::UnexpectedToken2 {
@@ -250,7 +242,7 @@ impl<'src> Parser<'src> {
     }
 
     fn for_stmt(&mut self) -> Result<ForStmt> {
-        // our for doesn't make sense until we have working function calls
+        // our for doesn't make sense until we have working methods calls
         todo!()
     }
 
@@ -286,6 +278,37 @@ impl<'src> Parser<'src> {
         Ok(WhileStmt { while_tok, pred, body })
     }
 
+    fn block_or_record(&mut self) -> Result<Expression> {
+        use TokenKind as T;
+
+        // LeftBrace can start either a Block or a Record expression
+        let mut lex2 = self.lexer.clone();
+        let _0 = lex2.next().kind;
+        let _1 = lex2.next().kind;
+        let _2 = lex2.next().kind;
+
+        match [_0, _1, _2] {
+            // Start of a Record literal
+            [T::LeftBrace, T::Identifier, T::Colon ] |
+            // Start of a simplified Record literal
+            [T::LeftBrace, T::Identifier, T::Comma ] |
+            // Start and end of a simplified Record literal, this one could also be a Block with a
+            // single ident in it but we give Record a priority because it's more useful than a
+            // block with a single Primary expression.
+            [T::LeftBrace, T::Identifier, T::RightBrace ] |
+            // Empty Record or Block, Record has again priority because it's more useful than empty
+            // block.
+            [T::LeftBrace, T::RightBrace, _ ] => {
+                Ok(Expression::Record(self.record()?))
+            },
+            _ => Ok(Expression::Block(self.block()?)),
+        }
+    }
+
+    fn record(&mut self) -> Result<RecordExpr> {
+        todo!("record");
+    }
+
     fn block(&mut self) -> Result<Block> {
         let left_brace_tok = self.expect_next(TokenKind::LeftBrace)?;
         let body = self.block_inner()?;
@@ -309,16 +332,23 @@ impl<'src> Parser<'src> {
         Ok(body)
     }
 
-    fn group_expr(&mut self) -> Result<GroupExpr> {
-        let left_paren_tok = self.expect_next(TokenKind::LeftParen)?;
-        let expr = if self.match_peek(TokenKind::RightParen).is_some() {
-            // allow an empty group `( )`
-            None
-        } else {
-            Some(Box::new(self.expr_bp(0)?))
-        };
+    fn unit_or_group_or_tuple(&mut self) -> Result<Expression> {
+        let left_paren_tok = self.expect_next(TokenKind::LeftParen).unwrap();
+
+        if let Some(right_paren_tok) = self.match_next(TokenKind::RightParen) {
+            return Ok(Expression::Unit(UnitExpr { left_paren_tok, right_paren_tok }));
+        }
+
+        let exprs = self.expression_list()?;
         let right_paren_tok = self.expect_next(TokenKind::RightParen)?;
-        Ok(GroupExpr { left_paren_tok, expr, right_paren_tok })
+        if exprs.delim.is_empty() {
+            assert_eq!(exprs.items.len(), 1);
+
+            let expr = Box::new(exprs.items.into_iter().next().unwrap());
+            Ok(Expression::Group(GroupExpr { left_paren_tok, expr, right_paren_tok }))
+        } else {
+            Ok(Expression::Tuple(TupleExpr { left_paren_tok, exprs, right_paren_tok }))
+        }
     }
 
     fn if_expr(&mut self) -> Result<IfExpr> {
@@ -341,8 +371,8 @@ impl<'src> Parser<'src> {
     fn expr_bp(&mut self, min_bp: u8) -> Result<Expression> {
         let mut lhs = {
             match self.peek_kind() {
-                TokenKind::LeftParen => Expression::Group(self.group_expr()?),
-                TokenKind::LeftBrace => Expression::Block(self.block()?),
+                TokenKind::LeftParen => self.unit_or_group_or_tuple()?,//Expression::Group(self.group_expr()?),
+                TokenKind::LeftBrace => self.block_or_record()?,
                 TokenKind::If => Expression::If(self.if_expr()?),
                 TokenKind::Minus |
                 TokenKind::Not => {
@@ -353,7 +383,7 @@ impl<'src> Parser<'src> {
                         operator,
                         expr: Box::new(expr),
                     })
-                }
+                },
                 TokenKind::True |
                 TokenKind::False |
                 TokenKind::This |
@@ -362,7 +392,7 @@ impl<'src> Parser<'src> {
                 TokenKind::Identifier => {
                     let token = self.lexer.next();
                     Expression::Primary(PrimaryExpr { token })
-                }
+                },
                 TokenKind::String => Expression::String(self.string_expr()?),
                 _ => {
                     let found = self.lexer.next();
@@ -449,32 +479,40 @@ impl<'src> Parser<'src> {
 
     fn call_expr(&mut self, callee: Box<Expression>) -> Result<CallExpr> {
         let left_paren_tok = self.expect_next(TokenKind::LeftParen)?;
-        let arguments = self.argument_list()?;
+        let arguments = self.expression_list()?;
         let right_paren_tok = self.expect_next(TokenKind::RightParen)?;
         Ok(CallExpr { callee, left_paren_tok, arguments, right_paren_tok })
     }
 
-    fn argument_list(&mut self) -> Result<Delimited<Token, Expression>> {
+    fn expression_list(&mut self) -> Result<Delimited<Comma, Expression>> {
         let mut args = Delimited::default();
 
-        while self.peek_kind() != TokenKind::RightParen {
-            args.items.push(self.expression()?);
-
-            match self.peek_kind() {
-                TokenKind::Comma => {
-                    args.delim.push(self.expect_next(TokenKind::Comma)?);
-                }
-                TokenKind::RightParen => {},
-                _ => {
-                    self.error(ParserError::UnexpectedToken2 {
-                        found: self.lexer.peek(),
-                        expected: &[TokenKind::Comma, TokenKind::RightParen],
-                    })?;
-                }
-            }
+        match self.peek_kind() {
+            // expression list end
+            TokenKind::Semicolon |
+            TokenKind::RightParen |
+            TokenKind::RightBrace |
+            TokenKind::Eof => return Ok(args),
+            _ => {}
         }
 
-        Ok(args)
+        loop {
+            args.items.push(self.expression()?);
+
+            if let Some(comma_tok) = self.match_next(TokenKind::Comma) {
+                let comma = Comma { span: comma_tok.span };
+                args.delim.push(comma);
+            }
+
+            match self.peek_kind() {
+                // expression list end
+                TokenKind::Semicolon |
+                TokenKind::RightParen |
+                TokenKind::RightBrace |
+                TokenKind::Eof => return Ok(args),
+                _ => {}
+            }
+        }
     }
 
     fn field_expr(&mut self, expr: Box<Expression>) -> Result<FieldExpr> {

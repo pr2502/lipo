@@ -33,11 +33,13 @@ pub mod builtins {
     mod function;
     mod native_function;
     mod string;
+    mod tuple;
 
     pub use float::Float;
     pub use function::{Closure, Function};
     pub use native_function::{NativeError, NativeFunction};
     pub use string::String;
+    pub use tuple::Tuple;
 
     pub use crate::chunk::Chunk;
 }

@@ -16,6 +16,7 @@ pub enum TokenKind {
     #[token("-")] Minus,
     #[token("+")] Plus,
     #[token(";")] Semicolon,
+    #[token(":")] Colon,
     #[token("/")] Div,
     #[token("*")] Mul,
 
@@ -111,6 +112,7 @@ impl Display for TokenKind {
             TokenKind::Minus => "`-`",
             TokenKind::Plus => "`+`",
             TokenKind::Semicolon => "`;`",
+            TokenKind::Colon => "`:`",
             TokenKind::Div => "`/`",
             TokenKind::Mul => "`*`",
 

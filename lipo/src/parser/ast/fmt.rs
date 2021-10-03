@@ -162,6 +162,7 @@ impl SourceDebug for Expression {
             Expression::Call(inner) => inner.fmt(source, f),
             Expression::String(inner) => inner.fmt(source, f),
             Expression::Primary(inner) => inner.fmt(source, f),
+            _ => todo!(),
         }
     }
 }
@@ -194,11 +195,7 @@ impl SourceDebug for FieldExpr {
 
 impl SourceDebug for GroupExpr {
     fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(expr) = self.expr.as_ref() {
-            expr.fmt(source, f)
-        } else {
-            f.write_str("Unit")
-        }
+        self.expr.fmt(source, f)
     }
 }
 

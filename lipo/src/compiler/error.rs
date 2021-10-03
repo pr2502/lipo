@@ -184,6 +184,22 @@ define_error! {
 }
 
 define_error! {
+    TooManyTupleItems {
+        extra_item_span: FreeSpan,
+        tuple_expr_span: FreeSpan,
+        limit: usize,
+    },
+    message: "tuple expression exceeded the maximum number of items",
+    labels: [
+        Label::primary(extra_item_span, "item over the limit"),
+        Label::secondary(tuple_expr_span, "in tuple expression"),
+    ],
+    notes: [
+        format!("note: the maximum number of tuple items is {}", limit),
+    ],
+}
+
+define_error! {
     TooManyLocals {
         span: FreeSpan,
         limit: usize,
