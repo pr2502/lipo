@@ -1,4 +1,5 @@
 use super::{repr, TypeTag};
+use crate::name::Name;
 use std::fmt::{self, Debug};
 use std::hash::Hash;
 use std::num::NonZeroU64;
@@ -11,7 +12,7 @@ mod sealed {
 
 
 /// Marker trait for primitive types [`Value`](crate::Value) can represent
-pub unsafe trait Primitive: sealed::Sealed + Debug + Hash + PartialEq + Eq {
+pub unsafe trait Primitive<'alloc>: sealed::Sealed + Debug + Hash + PartialEq + Eq {
     #[doc(hidden)]
     const TYPE_TAG: TypeTag;
 
@@ -36,11 +37,11 @@ impl PrimitiveAny {
         PrimitiveAny { repr }
     }
 
-    pub(super) fn is<P: Primitive>(&self) -> bool {
+    pub(super) fn is<'alloc, P: Primitive<'alloc>>(&self) -> bool {
         repr::type_tag(self.repr) == <P as Primitive>::TYPE_TAG
     }
 
-    pub(super) fn downcast<P: Primitive>(self) -> Option<P> {
+    pub(super) fn downcast<'alloc, P: Primitive<'alloc>>(self) -> Option<P> {
         if self.is::<P>() {
             Some(<P as Primitive>::from_payload(repr::payload(self.repr)))
         } else {
@@ -51,7 +52,7 @@ impl PrimitiveAny {
 
 
 impl sealed::Sealed for () {}
-unsafe impl Primitive for () {
+unsafe impl Primitive<'static> for () {
     const TYPE_TAG: TypeTag = TypeTag::UNIT;
 
     const NAME: &'static str = "Unit";
@@ -66,7 +67,7 @@ unsafe impl Primitive for () {
 }
 
 impl sealed::Sealed for bool {}
-unsafe impl Primitive for bool {
+unsafe impl Primitive<'static> for bool {
     const TYPE_TAG: TypeTag = TypeTag::BOOL;
 
     const NAME: &'static str = "Bool";
@@ -76,8 +77,24 @@ unsafe impl Primitive for bool {
     }
 
     fn from_payload(payload: u64) -> Self {
-        // SAFETY `to_payload` can only return `0` or `1` which are safe to turn back into `bool`
-        unsafe { std::mem::transmute(payload as u8) }
+        payload != 0
+    }
+}
+
+impl<'alloc> sealed::Sealed for Name<'alloc> {}
+unsafe impl<'alloc> Primitive<'alloc> for Name<'alloc> {
+    const TYPE_TAG: TypeTag = TypeTag::NAME;
+
+    const NAME: &'static str = "Name";
+
+    fn to_payload(self) -> u64 {
+        self.to_u64()
+    }
+
+    fn from_payload(payload: u64) -> Self {
+        unsafe {
+            Self::from_u64(payload)
+        }
     }
 }
 
@@ -133,11 +150,11 @@ static VTABLES: PrimitiveVtables<3> = PrimitiveVtables {
     ]),
 };
 
-fn debug_fmt<P: Primitive>(this: PrimitiveAny, f: &mut fmt::Formatter) -> fmt::Result {
+fn debug_fmt<'alloc, P: Primitive<'alloc>>(this: PrimitiveAny, f: &mut fmt::Formatter) -> fmt::Result {
     <P as Debug>::fmt(&P::from_payload(repr::payload(this.repr)), f)
 }
 
-fn eq<P: Primitive>(this: PrimitiveAny, other: PrimitiveAny) -> bool {
+fn eq<'alloc, P: Primitive<'alloc>>(this: PrimitiveAny, other: PrimitiveAny) -> bool {
     debug_assert!(repr::type_tag(this.repr) == repr::type_tag(other.repr));
     PartialEq::eq(
         &P::from_payload(repr::payload(this.repr)),
@@ -145,7 +162,7 @@ fn eq<P: Primitive>(this: PrimitiveAny, other: PrimitiveAny) -> bool {
     )
 }
 
-fn hash<P: Primitive>(this: PrimitiveAny) -> usize {
+fn hash<'alloc, P: Primitive<'alloc>>(this: PrimitiveAny) -> usize {
     fxhash::hash(&P::from_payload(repr::payload(this.repr)))
 }
 

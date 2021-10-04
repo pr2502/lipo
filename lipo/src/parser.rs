@@ -724,8 +724,8 @@ fn default_string_fragments(slice: &str, span: FreeSpan) -> Result<Vec<StringFra
 fn string_interpolation(slice: &str, span: FreeSpan) -> Result<StringFragment> {
     // Caller is responsible for the interpolation being wrapped in `{}`
     let slice = slice
-        .strip_prefix(r"{").unwrap()
-        .strip_suffix(r"}").unwrap();
+        .strip_prefix('{').unwrap()
+        .strip_suffix('}').unwrap();
     let span = FreeSpan {
         start: span.start + 1, // skip '{'
         end: span.end - 1, // skip '}'

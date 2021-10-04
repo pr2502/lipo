@@ -560,7 +560,7 @@ impl<'alloc> VM<'alloc> {
             let stack_start = self.stack.len() - args - 1;
 
             log::debug!("stack {:#?}", &self.stack[stack_start..]);
-            log::debug!("function {} = {:?}", &closure.function.name, &closure.function.chunk);
+            log::debug!("function {} = {:?}", closure.function.name, &closure.function.chunk);
 
             // Save cached values back in the frame.
             let caller_frame = self.call_stack.last_mut().unwrap();

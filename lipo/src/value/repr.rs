@@ -51,6 +51,7 @@ impl TypeTag {
     pub(super) const OBJECT: TypeTag   = TypeTag(0x0000);
     pub(super) const UNIT: TypeTag     = TypeTag(0x0001);
     pub(super) const BOOL: TypeTag     = TypeTag(0x0002);
+    pub(super) const NAME: TypeTag     = TypeTag(0x0003);
 
     pub(super) const fn as_usize(self) -> usize {
         self.0 as usize
@@ -71,7 +72,7 @@ impl<'alloc> Value<'alloc> {
         }
     }
 
-    pub(super) fn new_primitive<P: Primitive>(p: P) -> Value<'static> {
+    pub(super) fn new_primitive<P: Primitive<'alloc>>(p: P) -> Value<'alloc> {
         Value {
             _alloc: PhantomData,
             repr: unsafe { new_primitive(P::TYPE_TAG, p.to_payload()) },

@@ -1,7 +1,11 @@
 use super::{Object, ObjectRef, ObjectRefAny, ObjectVtable, ObjectWrap};
+use crate::name::{Name, NameInterner};
 use crate::value::{Value, ValueKind};
+use crate::Primitive;
+use std::lazy::SyncOnceCell;
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+use std::sync::Mutex;
 use std::{mem, ptr};
 
 
@@ -27,14 +31,16 @@ impl ObjectHeader {
 
 
 pub struct Alloc {
-    head: AtomicPtr<ObjectHeader>,
+    alloc_list: AtomicPtr<ObjectHeader>,
+    name_interner: SyncOnceCell<Mutex<NameInterner>>,
 }
 
 impl Alloc {
     /// Create a new empty `Alloc`.
     pub const fn new() -> Alloc {
         Alloc {
-            head: AtomicPtr::new(ptr::null_mut()),
+            alloc_list: AtomicPtr::new(ptr::null_mut()),
+            name_interner: SyncOnceCell::new(),
         }
     }
 
@@ -65,7 +71,7 @@ impl Alloc {
         // This Acquire pairs with the Release part of the AcqRel on successful exchange
         // in [`insert_atomic`]. It ensures all writes to the list are synchronized
         // before we iterate over it.
-        let list = self.head.swap(ptr::null_mut(), Ordering::Acquire);
+        let list = self.alloc_list.swap(ptr::null_mut(), Ordering::Acquire);
 
         Iter(list)
     }
@@ -81,7 +87,7 @@ impl Alloc {
         // the `next` pointer of the last object to be inserted
         next: &AtomicPtr<ObjectHeader>,
     ) {
-        let mut old_head = self.head.load(Ordering::Acquire);
+        let mut old_head = self.alloc_list.load(Ordering::Acquire);
 
         loop {
             // The next pointer is already synchronized by the Release-Acquire pair in the exchange
@@ -90,7 +96,7 @@ impl Alloc {
 
             // The Release part of the AcqRel on success pairs with either the Acquire on failure,
             // the Acquire when inserting the next item(s) or with the Acquire in [`take_iter`].
-            match self.head.compare_exchange_weak(old_head, ptr, Ordering::AcqRel, Ordering::Acquire) {
+            match self.alloc_list.compare_exchange_weak(old_head, ptr, Ordering::AcqRel, Ordering::Acquire) {
                 Ok(_) => break,
                 Err(new_head) => {
                     old_head = new_head;
@@ -250,6 +256,25 @@ unsafe impl<'alloc> Trace for Value<'alloc> {
     fn mark(&self) {
         if let ValueKind::Object(o) = self.kind() {
             o.mark();
+        }
+    }
+}
+
+unsafe impl<'alloc, P: Primitive<'alloc>> Trace for P {
+    fn mark(&self) {
+        // nop
+    }
+}
+
+
+impl Alloc {
+    pub(crate) fn intern_name<'alloc>(&'alloc self, string: &str) -> Name<'alloc> {
+        let interner = self.name_interner.get_or_init(Default::default);
+        let mut interner = interner.lock().unwrap();
+        // SAFETY we're shortening the lifetime to the 'alloc lifetime and with that ensuring that
+        // the returned Name won't outlive the Alloc which owns the NameInterner
+        unsafe {
+            interner.intern(string)
         }
     }
 }

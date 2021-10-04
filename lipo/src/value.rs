@@ -1,3 +1,4 @@
+use crate::name::Name;
 use crate::value::object::{Object, ObjectRef};
 use std::fmt::{self, Debug};
 use std::hash::{Hash, Hasher};
@@ -102,7 +103,7 @@ impl<'alloc> Debug for Value<'alloc> {
 }
 
 
-impl<'alloc, P: Primitive> From<P> for Value<'alloc> {
+impl<'alloc, P: Primitive<'alloc>> From<P> for Value<'alloc> {
     fn from(p: P) -> Self {
         Value::new_primitive(p)
     }
@@ -146,6 +147,7 @@ macro_rules! impl_downcast_primitive {
 impl_downcast_primitive! {
     (),
     bool,
+    Name<'alloc>,
 }
 
 impl<'alloc, O> Downcast<O> for Value<'alloc>

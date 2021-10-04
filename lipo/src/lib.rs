@@ -1,10 +1,7 @@
 #![feature(assert_matches)]
 #![feature(const_panic)]
-#![feature(const_type_id)]
-#![feature(drain_filter)]
 #![feature(never_type)]
-#![feature(new_uninit)]
-#![feature(option_result_unwrap_unchecked)]
+#![feature(once_cell)]
 
 // spooky scary specialization
 #![allow(incomplete_features)]
@@ -22,6 +19,7 @@ pub mod compiler;
 pub mod diagnostic;
 pub mod fmt;
 pub mod lexer;
+mod name;
 pub mod opcode;
 pub mod parser;
 pub mod span;
@@ -42,6 +40,7 @@ pub mod builtins {
     pub use tuple::Tuple;
 
     pub use crate::chunk::Chunk;
+    pub use crate::name::Name;
 }
 
 
