@@ -1,5 +1,4 @@
 #![feature(assert_matches)]
-#![feature(const_panic)]
 #![feature(never_type)]
 #![feature(once_cell)]
 

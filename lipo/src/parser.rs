@@ -1,6 +1,6 @@
 use crate::builtins::String;
 use crate::diagnostic::{Diagnostic, Label, Severity};
-use crate::lexer::{Lexer, Token, TokenKind};
+use crate::lexer::{Lexer, Token, TokenKind, T};
 use crate::span::FreeSpan;
 use crate::ObjectRef;
 use logos::Logos;
@@ -118,7 +118,7 @@ pub fn parse<'alloc>(source: ObjectRef<'alloc, String>) -> Result<AST> {
         lexer: Lexer::new(&source),
     };
     let items = parser.block_inner()?;
-    let eof = parser.expect_next(TokenKind::Eof)?;
+    let eof = parser.expect_next(T::Eof)?;
     Ok(AST {
         source,
         items,
@@ -169,21 +169,21 @@ impl<'src> Parser<'src> {
         // TODO recovery
         Ok(match self.peek_kind() {
             // Items
-            TokenKind::Class => Item::Class(self.class_item()?),
-            TokenKind::Fn => Item::Fn(self.fn_item()?),
-            TokenKind::Let => Item::Let(self.let_item()?),
+            T::Class => Item::Class(self.class_item()?),
+            T::FnKw => Item::Fn(self.fn_item()?),
+            T::Let => Item::Let(self.let_item()?),
 
             // Statements
-            TokenKind::For => Item::Statement(Statement::For(self.for_stmt()?)),
-            TokenKind::Assert => Item::Statement(Statement::Assert(self.assert_stmt()?)),
-            TokenKind::Print => Item::Statement(Statement::Print(self.print_stmt()?)),
-            TokenKind::Return => Item::Statement(Statement::Return(self.return_stmt()?)),
-            TokenKind::While => Item::Statement(Statement::While(self.while_stmt()?)),
+            T::For => Item::Statement(Statement::For(self.for_stmt()?)),
+            T::Assert => Item::Statement(Statement::Assert(self.assert_stmt()?)),
+            T::Print => Item::Statement(Statement::Print(self.print_stmt()?)),
+            T::Return => Item::Statement(Statement::Return(self.return_stmt()?)),
+            T::While => Item::Statement(Statement::While(self.while_stmt()?)),
 
             // Expr
             _ => {
                 let expr = self.expression()?;
-                let semicolon_tok = self.match_next(TokenKind::Semicolon);
+                let semicolon_tok = self.match_next(T::Semicolon);
                 Item::Expr(Expr { expr, semicolon_tok })
             }
         })
@@ -194,51 +194,47 @@ impl<'src> Parser<'src> {
     }
 
     fn fn_item(&mut self) -> Result<FnItem> {
-        let fn_tok = self.expect_next(TokenKind::Fn)?;
+        let fn_tok = self.expect_next(T::FnKw)?;
         let name = self.name()?;
-        let left_paren_tok = self.expect_next(TokenKind::LeftParen)?;
+        let left_paren_tok = self.expect_next(T::LeftParen)?;
         let mut parameters = Delimited::default();
-        while !matches!(self.peek_kind(), TokenKind::Eof | TokenKind::RightParen) {
-            let mut_tok = self.match_next(TokenKind::Mut);
+        while !matches!(self.peek_kind(), T::Eof | T::RightParen) {
+            let mut_tok = self.match_next(T::Mut);
             let name = self.name()?;
             parameters.items.push(FnParam { mut_tok, name });
 
             match self.peek_kind() {
-                TokenKind::RightParen => break,
-                TokenKind::Comma => {
-                    let comma_tok = self.expect_next(TokenKind::Comma).unwrap();
+                T::RightParen => break,
+                T::Comma => {
+                    let comma_tok = self.expect_next(T::Comma).unwrap();
                     let comma = Comma { span: comma_tok.span };
                     parameters.delim.push(comma);
                 }
                 _ => {
                     self.error(ParserError::UnexpectedToken2 {
                         found: self.lexer.peek(),
-                        expected: &[TokenKind::Comma, TokenKind::RightParen],
+                        expected: &[T::Comma, T::RightParen],
                     })?
                 }
             }
         }
-        let right_paren_tok = self.expect_next(TokenKind::RightParen)?;
+        let right_paren_tok = self.expect_next(T::RightParen)?;
         let body = self.block()?;
         Ok(FnItem { fn_tok, name, left_paren_tok, parameters, right_paren_tok, body })
     }
 
     fn let_item(&mut self) -> Result<LetItem> {
-        let let_tok = self.expect_next(TokenKind::Let)?;
-        let (mut_tok, rec_tok) = match self.peek_kind() {
-            TokenKind::Mut => (Some(self.lexer.next()), None),
-            TokenKind::Rec => (None, Some(self.lexer.next())),
-            _ => (None, None),
-        };
+        let let_tok = self.expect_next(T::Let)?;
+        let mut_tok = self.match_next(T::Mut);
         let name = self.name()?;
-        let init = if let Some(equal_tok) = self.match_next(TokenKind::Equal) {
+        let init = if let Some(equal_tok) = self.match_next(T::Equal) {
             let expr = self.expression()?;
             Some(LetInit { equal_tok, expr })
         } else {
             None
         };
-        let semicolon_tok = self.expect_next(TokenKind::Semicolon)?;
-        Ok(LetItem { let_tok, mut_tok, rec_tok, name, init, semicolon_tok })
+        let semicolon_tok = self.expect_next(T::Semicolon)?;
+        Ok(LetItem { let_tok, mut_tok, name, init, semicolon_tok })
     }
 
     fn for_stmt(&mut self) -> Result<ForStmt> {
@@ -247,47 +243,45 @@ impl<'src> Parser<'src> {
     }
 
     fn assert_stmt(&mut self) -> Result<AssertStmt> {
-        let assert_tok = self.expect_next(TokenKind::Assert)?;
+        let assert_tok = self.expect_next(T::Assert)?;
         let expr = self.expression()?;
-        let semicolon_tok = self.expect_next(TokenKind::Semicolon)?;
+        let semicolon_tok = self.expect_next(T::Semicolon)?;
         Ok(AssertStmt { assert_tok, expr, semicolon_tok })
     }
 
     fn print_stmt(&mut self) -> Result<PrintStmt> {
-        let print_tok = self.expect_next(TokenKind::Print)?;
+        let print_tok = self.expect_next(T::Print)?;
         let expr = self.expression()?;
-        let semicolon_tok = self.expect_next(TokenKind::Semicolon)?;
+        let semicolon_tok = self.expect_next(T::Semicolon)?;
         Ok(PrintStmt { print_tok, expr, semicolon_tok })
     }
 
     fn return_stmt(&mut self) -> Result<ReturnStmt> {
-        let return_tok = self.expect_next(TokenKind::Return)?;
-        let expr = if self.peek_kind() != TokenKind::Semicolon {
+        let return_tok = self.expect_next(T::Return)?;
+        let expr = if self.peek_kind() != T::Semicolon {
             Some(self.expression()?)
         } else {
             None
         };
-        let semicolon_tok = self.expect_next(TokenKind::Semicolon)?;
+        let semicolon_tok = self.expect_next(T::Semicolon)?;
         Ok(ReturnStmt { return_tok, expr, semicolon_tok })
     }
 
     fn while_stmt(&mut self) -> Result<WhileStmt> {
-        let while_tok = self.expect_next(TokenKind::While)?;
+        let while_tok = self.expect_next(T::While)?;
         let pred = self.expression()?;
         let body = self.block()?;
         Ok(WhileStmt { while_tok, pred, body })
     }
 
     fn block_or_record(&mut self) -> Result<Expression> {
-        use TokenKind as T;
-
         // LeftBrace can start either a Block or a Record expression
         let mut lex2 = self.lexer.clone();
-        let _0 = lex2.next().kind;
-        let _1 = lex2.next().kind;
-        let _2 = lex2.next().kind;
+        let t0 = lex2.next().kind;
+        let t1 = lex2.next().kind;
+        let t2 = lex2.next().kind;
 
-        match [_0, _1, _2] {
+        match [t0, t1, t2] {
             // Start of a Record literal
             [T::LeftBrace, T::Identifier, T::Colon ] |
             // Start of a simplified Record literal
@@ -310,37 +304,39 @@ impl<'src> Parser<'src> {
     }
 
     fn block(&mut self) -> Result<Block> {
-        let left_brace_tok = self.expect_next(TokenKind::LeftBrace)?;
+        let left_brace_tok = self.expect_next(T::LeftBrace)?;
         let body = self.block_inner()?;
-        let right_brace_tok = self.expect_next(TokenKind::RightBrace)?;
+        let right_brace_tok = self.expect_next(T::RightBrace)?;
         Ok(Block { left_brace_tok, body, right_brace_tok })
     }
 
     fn block_inner(&mut self) -> Result<Vec<Item>> {
         let mut body = Vec::new();
         let mut terminated = true;
-        while !matches!(self.peek_kind(), TokenKind::RightBrace | TokenKind::Eof) {
+        while !matches!(self.peek_kind(), T::RightBrace | T::Eof) {
             let item = self.item()?;
+
             assert!(terminated, "BUG: previous item was not terminated yet we parsed another one");
             terminated = match &item {
                 Item::Expr(Expr { semicolon_tok: None, .. }) => false,
-                // all other items are self-terminating
+                // All other items are self-terminating
                 _ => true,
             };
+
             body.push(item);
         }
         Ok(body)
     }
 
     fn unit_or_group_or_tuple(&mut self) -> Result<Expression> {
-        let left_paren_tok = self.expect_next(TokenKind::LeftParen).unwrap();
+        let left_paren_tok = self.expect_next(T::LeftParen).unwrap();
 
-        if let Some(right_paren_tok) = self.match_next(TokenKind::RightParen) {
+        if let Some(right_paren_tok) = self.match_next(T::RightParen) {
             return Ok(Expression::Unit(UnitExpr { left_paren_tok, right_paren_tok }));
         }
 
         let exprs = self.expression_list()?;
-        let right_paren_tok = self.expect_next(TokenKind::RightParen)?;
+        let right_paren_tok = self.expect_next(T::RightParen)?;
         if exprs.delim.is_empty() {
             assert_eq!(exprs.items.len(), 1);
 
@@ -352,10 +348,10 @@ impl<'src> Parser<'src> {
     }
 
     fn if_expr(&mut self) -> Result<IfExpr> {
-        let if_tok = self.expect_next(TokenKind::If)?;
+        let if_tok = self.expect_next(T::If)?;
         let pred = Box::new(self.expression()?);
         let body = self.block()?;
-        let else_branch = if let Some(else_tok) = self.match_next(TokenKind::Else) {
+        let else_branch = if let Some(else_tok) = self.match_next(T::Else) {
             let body = self.block()?;
             Some(ElseBranch { else_tok, body })
         } else {
@@ -371,11 +367,11 @@ impl<'src> Parser<'src> {
     fn expr_bp(&mut self, min_bp: u8) -> Result<Expression> {
         let mut lhs = {
             match self.peek_kind() {
-                TokenKind::LeftParen => self.unit_or_group_or_tuple()?,//Expression::Group(self.group_expr()?),
-                TokenKind::LeftBrace => self.block_or_record()?,
-                TokenKind::If => Expression::If(self.if_expr()?),
-                TokenKind::Minus |
-                TokenKind::Not => {
+                T::LeftParen => self.unit_or_group_or_tuple()?,//Expression::Group(self.group_expr()?),
+                T::LeftBrace => self.block_or_record()?,
+                T::If => Expression::If(self.if_expr()?),
+                T::Minus |
+                T::Not => {
                     let operator = self.lexer.next();
                     let ((), r_bp) = prefix_binding_power(operator.kind);
                     let expr = self.expr_bp(r_bp)?;
@@ -384,16 +380,19 @@ impl<'src> Parser<'src> {
                         expr: Box::new(expr),
                     })
                 },
-                TokenKind::True |
-                TokenKind::False |
-                TokenKind::This |
-                TokenKind::Super |
-                TokenKind::Number |
-                TokenKind::Identifier => {
+                T::True |
+                T::False |
+                T::BinaryNumber |
+                T::OctalNumber |
+                T::HexadecimalNumber |
+                T::DecimalNumber |
+                T::DecimalPointNumber |
+                T::ExponentialNumber |
+                T::Identifier => {
                     let token = self.lexer.next();
                     Expression::Primary(PrimaryExpr { token })
                 },
-                TokenKind::String => Expression::String(self.string_expr()?),
+                T::StringLit => Expression::String(self.string_expr()?),
                 _ => {
                     let found = self.lexer.next();
                     self.error(ParserError::ExpectedExpressionStart { found })?;
@@ -405,28 +404,28 @@ impl<'src> Parser<'src> {
             let operator = self.lexer.peek();
             match operator.kind {
                 // infix operators
-                TokenKind::Equal |
-                TokenKind::Or |
-                TokenKind::And |
-                TokenKind::NotEqual |
-                TokenKind::EqualEqual |
-                TokenKind::Greater |
-                TokenKind::GreaterEqual |
-                TokenKind::Less |
-                TokenKind::LessEqual |
-                TokenKind::Minus |
-                TokenKind::Plus |
-                TokenKind::Div |
-                TokenKind::Mul => {}
+                T::Equal |
+                T::Or |
+                T::And |
+                T::NotEqual |
+                T::EqualEqual |
+                T::Greater |
+                T::GreaterEqual |
+                T::Less |
+                T::LessEqual |
+                T::Minus |
+                T::Plus |
+                T::Div |
+                T::Mul => {}
                 // postfix operators
-                TokenKind::LeftParen => {}
+                T::LeftParen => {}
                 // expression end
-                TokenKind::Semicolon |
-                TokenKind::Comma |
-                TokenKind::RightParen |
-                TokenKind::LeftBrace |
-                TokenKind::RightBrace |
-                TokenKind::Eof => {
+                T::Semicolon |
+                T::Comma |
+                T::RightParen |
+                T::LeftBrace |
+                T::RightBrace |
+                T::Eof => {
                     break;
                 }
                 _ => {
@@ -442,11 +441,11 @@ impl<'src> Parser<'src> {
                 }
 
                 match operator.kind {
-                    TokenKind::LeftParen => {
+                    T::LeftParen => {
                         lhs = Expression::Call(self.call_expr(Box::new(lhs))?);
                         continue;
                     }
-                    TokenKind::Dot => {
+                    T::Dot => {
                         lhs = Expression::Field(self.field_expr(Box::new(lhs))?);
                         continue;
                     }
@@ -478,9 +477,9 @@ impl<'src> Parser<'src> {
     }
 
     fn call_expr(&mut self, callee: Box<Expression>) -> Result<CallExpr> {
-        let left_paren_tok = self.expect_next(TokenKind::LeftParen)?;
+        let left_paren_tok = self.expect_next(T::LeftParen)?;
         let arguments = self.expression_list()?;
-        let right_paren_tok = self.expect_next(TokenKind::RightParen)?;
+        let right_paren_tok = self.expect_next(T::RightParen)?;
         Ok(CallExpr { callee, left_paren_tok, arguments, right_paren_tok })
     }
 
@@ -489,40 +488,40 @@ impl<'src> Parser<'src> {
 
         match self.peek_kind() {
             // expression list end
-            TokenKind::Semicolon |
-            TokenKind::RightParen |
-            TokenKind::RightBrace |
-            TokenKind::Eof => return Ok(args),
+            T::Semicolon |
+            T::RightParen |
+            T::RightBrace |
+            T::Eof => return Ok(args),
             _ => {}
         }
 
         loop {
             args.items.push(self.expression()?);
 
-            if let Some(comma_tok) = self.match_next(TokenKind::Comma) {
+            if let Some(comma_tok) = self.match_next(T::Comma) {
                 let comma = Comma { span: comma_tok.span };
                 args.delim.push(comma);
             }
 
             match self.peek_kind() {
                 // expression list end
-                TokenKind::Semicolon |
-                TokenKind::RightParen |
-                TokenKind::RightBrace |
-                TokenKind::Eof => return Ok(args),
+                T::Semicolon |
+                T::RightParen |
+                T::RightBrace |
+                T::Eof => return Ok(args),
                 _ => {}
             }
         }
     }
 
     fn field_expr(&mut self, expr: Box<Expression>) -> Result<FieldExpr> {
-        let dot_tok = self.expect_next(TokenKind::Dot)?;
+        let dot_tok = self.expect_next(T::Dot)?;
         let field = self.name()?;
         Ok(FieldExpr { expr, dot_tok, field })
     }
 
     fn name(&mut self) -> Result<Identifier> {
-        let token = self.expect_next(TokenKind::Identifier)?;
+        let token = self.expect_next(T::Identifier)?;
         Ok(Identifier { span: token.span })
     }
 }
@@ -545,8 +544,8 @@ impl<'src> Parser<'src> {
 fn prefix_binding_power(kind: TokenKind) -> ((), u8) {
     match kind {
         // unary
-        TokenKind::Not |
-        TokenKind::Minus => ((), 15),
+        T::Not |
+        T::Minus => ((), 15),
 
         _ => unreachable!(),
     }
@@ -555,8 +554,8 @@ fn prefix_binding_power(kind: TokenKind) -> ((), u8) {
 fn postfix_binding_power(kind: TokenKind) -> Option<(u8, ())> {
     Some(match kind {
         // call
-        TokenKind::LeftParen |
-        TokenKind::Dot => (16, ()),
+        T::LeftParen |
+        T::Dot => (16, ()),
 
         _ => return None,
     })
@@ -567,25 +566,25 @@ fn infix_binding_power(kind: TokenKind) -> Option<(u8, u8)> {
     // right associative: l_bp > r_bp
     Some(match kind {
         // assignment
-        TokenKind::Equal        => (2, 1),
+        T::Equal        => (2, 1),
         // or
-        TokenKind::Or           => (3, 4),
+        T::Or           => (3, 4),
         // and
-        TokenKind::And          => (5, 6),
+        T::And          => (5, 6),
         // equality
-        TokenKind::EqualEqual |
-        TokenKind::NotEqual     => (7, 8),
+        T::EqualEqual |
+        T::NotEqual     => (7, 8),
         // comparison
-        TokenKind::Less |
-        TokenKind::LessEqual |
-        TokenKind::Greater |
-        TokenKind::GreaterEqual => (9, 10),
+        T::Less |
+        T::LessEqual |
+        T::Greater |
+        T::GreaterEqual => (9, 10),
         // term
-        TokenKind::Minus |
-        TokenKind::Plus         => (11, 12),
+        T::Minus |
+        T::Plus         => (11, 12),
         // factor
-        TokenKind::Div |
-        TokenKind::Mul          => (13, 14),
+        T::Div |
+        T::Mul          => (13, 14),
 
         _ => return None,
     })
@@ -595,7 +594,7 @@ fn infix_binding_power(kind: TokenKind) -> Option<(u8, u8)> {
 // String interpolation parsing
 impl<'src> Parser<'src> {
     fn string_expr(&mut self) -> Result<StringExpr> {
-        let span = self.expect_next(TokenKind::String)?.span;
+        let span = self.expect_next(T::StringLit)?.span;
         let slice = span.anchor(self.lexer.source()).as_str();
 
         let (modifier, slice) = match slice.as_bytes() {
@@ -734,7 +733,7 @@ fn string_interpolation(slice: &str, span: FreeSpan) -> Result<StringFragment> {
     let ident = |len| -> Result<_> {
         let slice = &slice[..len];
         let mut lex = logos::Lexer::<TokenKind>::new(slice);
-        if !(matches!(lex.next(), Some(TokenKind::Identifier)) && matches!(lex.next(), None)) {
+        if !(matches!(lex.next(), Some(T::Identifier)) && matches!(lex.next(), None)) {
             todo!("error: invalid identifier in string interpolation");
         }
         let span = FreeSpan {

@@ -64,7 +64,6 @@ pub struct FnParam {
 pub struct LetItem {
     pub let_tok: Token,
     pub mut_tok: Option<Token>,
-    pub rec_tok: Option<Token>,
     pub name: Identifier,
     pub init: Option<LetInit>,
     pub semicolon_tok: Token,

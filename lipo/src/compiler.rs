@@ -1,6 +1,6 @@
 use crate::builtins::{Closure, Float, Function, String};
 use crate::chunk::{ChunkBuf, LoopPoint, PatchPlace};
-use crate::lexer::TokenKind;
+use crate::lexer::T;
 use crate::name::Name;
 use crate::opcode::OpCode;
 use crate::parser::ast::*;
@@ -494,10 +494,10 @@ impl<'alloc> Emitter<'alloc> {
     fn binary_expr(&mut self, binary_expr: &BinaryExpr) {
         let op = binary_expr.operator.kind;
 
-        if op == TokenKind::Equal {
+        if op == T::Equal {
             // For now only allow assigning to an identifier
             if let Expression::Primary(primary) = &*binary_expr.lhs {
-                if primary.token.kind == TokenKind::Identifier {
+                if primary.token.kind == T::Identifier {
                     let name_span = primary.token.span;
                     let name = self.alloc.intern_name(name_span.anchor(&self.source).as_str());
                     self.expression(&binary_expr.rhs);
@@ -524,11 +524,11 @@ impl<'alloc> Emitter<'alloc> {
             return;
         }
 
-        if op == TokenKind::Or {
+        if op == T::Or {
             return self.or(binary_expr);
         }
 
-        if op == TokenKind::And {
+        if op == T::And {
             return self.and(binary_expr);
         }
 
@@ -539,37 +539,37 @@ impl<'alloc> Emitter<'alloc> {
 
         let span = binary_expr.span();
         match op {
-            TokenKind::NotEqual => {
+            T::NotEqual => {
                 self.emit(OpCode::Equal, span);
                 self.emit(OpCode::Not, span);
             }
-            TokenKind::EqualEqual => {
+            T::EqualEqual => {
                 self.emit(OpCode::Equal, span);
             }
-            TokenKind::Greater => {
+            T::Greater => {
                 self.emit(OpCode::Greater, span);
             }
-            TokenKind::GreaterEqual => {
+            T::GreaterEqual => {
                 self.emit(OpCode::Less, span);
                 self.emit(OpCode::Not, span);
             }
-            TokenKind::Less => {
+            T::Less => {
                 self.emit(OpCode::Less, span);
             }
-            TokenKind::LessEqual => {
+            T::LessEqual => {
                 self.emit(OpCode::Greater, span);
                 self.emit(OpCode::Not, span);
             }
-            TokenKind::Plus => {
+            T::Plus => {
                 self.emit(OpCode::Add, span);
             }
-            TokenKind::Minus => {
+            T::Minus => {
                 self.emit(OpCode::Subtract, span);
             }
-            TokenKind::Mul => {
+            T::Mul => {
                 self.emit(OpCode::Multiply, span);
             }
-            TokenKind::Div => {
+            T::Div => {
                 self.emit(OpCode::Divide, span);
             }
             _ => unreachable!()
@@ -613,10 +613,10 @@ impl<'alloc> Emitter<'alloc> {
 
         let span = unary_expr.span();
         match op {
-            TokenKind::Not => {
+            T::Not => {
                 self.emit(OpCode::Not, span);
             }
-            TokenKind::Minus => {
+            T::Minus => {
                 self.emit(OpCode::Negate, span);
             }
             _ => unreachable!()
@@ -745,22 +745,26 @@ impl<'alloc> Emitter<'alloc> {
         let span = primary_expr.span();
 
         match op {
-            TokenKind::True => {
+            T::True => {
                 self.emit(OpCode::True, span);
             }
-            TokenKind::False => {
+            T::False => {
                 self.emit(OpCode::False, span);
             }
-            TokenKind::This => {
+            T::SelfKw => {
                 todo!()
             }
-            TokenKind::Super => {
+            T::BinaryNumber |
+            T::OctalNumber |
+            T::HexadecimalNumber => {
                 todo!()
             }
-            TokenKind::Number => {
+            T::DecimalNumber |
+            T::DecimalPointNumber |
+            T::ExponentialNumber => {
                 self.float(primary_expr);
             }
-            TokenKind::Identifier => {
+            T::Identifier => {
                 let ident = Identifier { span };
                 let name = self.intern_name(ident);
                 self.name(name, span);

@@ -33,31 +33,39 @@ pub enum TokenKind {
     #[regex(r"[a-zA-Z_][a-zA-Z_0-9]*")]
     Identifier,
     #[regex(r#"[a-z]?#*"[^"]*""#, string_lit)]
-    String,
+    StringLit,
+    #[regex(r"0b[0-9_]*")]
+    BinaryNumber,
+    #[regex(r"0o[0-9_]*")]
+    OctalNumber,
+    #[regex(r"0x[0-9_]*")]
+    HexadecimalNumber,
     #[regex(r"[0-9][0-9_]*")]
+    DecimalNumber,
     #[regex(r"[0-9]+\.[0-9]*")]
+    DecimalPointNumber,
     #[regex(r"[0-9]+(e|E)(\+|-)?[0-9_]+")]
-    Number,
+    ExponentialNumber,
 
     // Keywords
     #[token("and")] And,
     #[token("assert")] Assert,
     #[token("class")] Class,
+    #[token("const")] Const,
     #[token("else")] Else,
     #[token("false")] False,
+    #[token("fn")] FnKw,
     #[token("for")] For,
-    #[token("fn")] Fn,
     #[token("if")] If,
+    #[token("let")] Let,
     #[token("mut")] Mut,
     #[token("not")] Not,
     #[token("or")] Or,
     #[token("print")] Print,
-    #[token("rec")] Rec,
     #[token("return")] Return,
-    #[token("super")] Super,
-    #[token("this")] This,
+    #[token("self")] SelfKw,
     #[token("true")] True,
-    #[token("let")] Let,
+    #[token("type")] Type,
     #[token("while")] While,
 
     Eof,
@@ -67,6 +75,9 @@ pub enum TokenKind {
     #[regex(r"//[^\n]*", skip)] // comments
     Error,
 }
+
+pub type T = TokenKind;
+
 
 /// Lex string literals with `#` delimiters
 fn string_lit(lex: &mut logos::Lexer<TokenKind>) {
@@ -103,56 +114,62 @@ fn string_lit(lex: &mut logos::Lexer<TokenKind>) {
 impl Display for TokenKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            TokenKind::LeftParen => "`(`",
-            TokenKind::RightParen => "`)`",
-            TokenKind::LeftBrace => "`{`",
-            TokenKind::RightBrace => "`}`",
-            TokenKind::Comma => "`,`",
-            TokenKind::Dot => "`.`",
-            TokenKind::Minus => "`-`",
-            TokenKind::Plus => "`+`",
-            TokenKind::Semicolon => "`;`",
-            TokenKind::Colon => "`:`",
-            TokenKind::Div => "`/`",
-            TokenKind::Mul => "`*`",
+            T::LeftParen => "`(`",
+            T::RightParen => "`)`",
+            T::LeftBrace => "`{`",
+            T::RightBrace => "`}`",
+            T::Comma => "`,`",
+            T::Dot => "`.`",
+            T::Minus => "`-`",
+            T::Plus => "`+`",
+            T::Semicolon => "`;`",
+            T::Colon => "`:`",
+            T::Div => "`/`",
+            T::Mul => "`*`",
 
             // One or two character tokens
-            TokenKind::NotEqual => "`/=`",
-            TokenKind::Equal => "`=`",
-            TokenKind::EqualEqual => "`==`",
-            TokenKind::Greater => "`>`",
-            TokenKind::GreaterEqual => "`>=`",
-            TokenKind::Less => "`<`",
-            TokenKind::LessEqual => "`<=`",
+            T::NotEqual => "`/=`",
+            T::Equal => "`=`",
+            T::EqualEqual => "`==`",
+            T::Greater => "`>`",
+            T::GreaterEqual => "`>=`",
+            T::Less => "`<`",
+            T::LessEqual => "`<=`",
 
             // Literals
-            TokenKind::Identifier => "name",
-            TokenKind::String => "string literal",
-            TokenKind::Number => "number literal",
+            T::Identifier => "name",
+            T::StringLit => "string literal",
+
+            T::BinaryNumber |
+            T::OctalNumber |
+            T::HexadecimalNumber |
+            T::DecimalNumber |
+            T::DecimalPointNumber |
+            T::ExponentialNumber => "number literal",
 
             // Keywords
-            TokenKind::And => "`and`",
-            TokenKind::Assert => "`assert`",
-            TokenKind::Class => "`class`",
-            TokenKind::Else => "`else`",
-            TokenKind::False => "`false`",
-            TokenKind::For => "`for`",
-            TokenKind::Fn => "`fn`",
-            TokenKind::If => "`if`",
-            TokenKind::Mut => "`mut`",
-            TokenKind::Not => "`not`",
-            TokenKind::Or => "`or`",
-            TokenKind::Print => "`print`",
-            TokenKind::Rec => "`rec`",
-            TokenKind::Return => "`return`",
-            TokenKind::Super => "`super`",
-            TokenKind::This => "`this`",
-            TokenKind::True => "`true`",
-            TokenKind::Let => "`let`",
-            TokenKind::While => "`while`",
+            T::And => "`and`",
+            T::Assert => "`assert`",
+            T::Class => "`class`",
+            T::Const => "`const`",
+            T::Else => "`else`",
+            T::False => "`false`",
+            T::FnKw => "`fn`",
+            T::For => "`for`",
+            T::If => "`if`",
+            T::Let => "`let`",
+            T::Mut => "`mut`",
+            T::Not => "`not`",
+            T::Or => "`or`",
+            T::Print => "`print`",
+            T::Return => "`return`",
+            T::SelfKw => "`self`",
+            T::True => "`true`",
+            T::Type => "`type`",
+            T::While => "`while`",
 
-            TokenKind::Eof => "EOF",
-            TokenKind::Error => "invalid token",
+            T::Eof => "EOF",
+            T::Error => "invalid token",
         })
     }
 }
@@ -168,7 +185,7 @@ pub struct Token {
 /// Lexer / scanner
 ///
 /// Wraps the [`logos`] lexer and acts as a "peekable" adapter and replaces the iterator
-/// `Option::None` with a [`TokenKind::Eof`]. Since the underlying lexer iterator is fused
+/// `Option::None` with a [`T::Eof`]. Since the underlying lexer iterator is fused
 /// [`next`](Lexer::next) will yield EOF indefinitely after it yields it once.
 ///
 /// # Cloning
@@ -176,25 +193,25 @@ pub struct Token {
 /// as the old one and they both advance independently.
 /// ```rust
 /// # #![feature(assert_matches)]
-/// # use lipo::lexer::{Lexer, Token, TokenKind};
+/// # use lipo::lexer::{Lexer, Token, TokenKind, T};
 /// # use std::assert_matches::assert_matches;
 /// #
 /// let src = "+ - * /";
 /// let mut lex1 = Lexer::new(src);
 ///
-/// assert_matches!(lex1.next(), Token { kind: TokenKind::Plus, .. });
-/// assert_matches!(lex1.next(), Token { kind: TokenKind::Minus, .. });
+/// assert_matches!(lex1.next(), Token { kind: T::Plus, .. });
+/// assert_matches!(lex1.next(), Token { kind: T::Minus, .. });
 ///
 /// let mut lex2 = lex1.clone();
 ///
-/// assert_matches!(lex1.next(), Token { kind: TokenKind::Mul, .. });
-/// assert_matches!(lex1.next(), Token { kind: TokenKind::Div, .. });
-/// assert_matches!(lex1.next(), Token { kind: TokenKind::Eof, .. });
+/// assert_matches!(lex1.next(), Token { kind: T::Mul, .. });
+/// assert_matches!(lex1.next(), Token { kind: T::Div, .. });
+/// assert_matches!(lex1.next(), Token { kind: T::Eof, .. });
 ///
 /// // lex2 will go through the same sequence starting from the point where it was created
-/// assert_matches!(lex2.next(), Token { kind: TokenKind::Mul, .. });
-/// assert_matches!(lex2.next(), Token { kind: TokenKind::Div, .. });
-/// assert_matches!(lex2.next(), Token { kind: TokenKind::Eof, .. });
+/// assert_matches!(lex2.next(), Token { kind: T::Mul, .. });
+/// assert_matches!(lex2.next(), Token { kind: T::Div, .. });
+/// assert_matches!(lex2.next(), Token { kind: T::Eof, .. });
 /// ```
 #[derive(Clone)]
 pub struct Lexer<'src> {
@@ -205,7 +222,7 @@ pub struct Lexer<'src> {
 impl<'src> Lexer<'src> {
     pub fn new(source: &'src str) -> Lexer<'src> {
         let mut inner = logos::Lexer::new(source);
-        let current = inner.next().unwrap_or(TokenKind::Eof);
+        let current = inner.next().unwrap_or(T::Eof);
         Lexer { inner, current }
     }
 
@@ -226,7 +243,7 @@ impl<'src> Lexer<'src> {
     #[must_use]
     pub fn next(&mut self) -> Token {
         let last = self.peek();
-        self.current = self.inner.next().unwrap_or(TokenKind::Eof);
+        self.current = self.inner.next().unwrap_or(T::Eof);
         last
     }
 }
@@ -240,11 +257,11 @@ impl<'src> Debug for Lexer<'src> {
         let mut tokens = iter::from_fn(|| Some(lex.next().kind))
             .take(SHOW_NEXT)
             .collect::<Vec<_>>();
-        if let Some(eof) = tokens.iter().position(|tok| tok == &TokenKind::Eof) {
+        if let Some(eof) = tokens.iter().position(|tok| tok == &T::Eof) {
             // Remove repeated Eof from the end
             tokens.truncate(eof + 1);
         }
-        let unfinished = tokens.last().unwrap() != &TokenKind::Eof;
+        let unfinished = tokens.last().unwrap() != &T::Eof;
 
         write!(f, "Lexer")?;
         let mut w = f.debug_list();

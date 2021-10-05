@@ -61,6 +61,7 @@ unsafe impl Primitive<'static> for () {
         0
     }
 
+    #[allow(clippy::unused_unit)] // This is more descriptive
     fn from_payload(_: u64) -> () {
         ()
     }
