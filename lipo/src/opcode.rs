@@ -24,6 +24,7 @@ pub enum OpCode {
     GetLocal { slot: u16 },
     SetLocal { slot: u16 },
     GetUpvalue { slot: u8 },
+    GetTuple { slot: u8 },
     Equal,
     Greater,
     Less,
@@ -56,6 +57,7 @@ opcodes! {
     GET_LOCAL,
     SET_LOCAL,
     GET_UPVALUE,
+    GET_TUPLE,
     EQUAL,
     GREATER,
     LESS,
@@ -98,6 +100,9 @@ impl OpCode {
             [Self::GET_UPVALUE, x, rest @ .. ] => {
                 (OpCode::GetUpvalue { slot: *x }, rest)
             }
+            [Self::GET_TUPLE, x, rest @ .. ] => {
+                (OpCode::GetTuple { slot: *x }, rest)
+            }
             [Self::EQUAL, rest @ .. ]     => (OpCode::Equal, rest),
             [Self::GREATER, rest @ .. ]   => (OpCode::Greater, rest),
             [Self::LESS, rest @ .. ]      => (OpCode::Less, rest),
@@ -139,7 +144,8 @@ impl OpCode {
             OpCode::Call { args: u8_arg } |
             OpCode::Concat { n: u8_arg } |
             OpCode::PopBlock { n: u8_arg } |
-            OpCode::GetUpvalue { slot: u8_arg } => {
+            OpCode::GetUpvalue { slot: u8_arg } |
+            OpCode::GetTuple { slot: u8_arg } => {
                 code.push(u8_arg);
             }
             OpCode::Constant { key: u16_arg } |
@@ -170,6 +176,7 @@ impl OpCode {
             OpCode::GetLocal { .. }     => Self::GET_LOCAL,
             OpCode::SetLocal { .. }     => Self::SET_LOCAL,
             OpCode::GetUpvalue { .. }   => Self::GET_UPVALUE,
+            OpCode::GetTuple { .. }     => Self::GET_TUPLE,
             OpCode::Equal               => Self::EQUAL,
             OpCode::Greater             => Self::GREATER,
             OpCode::Less                => Self::LESS,
@@ -220,7 +227,8 @@ impl OpCode {
             OpCode::Call { .. } |
             OpCode::Concat { .. } |
             OpCode::PopBlock { .. } |
-            OpCode::GetUpvalue { .. } => 2,
+            OpCode::GetUpvalue { .. } |
+            OpCode::GetTuple { .. } => 2,
 
             // two byte argument
             OpCode::Constant { .. } |
@@ -248,7 +256,8 @@ impl OpCode {
 
             // pop one push one
             OpCode::Not |
-            OpCode::Negate => 0,
+            OpCode::Negate |
+            OpCode::GetTuple { .. } => 0,
 
             // pushes to stack
             OpCode::Unit |

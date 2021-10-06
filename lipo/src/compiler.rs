@@ -478,7 +478,6 @@ impl<'alloc> Emitter<'alloc> {
         match expr {
             Expression::Binary(binary_expr) => self.binary_expr(binary_expr),
             Expression::Unary(unary_expr) => self.unary_expr(unary_expr),
-            Expression::Field(field_expr) => self.field_expr(field_expr),
             Expression::Unit(unit_expr) => self.unit_expr(unit_expr),
             Expression::Group(group_expr) => self.group_expr(group_expr),
             Expression::Tuple(tuple_expr) => self.tuple_expr(tuple_expr),
@@ -522,6 +521,32 @@ impl<'alloc> Emitter<'alloc> {
                 span: binary_expr.lhs.span(),
             });
             return;
+        }
+
+        if op == T::Dot {
+            if let Expression::Primary(primary) = &*binary_expr.rhs {
+                match primary.token.kind {
+                    T::Identifier => {
+                        todo!("record field access");
+                        // return;
+                    }
+                    T::DecimalNumber => {
+                        self.expression(&binary_expr.lhs);
+
+                        let span = primary.token.span.anchor(&self.source).as_str();
+                        let slot = span.parse::<u8>().expect("invalid tuple slot");
+
+                        let span = FreeSpan::join(binary_expr.operator.span, binary_expr.rhs.span());
+                        self.emit(OpCode::GetTuple { slot }, span);
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+            self.error(InvalidFieldExpr {
+                span: binary_expr.rhs.span(),
+            });
+            return
         }
 
         if op == T::Or {
@@ -621,10 +646,6 @@ impl<'alloc> Emitter<'alloc> {
             }
             _ => unreachable!()
         }
-    }
-
-    fn field_expr(&mut self, _field_expr: &FieldExpr) {
-        todo!()
     }
 
     fn unit_expr(&mut self, unit_expr: &UnitExpr) {

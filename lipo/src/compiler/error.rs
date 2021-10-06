@@ -132,6 +132,19 @@ define_error! {
 }
 
 define_error! {
+    InvalidFieldExpr {
+        span: FreeSpan,
+    },
+    message: "invalid field expression",
+    labels: [
+        Label::primary(span, "tried to use as a field"),
+    ],
+    notes: [
+        "help: for Tuples use non-negative integers and for Records use identifiers, for example `tuple.0; record.field`",
+    ],
+}
+
+define_error! {
     InvalidNumberLiteral {
         cause: ParseFloatError,
         span: FreeSpan,
@@ -184,22 +197,6 @@ define_error! {
 }
 
 define_error! {
-    TooManyTupleItems {
-        extra_item_span: FreeSpan,
-        tuple_expr_span: FreeSpan,
-        limit: usize,
-    },
-    message: "tuple expression exceeded the maximum number of items",
-    labels: [
-        Label::primary(extra_item_span, "item over the limit"),
-        Label::secondary(tuple_expr_span, "in tuple expression"),
-    ],
-    notes: [
-        format!("note: the maximum number of tuple items is {}", limit),
-    ],
-}
-
-define_error! {
     TooManyLocals {
         span: FreeSpan,
         limit: usize,
@@ -226,6 +223,22 @@ define_error! {
     ],
     notes: [
         format!("note: the maximum number of function parameters is {}", limit),
+    ],
+}
+
+define_error! {
+    TooManyTupleItems {
+        extra_item_span: FreeSpan,
+        tuple_expr_span: FreeSpan,
+        limit: usize,
+    },
+    message: "tuple expression exceeded the maximum number of items",
+    labels: [
+        Label::primary(extra_item_span, "item over the limit"),
+        Label::secondary(tuple_expr_span, "in tuple expression"),
+    ],
+    notes: [
+        format!("note: the maximum number of tuple items is {}", limit),
     ],
 }
 

@@ -1,6 +1,7 @@
 #![feature(assert_matches)]
 #![feature(never_type)]
 #![feature(once_cell)]
+#![feature(let_else)]
 
 // spooky scary specialization
 #![allow(incomplete_features)]

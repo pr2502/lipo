@@ -416,7 +416,8 @@ impl<'src> Parser<'src> {
                 T::Minus |
                 T::Plus |
                 T::Div |
-                T::Mul => {}
+                T::Mul |
+                T::Dot => {}
                 // postfix operators
                 T::LeftParen => {}
                 // expression end
@@ -443,10 +444,6 @@ impl<'src> Parser<'src> {
                 match operator.kind {
                     T::LeftParen => {
                         lhs = Expression::Call(self.call_expr(Box::new(lhs))?);
-                        continue;
-                    }
-                    T::Dot => {
-                        lhs = Expression::Field(self.field_expr(Box::new(lhs))?);
                         continue;
                     }
                     _ => unreachable!(),
@@ -514,12 +511,6 @@ impl<'src> Parser<'src> {
         }
     }
 
-    fn field_expr(&mut self, expr: Box<Expression>) -> Result<FieldExpr> {
-        let dot_tok = self.expect_next(T::Dot)?;
-        let field = self.name()?;
-        Ok(FieldExpr { expr, dot_tok, field })
-    }
-
     fn name(&mut self) -> Result<Identifier> {
         let token = self.expect_next(T::Identifier)?;
         Ok(Identifier { span: token.span })
@@ -530,15 +521,15 @@ impl<'src> Parser<'src> {
 // # Precedence
 // Sorted from lowest binding power (lowest precedence) to highest.
 //
-// ASSIGNMENT   =
-// OR           or
-// AND          and
-// EQUALITY     == /=
-// COMPARISON   < > <= >=
-// TERM         + -
-// FACTOR       * /
-// UNARY        not -
-// CALL         . ()
+// ASSIGNMENT   `=`
+// OR           `or`
+// AND          `and`
+// EQUALITY     `==` `/=`
+// COMPARISON   `<` `>` `<=` `>=`
+// TERM         `+` `-`
+// FACTOR       `*` `/`
+// UNARY        `not` `-`
+// CALL         `.` `()`
 // PRIMARY
 
 fn prefix_binding_power(kind: TokenKind) -> ((), u8) {
@@ -554,8 +545,7 @@ fn prefix_binding_power(kind: TokenKind) -> ((), u8) {
 fn postfix_binding_power(kind: TokenKind) -> Option<(u8, ())> {
     Some(match kind {
         // call
-        T::LeftParen |
-        T::Dot => (16, ()),
+        T::LeftParen => (16, ()),
 
         _ => return None,
     })
@@ -585,6 +575,8 @@ fn infix_binding_power(kind: TokenKind) -> Option<(u8, u8)> {
         // factor
         T::Div |
         T::Mul          => (13, 14),
+        // call
+        T::Dot          => (16, 17),
 
         _ => return None,
     })

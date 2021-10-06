@@ -117,7 +117,6 @@ impl Spanned for Expression {
         match self {
             Expression::Binary(inner) => inner.span(),
             Expression::Unary(inner) => inner.span(),
-            Expression::Field(inner) => inner.span(),
             Expression::Unit(inner) => inner.span(),
             Expression::Group(inner) => inner.span(),
             Expression::Tuple(inner) => inner.span(),
@@ -140,12 +139,6 @@ impl Spanned for BinaryExpr {
 impl Spanned for UnaryExpr {
     fn span(&self) -> FreeSpan {
         join(self.operator.span, self.expr.span())
-    }
-}
-
-impl Spanned for FieldExpr {
-    fn span(&self) -> FreeSpan {
-        join(self.expr.span(), self.field.span)
     }
 }
 

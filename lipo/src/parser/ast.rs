@@ -152,7 +152,6 @@ pub struct Block {
 pub enum Expression {
     Binary(BinaryExpr),
     Unary(UnaryExpr),
-    Field(FieldExpr),
     Unit(UnitExpr),
     Group(GroupExpr),
     Tuple(TupleExpr),
@@ -165,13 +164,14 @@ pub enum Expression {
 }
 
 // BinaryExpr represents the following rules from the Lox grammar:
-// - assignment     : "="
-// - logic_or       : "or"
-// - logic_and      : "and"
-// - equality       : "/=", "=="
-// - comparison     : ">", ">=", "<", "<="
-// - term           : "-", "+"
-// - factor         : "/", "*"
+// - assignment     : `=`
+// - logic_or       : `or`
+// - logic_and      : `and`
+// - equality       : `/=`, `==`
+// - comparison     : `>`, `>=`, `<`, `<=`
+// - term           : `-`, `+`
+// - factor         : `/`, `*`
+// - call           : `.`
 pub struct BinaryExpr {
     pub lhs: Box<Expression>,
     pub operator: Token,
@@ -181,13 +181,6 @@ pub struct BinaryExpr {
 pub struct UnaryExpr {
     pub operator: Token,
     pub expr: Box<Expression>,
-}
-
-// maybe also fold this into binary expression, even though the rhs must be an Identifier
-pub struct FieldExpr {
-    pub expr: Box<Expression>,
-    pub dot_tok: Token,
-    pub field: Identifier,
 }
 
 pub struct UnitExpr {

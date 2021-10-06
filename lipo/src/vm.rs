@@ -136,6 +136,7 @@ impl<'alloc> VM<'alloc> {
                 OpCode::GET_LOCAL       => self.op_get_local(),
                 OpCode::SET_LOCAL       => self.op_set_local(),
                 OpCode::GET_UPVALUE     => self.op_get_upval(),
+                OpCode::GET_TUPLE       => self.op_get_tuple()?,
                 OpCode::EQUAL           => self.op_equal()?,
                 OpCode::GREATER         => self.op_greater()?,
                 OpCode::LESS            => self.op_less()?,
@@ -232,6 +233,22 @@ impl<'alloc> VM<'alloc> {
             .closure.upvalues.get(slot)
             .unwrap_or_else(|| unreachable!("invalid upvalue access, slot={}", slot));
         self.push(value);
+    }
+
+    fn op_get_tuple(&mut self) -> Result<(), VmError> {
+        let slot = usize::from(self.read_u8());
+
+        let Some(tuple) = self.pop().downcast::<Tuple>() else {
+            return Err(VmError::new(TypeError {
+                span: self.chunk().span(self.offset() - OpCode::GetTuple { slot: 0 }.len()),
+                msg: "can only access slots on Tuples",
+            }));
+        };
+        let Some(&value) = tuple.get(slot) else {
+            todo!("error: slot access out of bounds");
+        };
+        self.push(value);
+        Ok(())
     }
 
     fn op_equal(&mut self) -> Result<(), VmError> {

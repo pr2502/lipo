@@ -12,13 +12,27 @@ pub trait Report: Debug {
 }
 
 pub trait Diagnostic: Any + Debug {
+    /// Diagnostic severity level
+    ///
+    /// See [`Severity`].
     fn severity(&self) -> Severity;
 
+    /// Concise description shown in the header of the report
     fn message(&self) -> String;
 
-    fn labels(&self) -> Vec<Label>;
+    /// Optional labeled snippets of code with further details
+    ///
+    /// Usually there will be one primary Label and zero or more secondary Labels.
+    fn labels(&self) -> Vec<Label> {
+        Vec::new()
+    }
 
-    fn notes(&self) -> Vec<String>;
+    /// Further details of the diagnostic
+    ///
+    /// Usually start with `note: ` or `help: `.
+    fn notes(&self) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 

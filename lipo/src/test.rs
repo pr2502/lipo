@@ -511,8 +511,7 @@ run! {
         let parens = (1);
         let tuple = (1,);
 
-        print parens;
-        print tuple;
+        assert tuple.0 == parens;
     ",
     Ok(_),
 }
