@@ -597,12 +597,11 @@ impl<'src> Parser<'src> {
         // The token regex starts with `#*"` so it must contain a `"` to match
         let hashes = slice.find('"').unwrap();
 
-        let inner_slice = match slice[(hashes + 1)..]
+        let Some(inner_slice) = slice[(hashes + 1)..]
             .strip_suffix(&slice[..hashes])
             .and_then(|s| s.strip_suffix('"'))
-        {
-            Some(slice) => slice,
-            None => self.error(ParserError::UnterminatedStringExpression { span })?,
+        else {
+            self.error(ParserError::UnterminatedStringExpression { span })?;
         };
 
         let modifier_len = modifier.is_some() as u32;

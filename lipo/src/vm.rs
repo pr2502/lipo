@@ -62,8 +62,23 @@ impl<'alloc> VM<'alloc> {
         self.stack.push(value);
     }
 
+    fn frame(&self) -> &Frame<'alloc> {
+        match self.call_stack.last() {
+            Some(frame) => frame,
+            None => {
+                #[cfg(debug_assertions)]
+                { unreachable!("BUG: VM tried to continue with empty call stack") }
+
+                // SAFETY VM breaks the interpreter loop when `op_return` pops the last frame from
+                // the call_stack.
+                #[cfg(not(debug_assertions))]
+                unsafe { std::hint::unreachable_unchecked() }
+            }
+        }
+    }
+
     fn chunk(&self) -> &Chunk<'alloc> {
-        &self.call_stack.last().unwrap().closure.function.chunk
+        &self.frame().closure.function.chunk
     }
 
     fn get_constant(&self, key: u16) -> Value<'alloc> {
@@ -209,10 +224,9 @@ impl<'alloc> VM<'alloc> {
         let slot = usize::from(self.read_u16());
 
         let offset = self.stack_offset;
-
-        let value = *self.stack.get(offset + slot)
-            .unwrap_or_else(|| unreachable!("invalid stack access, slot={}", slot));
-
+        let Some(&value) = self.stack.get(offset + slot) else {
+            unreachable!("invalid stack access, slot={}", slot);
+        };
         self.push(value);
     }
 
@@ -221,17 +235,18 @@ impl<'alloc> VM<'alloc> {
 
         let value = self.peek();
         let offset = self.stack_offset;
-        let slot = self.stack.get_mut(offset + slot)
-            .unwrap_or_else(|| unreachable!("invalid stack access, slot={}", slot));
+        let Some(slot) = self.stack.get_mut(offset + slot) else {
+            unreachable!("invalid stack access, slot={}", slot);
+        };
         *slot = value;
     }
 
     fn op_get_upval(&mut self) {
         let slot = usize::from(self.read_u8());
 
-        let value = *self.call_stack.last().unwrap()
-            .closure.upvalues.get(slot)
-            .unwrap_or_else(|| unreachable!("invalid upvalue access, slot={}", slot));
+        let Some(&value) = self.frame().closure.upvalues.get(slot) else {
+            unreachable!("invalid upvalue access, slot={}", slot);
+        };
         self.push(value);
     }
 
@@ -245,7 +260,11 @@ impl<'alloc> VM<'alloc> {
             }));
         };
         let Some(&value) = tuple.get(slot) else {
-            todo!("error: slot access out of bounds");
+            return Err(VmError::new(TypeError {
+                span: self.chunk().span(self.offset() - OpCode::GetTuple { slot: 0 }.len()),
+                // TODO tuple of type (X, Y, Z) accessed field `N`
+                msg: "Tuple access out of bounds",
+            }));
         };
         self.push(value);
         Ok(())
@@ -254,12 +273,11 @@ impl<'alloc> VM<'alloc> {
     fn op_equal(&mut self) -> Result<(), VmError> {
         let rhs = self.pop();
         let lhs = self.pop();
-        if let Some(result) = lhs.partial_eq(&rhs) {
-            self.push(Value::from(result));
-            Ok(())
-        } else {
+        let Some(result) = lhs.partial_eq(&rhs) else {
             todo!("type error");
-        }
+        };
+        self.push(Value::from(result));
+        Ok(())
     }
 
     fn op_greater(&mut self) -> Result<(), VmError> {
@@ -297,23 +315,19 @@ impl<'alloc> VM<'alloc> {
     fn op_add(&mut self) -> Result<(), VmError> {
         let rhs = self.pop();
         let lhs = self.pop();
-        let result = if let (Some(lhs), Some(rhs)) = (lhs.downcast::<Float>(), rhs.downcast::<Float>()) {
-            match Float::new(lhs.inner() + rhs.inner(), self.alloc) {
-                Some(float) => Value::from(float),
-                None => {
-                    return Err(VmError::new(MathError {
-                        span: self.chunk().span(self.offset() - OpCode::Add.len()),
-                        msg: "operation resulted in a NaN",
-                    }));
-                }
-            }
-        } else {
+        let (Some(lhs), Some(rhs)) = (lhs.downcast::<Float>(), rhs.downcast::<Float>()) else {
             return Err(VmError::new(TypeError {
                 span: self.chunk().span(self.offset() - OpCode::Add.len()),
                 msg: "addition only supported on Numbers",
             }));
         };
-        self.push(result);
+        let Some(result) = Float::new(lhs.inner() + rhs.inner(), self.alloc) else {
+            return Err(VmError::new(MathError {
+                span: self.chunk().span(self.offset() - OpCode::Add.len()),
+                msg: "operation resulted in a NaN",
+            }));
+        };
+        self.push(Value::from(result));
         Ok(())
     }
 
@@ -342,95 +356,82 @@ impl<'alloc> VM<'alloc> {
     fn op_subtract(&mut self) -> Result<(), VmError> {
         let rhs = self.pop();
         let lhs = self.pop();
-        let result = match (lhs.downcast::<Float>(), rhs.downcast::<Float>()) {
-            (Some(lhs), Some(rhs)) => {
-                match Float::new(lhs.inner() - rhs.inner(), self.alloc) {
-                    Some(float) => Value::from(float),
-                    None => {
-                        return Err(VmError::new(MathError {
-                            span: self.chunk().span(self.offset() - OpCode::Add.len()),
-                            msg: "operation resulted in a NaN",
-                        }));
-                    }
-                }
-            }
-            _ => return Err(VmError::new(TypeError {
+        let (Some(lhs), Some(rhs)) = (lhs.downcast::<Float>(), rhs.downcast::<Float>()) else {
+            return Err(VmError::new(TypeError {
                 span: self.chunk().span(self.offset() - OpCode::Subtract.len()),
                 msg: "subtraction only supported on Numbers",
-            })),
+            }));
         };
-        self.push(result);
+        let Some(result) = Float::new(lhs.inner() - rhs.inner(), self.alloc) else {
+            return Err(VmError::new(MathError {
+                span: self.chunk().span(self.offset() - OpCode::Subtract.len()),
+                msg: "operation resulted in a NaN",
+            }));
+        };
+        self.push(Value::from(result));
         Ok(())
     }
 
     fn op_multiply(&mut self) -> Result<(), VmError> {
         let rhs = self.pop();
         let lhs = self.pop();
-        let result = match (lhs.downcast::<Float>(), rhs.downcast::<Float>()) {
-            (Some(lhs), Some(rhs)) => {
-                match Float::new(lhs.inner() * rhs.inner(), self.alloc) {
-                    Some(float) => Value::from(float),
-                    None => {
-                        return Err(VmError::new(MathError {
-                            span: self.chunk().span(self.offset() - OpCode::Add.len()),
-                            msg: "operation resulted in a NaN",
-                        }));
-                    }
-                }
-            }
-            _ => return Err(VmError::new(TypeError {
+        let (Some(lhs), Some(rhs)) = (lhs.downcast::<Float>(), rhs.downcast::<Float>()) else {
+            return Err(VmError::new(TypeError {
                 span: self.chunk().span(self.offset() - OpCode::Multiply.len()),
                 msg: "multiplication only supported on Numbers",
-            })),
+            }));
         };
-        self.push(result);
+        let Some(result) = Float::new(lhs.inner() * rhs.inner(), self.alloc) else {
+            return Err(VmError::new(MathError {
+                span: self.chunk().span(self.offset() - OpCode::Multiply.len()),
+                msg: "operation resulted in a NaN",
+            }));
+        };
+        self.push(Value::from(result));
         Ok(())
     }
 
     fn op_divide(&mut self) -> Result<(), VmError> {
         let rhs = self.pop();
         let lhs = self.pop();
-        let result = match (lhs.downcast::<Float>(), rhs.downcast::<Float>()) {
-            (Some(lhs), Some(rhs)) => {
-                match Float::new(lhs.inner() / rhs.inner(), self.alloc) {
-                    Some(float) => Value::from(float),
-                    None => {
-                        return Err(VmError::new(MathError {
-                            span: self.chunk().span(self.offset() - OpCode::Add.len()),
-                            msg: "operation resulted in a NaN",
-                        }));
-                    }
-                }
-            }
-            _ => return Err(VmError::new(TypeError {
+        let (Some(lhs), Some(rhs)) = (lhs.downcast::<Float>(), rhs.downcast::<Float>()) else {
+            return Err(VmError::new(TypeError {
                 span: self.chunk().span(self.offset() - OpCode::Divide.len()),
                 msg: "division only supported on Numbers",
-            })),
+            }));
         };
-        self.push(result);
+        let Some(result) = Float::new(lhs.inner() / rhs.inner(), self.alloc) else {
+            return Err(VmError::new(MathError {
+                span: self.chunk().span(self.offset() - OpCode::Divide.len()),
+                msg: "operation resulted in a NaN",
+            }));
+        };
+        self.push(Value::from(result));
         Ok(())
     }
 
     fn op_not(&mut self) -> Result<(), VmError> {
         let value = self.pop();
-        let value = value.downcast::<bool>()
-            .map(|b| Value::from(!b))
-            .ok_or_else(|| VmError::new(TypeError {
+        let Some(b) = value.downcast::<bool>() else {
+            return Err(VmError::new(TypeError {
                 span: self.chunk().span(self.offset() - OpCode::Not.len()),
                 msg: "not only supported on Bool",
-            }))?;
+            }));
+        };
+        let value = Value::from(!b);
         self.push(value);
         Ok(())
     }
 
     fn op_negate(&mut self) -> Result<(), VmError> {
         let value = self.pop();
-        let value = value.downcast::<Float>()
-            .map(|n| Value::from(Float::new(-n.inner(), self.alloc).unwrap()))
-            .ok_or_else(|| VmError::new(TypeError {
+        let Some(f) = value.downcast::<Float>() else {
+            return Err(VmError::new(TypeError {
                 span: self.chunk().span(self.offset() - OpCode::Negate.len()),
                 msg: "negation only supported on Numbers",
-            }))?;
+            }));
+        };
+        let value = Value::from(Float::new(-f.inner(), self.alloc).unwrap());
         self.push(value);
         Ok(())
     }
@@ -440,26 +441,26 @@ impl<'alloc> VM<'alloc> {
 
         let from = self.stack.len().checked_sub(len)
             .expect("peek past the start of stack");
-
         let items = self.stack.drain(from..).collect();
-
         let value = Value::from(Tuple::new(items, self.alloc));
         self.push(value);
     }
 
     fn op_assert(&mut self) -> Result<(), VmError> {
         let value = self.pop();
-        match value.downcast::<bool>() {
-            Some(true) => {}
-            Some(false) => return Err(VmError::new(AssertionError {
-                span: self.chunk().span(self.offset() - OpCode::Assert.len()),
-            })),
-            _ => return Err(VmError::new(TypeError {
+        let Some(pred) = value.downcast::<bool>() else {
+            return Err(VmError::new(TypeError {
                 span: self.chunk().span(self.offset() - OpCode::Assert.len()),
                 msg: "asserted expression must return a Bool",
-            })),
+            }));
+        };
+        if pred {
+            Ok(())
+        } else {
+            Err(VmError::new(AssertionError {
+                span: self.chunk().span(self.offset() - OpCode::Assert.len()),
+            }))
         }
-        Ok(())
     }
 
     fn op_print(&mut self) {
@@ -479,19 +480,16 @@ impl<'alloc> VM<'alloc> {
         let offset = usize::from(self.read_u16());
 
         let value = self.peek();
-        match value.downcast::<bool>() {
-            Some(true) => {
-                // SAFETY Chunk is checked when VM is constructed.
-                // - every jump must be at the start of a valid instruction
-                self.ip = unsafe { self.ip.add(offset) };
-            }
-            Some(false) => {}
-            None => {
-                return Err(VmError::new(TypeError {
-                    span: self.chunk().span(self.offset() - OpCode::JumpIfTrue { offset: 0 }.len()),
-                    msg: "if predicate must be a Bool",
-                }));
-            }
+        let Some(pred) = value.downcast::<bool>() else {
+            return Err(VmError::new(TypeError {
+                span: self.chunk().span(self.offset() - OpCode::JumpIfTrue { offset: 0 }.len()),
+                msg: "if predicate must be a Bool",
+            }));
+        };
+        if pred {
+            // SAFETY Chunk is checked when VM is constructed.
+            // - every jump must be at the start of a valid instruction
+            self.ip = unsafe { self.ip.add(offset) };
         }
         Ok(())
     }
@@ -611,17 +609,14 @@ impl<'alloc> VM<'alloc> {
         let upvals = usize::from(self.read_u8());
 
         let constant = self.get_constant(key);
-        let function = match constant.downcast::<Function>() {
-            Some(function) => function,
-            None => {
-                    #[cfg(debug_assertions)]
-                    unreachable!("BUG: OpCode::Closure referenced a constant that was not a Function");
+        let Some(function) = constant.downcast::<Function>() else {
+            #[cfg(debug_assertions)]
+            unreachable!("BUG: OpCode::Closure referenced a constant that was not a Function");
 
-                    // SAFETY Chunk is checked when the VM is constructed, all constant references
-                    // from OpCode::Closure must be valid and reference a Function object.
-                    #[cfg(not(debug_assertions))]
-                    unsafe { std::hint::unreachable_unchecked(); }
-            },
+            // SAFETY Chunk is checked when the VM is constructed, all constant references
+            // from OpCode::Closure must be valid and reference a Function object.
+            #[cfg(not(debug_assertions))]
+            unsafe { std::hint::unreachable_unchecked(); }
         };
         let upvalues = self.stack.drain((self.stack.len() - upvals)..).collect();
         let closure = Value::from(Closure::new(function, upvalues, self.alloc));
