@@ -1,5 +1,6 @@
 [workspace]
 members = [
     "lipo",
+    "lipo_cli",
     "lipo_macro",
 ]
