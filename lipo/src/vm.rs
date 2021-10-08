@@ -1,8 +1,7 @@
 use crate::builtins::{Closure, Float, Function, NativeFunction, String, Tuple};
 use crate::chunk::Chunk;
 use crate::opcode::OpCode;
-use crate::Value;
-use crate::{Alloc, ObjectRef, Trace};
+use crate::{Alloc, ObjectRef, Trace, Value};
 
 
 pub mod error;

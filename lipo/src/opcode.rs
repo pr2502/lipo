@@ -242,6 +242,7 @@ impl OpCode {
         }
     }
 
+    #[allow(dead_code)] // will be used for [`ChunkBuf::check`]
     pub fn stack_effect(self) -> isize {
         match self {
             // return drops the whole stack frame,
