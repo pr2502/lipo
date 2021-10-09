@@ -499,8 +499,10 @@ run! {
 run! {
     record,
     "
-        let block = { (); };
+        let block = { (); 1 };
         let record = { block, };
+
+        assert record.block == block;
     ",
     Ok(_),
 }

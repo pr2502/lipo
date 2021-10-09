@@ -1,4 +1,4 @@
-use crate::builtins::{Closure, Float, Function, NativeFunction, String, Tuple};
+use crate::builtins::{Closure, Float, Function, Name, NativeFunction, Record, String, Tuple};
 use crate::chunk::Chunk;
 use crate::opcode::OpCode;
 use crate::{Alloc, ObjectRef, Trace, Value};
@@ -151,6 +151,7 @@ impl<'alloc> VM<'alloc> {
                 OpCode::SET_LOCAL       => self.op_set_local(),
                 OpCode::GET_UPVALUE     => self.op_get_upval(),
                 OpCode::GET_TUPLE       => self.op_get_tuple()?,
+                OpCode::GET_RECORD      => self.op_get_record()?,
                 OpCode::EQUAL           => self.op_equal()?,
                 OpCode::GREATER         => self.op_greater()?,
                 OpCode::LESS            => self.op_less()?,
@@ -161,7 +162,8 @@ impl<'alloc> VM<'alloc> {
                 OpCode::DIVIDE          => self.op_divide()?,
                 OpCode::NOT             => self.op_not()?,
                 OpCode::NEGATE          => self.op_negate()?,
-                OpCode::TUPLE           => self.op_tuple(),
+                OpCode::MAKE_TUPLE      => self.op_make_tuple(),
+                OpCode::MAKE_RECORD     => self.op_make_record(),
                 OpCode::ASSERT          => self.op_assert()?,
                 OpCode::PRINT           => self.op_print(),
                 OpCode::JUMP            => self.op_jump(),
@@ -263,6 +265,28 @@ impl<'alloc> VM<'alloc> {
                 span: self.chunk().span(self.offset() - OpCode::GetTuple { slot: 0 }.len()),
                 // TODO tuple of type (X, Y, Z) accessed field `N`
                 msg: "Tuple access out of bounds",
+            }));
+        };
+        self.push(value);
+        Ok(())
+    }
+
+    fn op_get_record(&mut self) -> Result<(), VmError> {
+        let field_key = self.read_u16();
+
+        let Some(record) = self.pop().downcast::<Record>() else {
+            return Err(VmError::new(TypeError {
+                span: self.chunk().span(self.offset() - OpCode::GetRecord { name_key: 0 }.len()),
+                msg: "field access only supported on Records",
+            }));
+        };
+        let field_name = self.get_constant(field_key)
+            .downcast::<Name>().unwrap();
+        let Some(value) = record.get(field_name) else {
+            dbg!(field_name);
+            return Err(VmError::new(TypeError {
+                span: self.chunk().span(self.offset() - OpCode::GetRecord { name_key: 0 }.len()),
+                msg: "record doesn't contain the requested field",
             }));
         };
         self.push(value);
@@ -435,13 +459,26 @@ impl<'alloc> VM<'alloc> {
         Ok(())
     }
 
-    fn op_tuple(&mut self) {
+    fn op_make_tuple(&mut self) {
         let len = usize::from(self.read_u8());
 
         let from = self.stack.len().checked_sub(len)
             .expect("peek past the start of stack");
         let items = self.stack.drain(from..).collect();
         let value = Value::from(Tuple::new(items, self.alloc));
+        self.push(value);
+    }
+
+    fn op_make_record(&mut self) {
+        let len = usize::from(self.read_u8());
+
+        let from = self.stack.len().checked_sub(len * 2)
+            .expect("peek past the start of stack");
+        // SAFETY Chunk is checked when VM is constructed.
+        // - TODO this check is not yet implemented, but we panic in debug mode
+        let record = unsafe { Record::new_from_sorted(&self.stack[from..], self.alloc) };
+        let value = Value::from(record);
+        self.stack.truncate(from);
         self.push(value);
     }
 

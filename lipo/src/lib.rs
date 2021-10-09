@@ -1,7 +1,9 @@
+#![feature(array_windows)]
 #![feature(assert_matches)]
+#![feature(is_sorted)]
+#![feature(let_else)]
 #![feature(never_type)]
 #![feature(once_cell)]
-#![feature(let_else)]
 
 // spooky scary specialization
 #![allow(incomplete_features)]
@@ -18,7 +20,7 @@ mod chunk;
 mod compiler;
 mod diagnostic;
 mod fmt;
-mod lexer;
+pub mod lexer;
 mod name;
 mod opcode;
 mod parser;
@@ -30,12 +32,14 @@ pub mod builtins {
     mod float;
     mod function;
     mod native_function;
+    mod record;
     mod string;
     mod tuple;
 
     pub use float::Float;
     pub use function::{Closure, Function};
     pub use native_function::{NativeError, NativeFunction};
+    pub use record::Record;
     pub use string::String;
     pub use tuple::Tuple;
 

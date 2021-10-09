@@ -119,6 +119,20 @@ define_error! {
 }
 
 define_error! {
+    DuplicateRecordEntry {
+        duplicate_span: FreeSpan,
+        previous_span: FreeSpan,
+        record_expr_span: FreeSpan,
+    },
+    message: "duplicate record entry",
+    labels: [
+        Label::primary(duplicate_span, "duplicate entry"),
+        Label::secondary(previous_span, "entry with the same name was here"),
+        Label::secondary(record_expr_span, "in record expression"),
+    ],
+}
+
+define_error! {
     InvalidAssignmentTarget {
         span: FreeSpan,
     },
@@ -223,6 +237,22 @@ define_error! {
     ],
     notes: [
         format!("note: the maximum number of function parameters is {}", limit),
+    ],
+}
+
+define_error! {
+    TooManyRecordEntries {
+        extra_entry_span: FreeSpan,
+        record_expr_span: FreeSpan,
+        limit: usize,
+    },
+    message: "record expression exceeded the maximum number of entries",
+    labels: [
+        Label::primary(extra_entry_span, "entry over the limit"),
+        Label::secondary(record_expr_span, "in record expression"),
+    ],
+    notes: [
+        format!("note: the maximum number of record entries is {}", limit),
     ],
 }
 

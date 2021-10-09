@@ -300,7 +300,50 @@ impl<'src> Parser<'src> {
     }
 
     fn record(&mut self) -> Result<RecordExpr> {
-        todo!("record");
+        let left_brace_tok = self.expect_next(T::LeftBrace)?;
+        let entries = self.record_entry_list()?;
+        let right_brace_tok = self.expect_next(T::RightBrace)?;
+        Ok(RecordExpr { left_brace_tok, entries, right_brace_tok })
+    }
+
+    fn record_entry_list(&mut self) -> Result<Delimited<Comma, RecordEntry>> {
+        let mut entries = Delimited::default();
+
+        match self.peek_kind() {
+            // expression list end
+            T::Semicolon |
+            T::RightParen |
+            T::RightBrace |
+            T::Eof => return Ok(entries),
+            _ => {}
+        }
+
+        loop {
+            let name = self.name()?;
+
+            let value = if let Some(colon_tok) = self.match_next(T::Colon) {
+                let init = Box::new(self.expression()?);
+                Some(EntryInit { colon_tok, init })
+            } else {
+                None
+            };
+
+            entries.items.push(RecordEntry { name, value });
+
+            if let Some(comma_tok) = self.match_next(T::Comma) {
+                let comma = Comma { span: comma_tok.span };
+                entries.delim.push(comma);
+            }
+
+            match self.peek_kind() {
+                // expression list end
+                T::Semicolon |
+                T::RightParen |
+                T::RightBrace |
+                T::Eof => return Ok(entries),
+                _ => {}
+            }
+        }
     }
 
     fn block(&mut self) -> Result<Block> {

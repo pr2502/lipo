@@ -115,40 +115,72 @@ impl<F: Copy, const N: usize> Vtable<F, N> {
 }
 
 struct PrimitiveVtables<const N: usize> {
+    _tags: Vtable<TypeTag, N>,
     _name: Vtable<&'static str, N>,
     debug_fmt: Vtable<fn(PrimitiveAny, &mut fmt::Formatter<'_>) -> fmt::Result, N>,
     eq: Vtable<fn(PrimitiveAny, PrimitiveAny) -> bool, N>,
     hash_code: Vtable<fn(PrimitiveAny) -> usize, N>,
 }
 
-// NOTE The order of the arrays here is very important, the offset into the array must match the
-// constants in `TypeTag`
-static VTABLES: PrimitiveVtables<3> = PrimitiveVtables {
-    _name: Vtable([
-        "",
-        <()>::NAME,
-        <bool>::NAME,
-    ]),
+impl<const N: usize> PrimitiveVtables<N> {
+    #[allow(dead_code)] // Possibly false-positive, we're using it in a compile-time-assertion
+    const fn size(&self) -> usize {
+        N
+    }
+}
 
-    // `drop` and `mark` are not implemented for primitive types
+static VTABLES: PrimitiveVtables<4> = {
+    // NOTE The order of the arrays here is very important, the offset into the array must match
+    // the constants in `TypeTag`
+    const _TYPE_TAG_SANITY_CHECK: () = {
+        // Here we do a basic sanity check of the type tags being the correct position, it doesn't
+        // catch the different fields not being in the same order but it does at least catch the
+        // `_tags` field getting out of sync with the `TypeTag` associated constants.
+        let mut i = 0usize;
+        while i < VTABLES.size() {
+            assert!(VTABLES._tags.0[i].as_usize() == i);
+            i += 1;
+        }
+    };
+    const VTABLES: PrimitiveVtables<4> = PrimitiveVtables {
+        _tags: Vtable([
+            TypeTag::OBJECT,
+            TypeTag::UNIT,
+            TypeTag::BOOL,
+            TypeTag::NAME,
+        ]),
 
-    debug_fmt: Vtable([
-        |_, _| unreachable!(),
-        debug_fmt::<()>,
-        debug_fmt::<bool>,
-    ]),
+        _name: Vtable([
+            "",
+            <()>::NAME,
+            <bool>::NAME,
+            <Name>::NAME,
+        ]),
 
-    eq: Vtable([
-        |_, _| unreachable!(),
-        eq::<()>,
-        eq::<bool>,
-    ]),
+        // `drop` and `mark` are not implemented for primitive types
 
-    hash_code: Vtable([
-        |_| unreachable!(),
-        hash::<()>,
-        hash::<bool>,
-    ]),
+        debug_fmt: Vtable([
+            |_, _| unreachable!(),
+            debug_fmt::<()>,
+            debug_fmt::<bool>,
+            debug_fmt::<Name>,
+        ]),
+
+        eq: Vtable([
+            |_, _| unreachable!(),
+            eq::<()>,
+            eq::<bool>,
+            eq::<Name>,
+        ]),
+
+        hash_code: Vtable([
+            |_| unreachable!(),
+            hash::<()>,
+            hash::<bool>,
+            hash::<Name>,
+        ]),
+    };
+    VTABLES
 };
 
 fn debug_fmt<'alloc, P: Primitive<'alloc>>(this: PrimitiveAny, f: &mut fmt::Formatter) -> fmt::Result {

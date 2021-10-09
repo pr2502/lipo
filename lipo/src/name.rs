@@ -2,7 +2,7 @@ use fxhash::FxHashMap as HashMap;
 use std::fmt::{self, Debug, Display};
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
-use std::{mem, ptr};
+use std::{cmp, mem, ptr};
 
 
 #[derive(Clone, Copy)]
@@ -30,9 +30,17 @@ impl<'interner> Name<'interner> {
         }
     }
 
+    fn as_ptr(self) -> *const &'static str {
+        self.string as _
+    }
+
+    fn as_str(self) -> &'static str {
+        *self.string
+    }
+
     /// Only use for Primitive conversions
     pub(crate) fn to_u64(self) -> u64 {
-        self.string as *const &'static str as u64
+        self.as_ptr() as u64
     }
 
     /// Only use for Primitive conversions
@@ -47,27 +55,39 @@ impl<'interner> Name<'interner> {
 
 impl<'alloc> Debug for Name<'alloc> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        Debug::fmt(*self.string, f)
+        Debug::fmt(self.as_str(), f)
     }
 }
 
 impl<'alloc> Display for Name<'alloc> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        Display::fmt(*self.string, f)
+        Display::fmt(self.as_str(), f)
     }
 }
 
 impl<'interner> PartialEq for Name<'interner> {
     fn eq(&self, other: &Self) -> bool {
-        ptr::eq(self.string, other.string)
+        ptr::eq(self.as_ptr(), other.as_ptr())
     }
 }
 
 impl<'interner> Eq for Name<'interner> {}
 
+impl<'interner> PartialOrd for Name<'interner> {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        Some(Ord::cmp(&self.as_ptr(), &other.as_ptr()))
+    }
+}
+
+impl<'interner> Ord for Name<'interner> {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
+        Ord::cmp(&self.as_ptr(), &other.as_ptr())
+    }
+}
+
 impl<'interner> Hash for Name<'interner> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        state.write_u64(self.to_u64());
+        self.as_ptr().hash(state);
     }
 }
 

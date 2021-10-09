@@ -20,6 +20,7 @@ use error::{CompilerError, Error};
 const MAX_ARGS: usize = u8::MAX as usize;
 const MAX_LOCALS: usize = u16::MAX as usize;
 const MAX_TUPLE_ITEMS: usize = u8::MAX as usize;
+const MAX_RECORD_ENTRIES: usize = u8::MAX as usize;
 
 
 struct Emitter<'alloc> {
@@ -524,15 +525,20 @@ impl<'alloc> Emitter<'alloc> {
         }
 
         if op == T::Dot {
+            self.expression(&binary_expr.lhs);
+
             if let Expression::Primary(primary) = &*binary_expr.rhs {
                 match primary.token.kind {
                     T::Identifier => {
-                        todo!("record field access");
-                        // return;
+                        let name = self.intern_name(Identifier { span: primary.token.span });
+                        let value = Value::from(name);
+                        let name_key = self.insert_constant(value);
+
+                        let span = FreeSpan::join(binary_expr.operator.span, binary_expr.rhs.span());
+                        self.emit(OpCode::GetRecord { name_key }, span);
+                        return;
                     }
                     T::DecimalNumber => {
-                        self.expression(&binary_expr.lhs);
-
                         let span = primary.token.span.anchor(&self.source).as_str();
                         let slot = span.parse::<u8>().expect("invalid tuple slot");
 
@@ -669,11 +675,57 @@ impl<'alloc> Emitter<'alloc> {
             self.expression(item);
         }
         let len = tuple_expr.exprs.items.len().try_into().unwrap();
-        self.emit(OpCode::Tuple { len }, tuple_expr.span());
+        self.emit(OpCode::MakeTuple { len }, tuple_expr.span());
     }
 
-    fn record_expr(&mut self, _record_expr: &RecordExpr) {
-        todo!()
+    fn record_expr(&mut self, record_expr: &RecordExpr) {
+        let mut entries = Vec::new();
+
+        for (i, entry) in record_expr.entries.items.iter().enumerate() {
+            if i > MAX_RECORD_ENTRIES {
+                self.error(TooManyRecordEntries {
+                    extra_entry_span: entry.span(),
+                    record_expr_span: record_expr.span(),
+                    limit: MAX_RECORD_ENTRIES,
+                });
+                return;
+            }
+            entries.push((self.intern_name(entry.name), entry));
+        }
+
+        // Stable sort to make the duplicate diagnostics make sense (keep source order)
+        entries.sort_by_key(|(name, _)| *name);
+
+        // Ensure there are no duplicate entries
+        for [(first_name, first), (second_name, second)] in entries.array_windows() {
+            if first_name == second_name {
+                self.error(DuplicateRecordEntry {
+                    duplicate_span: second.name.span,
+                    previous_span: first.name.span,
+                    record_expr_span: record_expr.span(),
+                });
+            }
+        }
+
+        // Emit record keys
+        for (name, entry) in entries.iter() {
+            let key = self.insert_constant(Value::from(*name));
+            self.emit(OpCode::Constant { key }, entry.name.span);
+        }
+
+        // Emit entry values
+        for (name, entry) in entries.iter() {
+            if let Some(value) = &entry.value {
+                self.expression(&value.init);
+            } else {
+                // Name punning - if there is no initializer expression, look up the entry name in
+                // the local scope
+                self.name(*name, entry.name.span);
+            }
+        }
+
+        let len = entries.len().try_into().unwrap();
+        self.emit(OpCode::MakeRecord { len }, record_expr.span());
     }
 
     fn if_expr(&mut self, if_expr: &IfExpr) {

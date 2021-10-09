@@ -166,6 +166,16 @@ impl Spanned for RecordExpr {
     }
 }
 
+impl Spanned for RecordEntry {
+    fn span(&self) -> FreeSpan {
+        if let Some(value) = &self.value {
+            join(self.name.span, value.init.span())
+        } else {
+            self.name.span
+        }
+    }
+}
+
 impl Spanned for IfExpr {
     fn span(&self) -> FreeSpan {
         join(

@@ -25,6 +25,7 @@ pub enum OpCode {
     SetLocal { slot: u16 },
     GetUpvalue { slot: u8 },
     GetTuple { slot: u8 },
+    GetRecord { name_key: u16 },
     Equal,
     Greater,
     Less,
@@ -35,7 +36,8 @@ pub enum OpCode {
     Divide,
     Not,
     Negate,
-    Tuple { len: u8 },
+    MakeTuple { len: u8 },
+    MakeRecord { len: u8 },
     Assert,
     Print,
     Jump { offset: u16 },
@@ -58,6 +60,7 @@ opcodes! {
     SET_LOCAL,
     GET_UPVALUE,
     GET_TUPLE,
+    GET_RECORD,
     EQUAL,
     GREATER,
     LESS,
@@ -68,7 +71,8 @@ opcodes! {
     DIVIDE,
     NOT,
     NEGATE,
-    TUPLE,
+    MAKE_TUPLE,
+    MAKE_RECORD,
     ASSERT,
     PRINT,
     JUMP,
@@ -103,6 +107,9 @@ impl OpCode {
             [Self::GET_TUPLE, x, rest @ .. ] => {
                 (OpCode::GetTuple { slot: *x }, rest)
             }
+            [Self::GET_RECORD, x, y, rest @ .. ]  => {
+                (OpCode::GetRecord { name_key: u16::from_le_bytes([*x, *y]) }, rest)
+            }
             [Self::EQUAL, rest @ .. ]     => (OpCode::Equal, rest),
             [Self::GREATER, rest @ .. ]   => (OpCode::Greater, rest),
             [Self::LESS, rest @ .. ]      => (OpCode::Less, rest),
@@ -113,7 +120,8 @@ impl OpCode {
             [Self::DIVIDE, rest @ .. ]    => (OpCode::Divide, rest),
             [Self::NOT, rest @ .. ]       => (OpCode::Not, rest),
             [Self::NEGATE, rest @ .. ]    => (OpCode::Negate, rest),
-            [Self::TUPLE, x, rest @ .. ]  => (OpCode::Tuple { len: *x }, rest),
+            [Self::MAKE_TUPLE, x, rest @ .. ]  => (OpCode::MakeTuple { len: *x }, rest),
+            [Self::MAKE_RECORD, x, rest @ .. ]  => (OpCode::MakeRecord { len: *x }, rest),
             [Self::ASSERT, rest @ .. ]    => (OpCode::Assert, rest),
             [Self::PRINT, rest @ .. ]     => (OpCode::Print, rest),
             [Self::JUMP, x, y, rest @ .. ] => {
@@ -140,7 +148,8 @@ impl OpCode {
     pub fn encode(self, code: &mut Vec<u8>) {
         code.push(self.tag());
         match self {
-            OpCode::Tuple { len: u8_arg } |
+            OpCode::MakeTuple { len: u8_arg } |
+            OpCode::MakeRecord { len: u8_arg } |
             OpCode::Call { args: u8_arg } |
             OpCode::Concat { n: u8_arg } |
             OpCode::PopBlock { n: u8_arg } |
@@ -149,6 +158,7 @@ impl OpCode {
                 code.push(u8_arg);
             }
             OpCode::Constant { key: u16_arg } |
+            OpCode::GetRecord { name_key: u16_arg } |
             OpCode::GetLocal { slot: u16_arg } |
             OpCode::SetLocal { slot: u16_arg } |
             OpCode::Jump { offset: u16_arg } |
@@ -177,6 +187,7 @@ impl OpCode {
             OpCode::SetLocal { .. }     => Self::SET_LOCAL,
             OpCode::GetUpvalue { .. }   => Self::GET_UPVALUE,
             OpCode::GetTuple { .. }     => Self::GET_TUPLE,
+            OpCode::GetRecord { .. }    => Self::GET_RECORD,
             OpCode::Equal               => Self::EQUAL,
             OpCode::Greater             => Self::GREATER,
             OpCode::Less                => Self::LESS,
@@ -188,7 +199,8 @@ impl OpCode {
             OpCode::Not                 => Self::NOT,
             OpCode::Negate              => Self::NEGATE,
             OpCode::Assert              => Self::ASSERT,
-            OpCode::Tuple { .. }        => Self::TUPLE,
+            OpCode::MakeTuple { .. }    => Self::MAKE_TUPLE,
+            OpCode::MakeRecord { .. }   => Self::MAKE_RECORD,
             OpCode::Print               => Self::PRINT,
             OpCode::Jump { .. }         => Self::JUMP,
             OpCode::JumpIfTrue { .. }   => Self::JUMP_IF_TRUE,
@@ -223,7 +235,8 @@ impl OpCode {
             OpCode::Return => 1,
 
             // one byte argument
-            OpCode::Tuple { .. } |
+            OpCode::MakeTuple { .. } |
+            OpCode::MakeRecord { .. } |
             OpCode::Call { .. } |
             OpCode::Concat { .. } |
             OpCode::PopBlock { .. } |
@@ -234,6 +247,7 @@ impl OpCode {
             OpCode::Constant { .. } |
             OpCode::GetLocal { .. } |
             OpCode::SetLocal { .. } |
+            OpCode::GetRecord { .. } |
             OpCode::Jump { .. } |
             OpCode::JumpIfTrue { .. } |
             OpCode::JumpIfFalse { .. } |
@@ -258,7 +272,8 @@ impl OpCode {
             // pop one push one
             OpCode::Not |
             OpCode::Negate |
-            OpCode::GetTuple { .. } => 0,
+            OpCode::GetTuple { .. } |
+            OpCode::GetRecord { .. } => 0,
 
             // pushes to stack
             OpCode::Unit |
@@ -283,8 +298,11 @@ impl OpCode {
             OpCode::Multiply |
             OpCode::Divide => -1,
 
-            // tuple, pops `len`, pushes one
-            OpCode::Tuple { len } => -isize::from(len) + 1,
+            // make tuple, pops `len`, pushes one
+            OpCode::MakeTuple { len } => -isize::from(len) + 1,
+
+            // make record, pops `2*len`, pushes one
+            OpCode::MakeRecord { len } => -2 * isize::from(len) + 1,
 
             // call, pops `args`, pushes one
             OpCode::Call { args } => -isize::from(args) + 1,

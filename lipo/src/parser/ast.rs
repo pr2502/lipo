@@ -128,7 +128,7 @@ pub struct RecordExpr {
 }
 
 pub struct RecordEntry {
-    pub entry: Identifier,
+    pub name: Identifier,
     pub value: Option<EntryInit>,
 }
 
