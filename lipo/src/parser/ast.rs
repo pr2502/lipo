@@ -26,25 +26,10 @@ pub struct AST<'alloc> {
 // Items
 
 pub enum Item {
-    Class(ClassItem),
     Fn(FnItem),
     Let(LetItem),
     Statement(Statement),
     Expr(Expr),
-}
-
-pub struct ClassItem {
-    pub class_tok: Token,
-    pub name: Identifier,
-    pub inherit: Option<ClassInherit>,
-    pub open_brace: Token,
-    pub methods: Vec<FnItem>,
-    pub close_brace: Token,
-}
-
-pub struct ClassInherit {
-    pub less_tok: Token,
-    pub name: Identifier,
 }
 
 pub struct FnItem {

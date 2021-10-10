@@ -11,18 +11,11 @@ fn join(a: FreeSpan, b: FreeSpan) -> FreeSpan {
 impl Spanned for Item {
     fn span(&self) -> FreeSpan {
         match self {
-            Item::Class(inner) => inner.span(),
             Item::Fn(inner) => inner.span(),
             Item::Let(inner) => inner.span(),
             Item::Statement(inner) => inner.span(),
             Item::Expr(inner) => inner.span(),
         }
-    }
-}
-
-impl Spanned for ClassItem {
-    fn span(&self) -> FreeSpan {
-        join(self.class_tok.span, self.close_brace.span)
     }
 }
 

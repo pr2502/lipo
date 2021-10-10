@@ -22,24 +22,11 @@ impl<T: SourceDebug> SourceDebug for &[T] {
 impl SourceDebug for Item {
     fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Item::Class(inner) => inner.fmt(source, f),
             Item::Fn(inner) => inner.fmt(source, f),
             Item::Let(inner) => inner.fmt(source, f),
             Item::Statement(inner) => inner.fmt(source, f),
             Item::Expr(inner) => inner.fmt(source, f),
         }
-    }
-}
-
-impl SourceDebug for ClassItem {
-    fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut w = f.debug_struct("Class");
-        w.field("name", &self.name.wrap(source));
-        if let Some(inherit) = &self.inherit {
-            w.field("inherit", &inherit.name.wrap(source));
-        }
-        w.field("methods", &self.methods.as_slice().wrap(source));
-        w.finish()
     }
 }
 

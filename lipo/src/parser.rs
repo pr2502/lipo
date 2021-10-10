@@ -169,7 +169,6 @@ impl<'src> Parser<'src> {
         // TODO recovery
         Ok(match self.peek_kind() {
             // Items
-            T::Class => Item::Class(self.class_item()?),
             T::FnKw => Item::Fn(self.fn_item()?),
             T::Let => Item::Let(self.let_item()?),
 
@@ -187,10 +186,6 @@ impl<'src> Parser<'src> {
                 Item::Expr(Expr { expr, semicolon_tok })
             }
         })
-    }
-
-    fn class_item(&mut self) -> Result<ClassItem> {
-        todo!()
     }
 
     fn fn_item(&mut self) -> Result<FnItem> {

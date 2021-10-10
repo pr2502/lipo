@@ -50,7 +50,6 @@ pub enum TokenKind {
     // Keywords
     #[token("and")] And,
     #[token("assert")] Assert,
-    #[token("class")] Class,
     #[token("const")] Const,
     #[token("else")] Else,
     #[token("false")] False,
@@ -150,7 +149,6 @@ impl Display for TokenKind {
             // Keywords
             T::And => "`and`",
             T::Assert => "`assert`",
-            T::Class => "`class`",
             T::Const => "`const`",
             T::Else => "`else`",
             T::False => "`false`",
