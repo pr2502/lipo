@@ -94,13 +94,12 @@ impl<'interner> Hash for Name<'interner> {
 
 #[derive(Default)]
 pub(crate) struct NameInterner {
-    strings: Vec<&'static &'static str>,
     dedup: HashMap<&'static str, Name<'static>>,
 }
 
 impl Drop for NameInterner {
     fn drop(&mut self) {
-        for outer_ref in mem::take(&mut self.strings) {
+        for Name { string: outer_ref, .. } in mem::take(&mut self.dedup).into_values() {
             // SAFETY since NameInterner has been dropped all Names are gone, this is upheld by the
             // caller of `NameInterner::intern`
             unsafe {
