@@ -2,6 +2,7 @@ use super::{repr, TypeTag};
 use crate::name::Name;
 use std::fmt::{self, Debug};
 use std::hash::Hash;
+use std::marker::PhantomData;
 use std::num::NonZeroU64;
 
 
@@ -27,21 +28,37 @@ pub unsafe trait Primitive<'alloc>: sealed::Sealed + Debug + Hash + PartialEq + 
 
 
 #[derive(Clone, Copy)]
-pub struct PrimitiveAny {
+pub struct PrimitiveAny<'alloc> {
+    _alloc: PhantomData<&'alloc ()>,
     repr: NonZeroU64,
 }
 
-impl PrimitiveAny {
-    pub(super) unsafe fn from_repr(repr: NonZeroU64) -> PrimitiveAny {
+impl<'alloc> PrimitiveAny<'alloc> {
+    pub(super) unsafe fn from_repr(repr: NonZeroU64) -> PrimitiveAny<'alloc> {
         debug_assert!(repr::type_tag(repr) != TypeTag::OBJECT, "invalid repr for PrimitiveAny");
-        PrimitiveAny { repr }
+        PrimitiveAny {
+            _alloc: PhantomData, // 'alloc in return type
+            repr,
+        }
     }
 
-    pub(super) fn is<'alloc, P: Primitive<'alloc>>(&self) -> bool {
+    pub(super) fn is<'p_alloc: 'alloc, P: Primitive<'p_alloc>>(&self) -> bool {
         repr::type_tag(self.repr) == <P as Primitive>::TYPE_TAG
     }
 
-    pub(super) fn downcast<'alloc, P: Primitive<'alloc>>(self) -> Option<P> {
+    pub(super) fn downcast<'p_alloc: 'alloc, P: Primitive<'p_alloc>>(self) -> Option<P> {
+        /// Make sure that the lifetime bounds on this function are sufficient to not allow
+        /// creating a non-'static `Primitive` type from a non-'static `Value`
+        /// ```rust,compile_fail
+        /// use lipo::{Alloc, Value};
+        /// use lipo::builtins::{Name, String};
+        ///
+        /// let alloc = Alloc::new();
+        /// let tst: Value<'_> = Value::from(String::new("hello", &alloc));
+        /// let _ = tst.downcast::<Name<'static>>();
+        /// ```
+        fn _check_lifetime_bounds() {}
+
         if self.is::<P>() {
             Some(<P as Primitive>::from_payload(repr::payload(self.repr)))
         } else {
@@ -200,7 +217,7 @@ fn hash<'alloc, P: Primitive<'alloc>>(this: PrimitiveAny) -> usize {
 }
 
 
-impl PrimitiveAny {
+impl<'alloc> PrimitiveAny<'alloc> {
     pub(super) fn debug_fmt(self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let debug_fmt = unsafe { VTABLES.debug_fmt.get(repr::type_tag(self.repr)) };
         debug_fmt(self, f)

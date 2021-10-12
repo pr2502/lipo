@@ -60,7 +60,7 @@ impl TypeTag {
 
 
 pub(crate) enum ValueKind<'alloc> {
-    Primitive(PrimitiveAny),
+    Primitive(PrimitiveAny<'alloc>),
     Object(ObjectRefAny<'alloc>),
 }
 
