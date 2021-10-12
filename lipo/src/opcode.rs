@@ -256,8 +256,8 @@ impl OpCode {
         }
     }
 
-    #[allow(dead_code)] // will be used for [`ChunkBuf::check`]
-    pub fn stack_effect(self) -> isize {
+    /// `(pops, pushes)`
+    pub fn stack_effect(self) -> (usize, usize) {
         match self {
             // return drops the whole stack frame,
             // it must be special cased in the stack tracking code
@@ -267,13 +267,13 @@ impl OpCode {
             OpCode::Jump { .. } |
             OpCode::JumpIfTrue { .. } |
             OpCode::JumpIfFalse { .. } |
-            OpCode::Loop { .. } => 0,
+            OpCode::Loop { .. } => (0, 0),
 
             // pop one push one
             OpCode::Not |
             OpCode::Negate |
             OpCode::GetTuple { .. } |
-            OpCode::GetRecord { .. } => 0,
+            OpCode::GetRecord { .. } => (1, 1),
 
             // pushes to stack
             OpCode::Unit |
@@ -281,13 +281,13 @@ impl OpCode {
             OpCode::False |
             OpCode::Constant { .. } |
             OpCode::GetLocal { .. } |
-            OpCode::GetUpvalue { .. } => 1,
+            OpCode::GetUpvalue { .. } => (0, 1),
 
             // pops one element
             OpCode::Pop |
             OpCode::Assert |
             OpCode::Print |
-            OpCode::SetLocal { .. } => -1,
+            OpCode::SetLocal { .. } => (1, 0),
 
             // binary ops, pop two push one
             OpCode::Equal |
@@ -296,25 +296,25 @@ impl OpCode {
             OpCode::Add |
             OpCode::Subtract |
             OpCode::Multiply |
-            OpCode::Divide => -1,
+            OpCode::Divide => (2, 1),
 
             // make tuple, pops `len`, pushes one
-            OpCode::MakeTuple { len } => -isize::from(len) + 1,
+            OpCode::MakeTuple { len } => (usize::from(len), 1),
 
             // make record, pops `2*len`, pushes one
-            OpCode::MakeRecord { len } => -2 * isize::from(len) + 1,
+            OpCode::MakeRecord { len } => (2 * usize::from(len), 1),
 
             // call, pops `args`, pushes one
-            OpCode::Call { args } => -isize::from(args) + 1,
+            OpCode::Call { args } => (usize::from(args), 1),
 
             // concat, pops N+2, pushes one
-            OpCode::Concat { n } => -isize::from(n) - 1,
+            OpCode::Concat { n } => (usize::from(n) + 2, 1),
 
             // PopBlock pops N+1
-            OpCode::PopBlock { n } => -isize::from(n) - 1,
+            OpCode::PopBlock { n } => (usize::from(n) + 1, 0),
 
             // closure, pops `upvals`, pushes one
-            OpCode::Closure { upvals, .. } => -isize::from(upvals) + 1,
+            OpCode::Closure { upvals, .. } => (usize::from(upvals), 1),
         }
     }
 }

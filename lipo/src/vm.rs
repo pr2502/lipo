@@ -47,14 +47,25 @@ impl<'alloc> VM<'alloc> {
     }
 
     fn pop(&mut self) -> Value<'alloc> {
-        self.stack.pop()
-            .expect("pop empty stack")
+        match self.stack.pop() {
+            Some(val) => val,
+            None => {
+                // SAFETY Chunk is checked when the VM is constructed, all stack access must be
+                // valid.
+                debug_unreachable!("BUG: VM tried to access stack below 0")
+            }
+        }
     }
 
     fn peek(&mut self) -> Value<'alloc> {
-        self.stack.last()
-            .copied()
-            .expect("peek empty stack")
+        match self.stack.last() {
+            Some(val) => *val,
+            None => {
+                // SAFETY Chunk is checked when the VM is constructed, all stack access must be
+                // valid.
+                debug_unreachable!("BUG: VM tried to access stack below 0")
+            }
+        }
     }
 
     fn push(&mut self, value: Value<'alloc>) {
@@ -214,7 +225,7 @@ impl<'alloc> VM<'alloc> {
 
         let offset = self.stack_offset;
         let Some(&value) = self.stack.get(offset + slot) else {
-            unreachable!("invalid stack access, slot={}", slot);
+            debug_unreachable!("BUG: VM tried to access uninitialized stack, slot={}", slot);
         };
         self.push(value);
     }
@@ -225,7 +236,7 @@ impl<'alloc> VM<'alloc> {
         let value = self.peek();
         let offset = self.stack_offset;
         let Some(slot) = self.stack.get_mut(offset + slot) else {
-            unreachable!("invalid stack access, slot={}", slot);
+            debug_unreachable!("BUG: VM tried to access uninitialized stack, slot={}", slot);
         };
         *slot = value;
     }
@@ -450,8 +461,10 @@ impl<'alloc> VM<'alloc> {
     fn op_make_tuple(&mut self) {
         let len = usize::from(self.read_u8());
 
-        let from = self.stack.len().checked_sub(len)
-            .expect("peek past the start of stack");
+        let Some(from) = self.stack.len().checked_sub(len) else {
+            // SAFETY Chunk is checked when the VM is constructed, all stack access must be valid.
+            debug_unreachable!("BUG: VM tried to access stack below 0")
+        };
         let items = self.stack.drain(from..).collect();
         let value = Value::from(Tuple::new(items, self.alloc));
         self.push(value);
@@ -460,8 +473,10 @@ impl<'alloc> VM<'alloc> {
     fn op_make_record(&mut self) {
         let len = usize::from(self.read_u8());
 
-        let from = self.stack.len().checked_sub(len * 2)
-            .expect("peek past the start of stack");
+        let Some(from) = self.stack.len().checked_sub(len * 2) else {
+            // SAFETY Chunk is checked when the VM is constructed, all stack access must be valid.
+            debug_unreachable!("BUG: VM tried to access stack below 0")
+        };
         // SAFETY Chunk is checked when VM is constructed.
         // - TODO this check is not yet implemented, but we panic in debug mode
         let record = unsafe { Record::new_from_sorted(&self.stack[from..], self.alloc) };
@@ -553,7 +568,7 @@ impl<'alloc> VM<'alloc> {
     fn op_call(&mut self) -> Result<(), VmError> {
         let args = usize::from(self.read_u8());
 
-        // The stack layou before call:
+        // The stack layout before call:
         //
         //         caller stack_offset (or stack top)                stack.len() offset puts us
         //         |                                                 |   one past the last arg
@@ -568,19 +583,19 @@ impl<'alloc> VM<'alloc> {
         //                                   callee stack_start = stack.len() - args - 1
         //                                                      = stack.len() - (args + 1)
 
-        let callee_idx = self.stack.len().checked_sub(args + 1)
-            .expect("peek past the start of stack");
-        // SAFETY because we checked for underflow callee_idx is always < stack.len() and in bounds
-        let callee = unsafe { *self.stack.get_unchecked(callee_idx) };
+        let Some(callee_idx) = self.stack.len().checked_sub(args + 1) else {
+            // SAFETY Chunk is checked when the VM is constructed, all stack access must be valid.
+            debug_unreachable!("BUG: VM tried to access stack below 0")
+        };
+        let callee = self.stack[callee_idx];
 
         if let Some(native_function) = callee.downcast::<NativeFunction>() {
-            let arg_start = self.stack.len() - args;
+            // Native function arguments don't include the callee so we skip it.
+            let arg_start = callee_idx + 1;
             let res = native_function.call(&self.stack[arg_start..]);
             match res {
                 Ok(val) => {
-                    // Native function arguments don't include the callee, but we need to remove it
-                    // from the stack too.
-                    self.stack.truncate(arg_start - 1);
+                    self.stack.truncate(arg_start);
                     self.push(val);
                     Ok(())
                 }
@@ -599,7 +614,7 @@ impl<'alloc> VM<'alloc> {
             }
 
             // Include callee in the new stack frame at slot 0.
-            let stack_start = self.stack.len() - args - 1;
+            let stack_start = callee_idx;
 
             log::debug!("stack {:#?}", &self.stack[stack_start..]);
             log::debug!("function {} = {:?}", closure.function.name, &closure.function.chunk);
@@ -620,7 +635,6 @@ impl<'alloc> VM<'alloc> {
             self.stack_offset = callee_frame.stack_offset;
 
             self.call_stack.push(callee_frame);
-
 
             Ok(())
         } else {

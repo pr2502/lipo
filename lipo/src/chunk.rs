@@ -7,7 +7,7 @@ use std::assert_matches::assert_matches;
 use std::collections::hash_map::Entry;
 use std::convert::TryInto;
 use std::fmt::{self, Debug};
-use std::iter;
+use std::{iter, mem};
 
 
 /// Bytecode Chunk
@@ -20,6 +20,11 @@ pub struct Chunk<'alloc> {
     ///
     /// Chunk may contain up to `u16::MAX` unique constants.
     constants: Box<[Value<'alloc>]>,
+
+    /// Maximum required stack size for temporaries
+    ///
+    /// Includes the parameters
+    max_stack: usize,
 
     /// Source code
     source: ObjectRef<'alloc, String>,
@@ -108,6 +113,9 @@ pub struct ChunkBuf<'alloc> {
     /// Deduplicating map for constant pool
     constant_hash: HashMap<Value<'alloc>, u16>,
 
+    /// Function parameters / initial stack size
+    params: usize,
+
     /// Source code
     source: ObjectRef<'alloc, String>,
 
@@ -116,11 +124,12 @@ pub struct ChunkBuf<'alloc> {
 }
 
 impl<'alloc> ChunkBuf<'alloc> {
-    pub fn new(source: ObjectRef<'alloc, String>) -> ChunkBuf<'alloc> {
+    pub fn new(source: ObjectRef<'alloc, String>, params: usize) -> ChunkBuf<'alloc> {
         ChunkBuf {
             code: Vec::default(),
             constants: Vec::default(),
             constant_hash: HashMap::default(),
+            params,
             source,
             spans: Vec::default(),
         }
@@ -139,6 +148,8 @@ impl<'alloc> ChunkBuf<'alloc> {
     /// 4. All constants exist
     /// 5. All constants referenced by Closure are type Function
     /// 6. Chunk ends with the return opcode
+    /// 7. All branches and loops agree on the stack size at each point in execution.
+    /// 8. All stack accesses are within the initialized slots at that point in execution.
     ///
     /// For now stack slot accesses must still be checked by the VM.
     ///
@@ -148,101 +159,215 @@ impl<'alloc> ChunkBuf<'alloc> {
     ///   for overflow on every push
     /// - return a Result instead of panicking
     pub fn check(self) -> Chunk<'alloc> {
-        // TODO we want to return the collected problems later
-        #![allow(clippy::needless_collect)]
 
-        // Assert [1]
-        // All opcodes must decode successfully.
-        let decoded = OffsetIter::new(&self.code).collect::<Vec<_>>();
+        /// Assert [1]
+        ///
+        /// All opcodes must decode successfully.
+        ///
+        /// Returns dedoced opcodes.
+        fn check_decode(code: &[u8]) -> Vec<(OpCode, usize)> {
+            OffsetIter::new(code).collect::<Vec<_>>()
+        }
 
+        /// Assert [2] and [3]
+        ///
+        /// Every jump must land on a starting offset of an instruction, if not it's either out of
+        /// bounds [2] or misaligned [3].
+        fn check_jumps(decoded: &[(OpCode, usize)]) {
+            let jump_targets = decoded.iter()
+                .filter_map(|(opcode, offset)| {
+                    let jump_from = isize::try_from(offset + opcode.len()).unwrap();
+                    Some(match opcode {
+                        // forward jumps
+                        OpCode::Jump { offset } |
+                        OpCode::JumpIfTrue { offset } |
+                        OpCode::JumpIfFalse { offset } => {
+                            let offset: isize = (*offset).try_into().unwrap();
+                            jump_from + offset
+                        }
 
-        // Assert [2] and [3]
-        // Every jump must land on a starting offset of an instruction, if not it's either out of
-        // bounds [2] or misaligned [3].
-        let jump_targets = decoded.iter()
-            .filter_map(|(opcode, offset)| {
-                let jump_from = isize::try_from(offset + opcode.len()).unwrap();
-                Some(match opcode {
-                    // forward jumps
-                    OpCode::Jump { offset } |
-                    OpCode::JumpIfTrue { offset } |
-                    OpCode::JumpIfFalse { offset } => {
-                        let offset: isize = (*offset).try_into().unwrap();
-                        jump_from + offset
+                        // backward jump
+                        OpCode::Loop { offset } => {
+                            let offset: isize = (*offset).try_into().unwrap();
+                            jump_from - offset
+                        }
+
+                        // not jumps
+                        _ => return None,
+                    })
+                });
+            let invalid_jumps = jump_targets
+                    .filter(|jump_target| {
+                        decoded
+                            .binary_search_by_key(jump_target, |(_, offset)| isize::try_from(*offset).unwrap())
+                            .is_err()
+                    })
+                    .collect::<Vec<_>>();
+            assert!(
+                invalid_jumps.is_empty(),
+                "invalid jump target",
+            );
+        }
+
+        /// Assert [4]
+        ///
+        /// All constants referenced by the instructions must be present in the chunk constant pool.
+        /// Because constants keys are consecutive indexes we can just compare the length.
+        fn check_constants(decoded: &[(OpCode, usize)], constants: &[Value]) {
+            let missing_constants = decoded.iter()
+                .filter_map(|(opcode, _)| {
+                    match opcode {
+                        // constants
+                        OpCode::Constant { key } => Some(*key),
+                        OpCode::Closure { fn_key, upvals: _ } => Some(*fn_key),
+
+                        // not constants
+                        _ => None,
+                    }
+                })
+                .any(|key| usize::from(key) >= constants.len());
+            assert!(
+                !missing_constants,
+                "constant index out of range",
+            );
+        }
+
+        /// Assert [5]
+        ///
+        /// All constants referenced by OpCode::Closure must be of type Function.
+        fn check_constant_types(decoded: &[(OpCode, usize)], constants: &[Value]) {
+            let wrong_constant_types = decoded.iter()
+                .filter_map(|(opcode, _)| {
+                    match opcode {
+                        // typed constants
+                        OpCode::Closure { fn_key, upvals: _ } => Some(*fn_key),
+
+                        // not constants or any-typed constants
+                        _ => None,
+                    }
+                })
+                .any(|fn_key| constants[usize::from(fn_key)].downcast::<Function>().is_none());
+            assert!(
+                !wrong_constant_types,
+                "constant has an incorrect type",
+            );
+        }
+
+        /// Assert [6]
+        ///
+        /// Last opcode in the chunk must be a return to prevent reading past the end of the `code`
+        /// slice.
+        fn check_ends_return(decoded: &[(OpCode, usize)]) {
+            assert!(
+                decoded.last().map(|(opcode, _)| matches!(opcode, OpCode::Return)).unwrap_or(false),
+                "last opcode must be a return",
+            );
+        }
+
+        /// Assert [7] and [8]
+        ///
+        /// All branches and loops agree on the stack size at each point in execution [7], and all
+        /// stack accessing OpCodes are accessing stack slots that are initialized at that point in
+        /// execution [8].
+        ///
+        /// Returns the maximum stack required for all the temporaries in this Chunk.
+        fn check_stack_access(decoded: &[(OpCode, usize)], params: usize) -> usize {
+            use std::collections::{BTreeMap, BTreeSet};
+            use std::collections::btree_map::Entry;
+
+            let mut stack_size = BTreeMap::from([(0, params)]);
+            let mut threads = BTreeSet::from([0]);
+
+            for &(opcode, ip) in decoded {
+                for thread_ip in mem::take(&mut threads) {
+                    if thread_ip != ip {
+                        // Skip threads which are ahead
+                        threads.insert(thread_ip);
+                        continue;
                     }
 
-                    // backward jump
-                    OpCode::Loop { offset } => {
-                        let offset: isize = (*offset).try_into().unwrap();
-                        jump_from - offset
+                    if matches!(opcode, OpCode::Return) {
+                        // Diverging thread
+                        continue;
                     }
 
-                    // not jumps
-                    _ => return None,
-                })
-            });
-        let invalid_jumps = jump_targets
-                .filter(|jump_target| {
-                    decoded
-                        .binary_search_by_key(jump_target, |(_, offset)| isize::try_from(*offset).unwrap())
-                        .is_err()
-                })
-                .collect::<Vec<_>>();
-        assert!(
-            invalid_jumps.is_empty(),
-            "invalid jump target",
-        );
+                    let (pops, pushes) = opcode.stack_effect();
+                    let prev_stack_size = stack_size.get(&ip).unwrap();
+                    let next_stack_size = prev_stack_size
+                        // Assert part [8] stack access is never below 0
+                        .checked_sub(pops).expect("stack access below 0")
+                        .checked_add(pushes).unwrap();
 
-        // Assert [4]
-        // All constants referenced by the instructions must be present in the chunk constant pool.
-        // Because constants keys are consecutive indexes we can just compare the length.
-        let missing_constants = decoded.iter()
-            .filter_map(|(opcode, _)| {
-                match opcode {
-                    // constants
-                    OpCode::Constant { key } => Some(*key),
-                    OpCode::Closure { fn_key, upvals: _ } => Some(*fn_key),
+                    match opcode {
+                        OpCode::GetLocal { slot } |
+                        OpCode::SetLocal { slot } => {
+                            // Assert part [8] direct stack access is below the current stack height
+                            let slot = usize::from(slot);
+                            assert!(slot < *prev_stack_size, "access uninitialized stack");
+                        },
+                        _ => {},
+                    }
 
-                    // not constants
-                    _ => None,
+                    let mut next_ip = |next_ip: usize| {
+                        match stack_size.entry(next_ip) {
+                            Entry::Vacant(e) => {
+                                e.insert(next_stack_size);
+                            },
+                            Entry::Occupied(e) => {
+                                // Assert [7]
+                                assert_eq!(
+                                    *e.get(), next_stack_size,
+                                    "threads disagree on stack size",
+                                );
+                            },
+                        }
+
+                        threads.insert(next_ip);
+                    };
+
+                    match opcode {
+                        OpCode::Jump { offset } => {
+                            // Jump forward
+                            next_ip(ip + opcode.len() + usize::from(offset));
+                        },
+                        OpCode::Loop { offset } => {
+                            // Jump backward
+                            next_ip(ip + opcode.len() - usize::from(offset));
+                        },
+                        OpCode::JumpIfTrue { offset } |
+                        OpCode::JumpIfFalse { offset } => {
+                            // Take branch
+                            next_ip(ip + opcode.len() + usize::from(offset));
+                            // Don't take branch
+                            next_ip(ip + opcode.len());
+                        },
+                        _ => {
+                            // Ordinary instruction advance
+                            next_ip(ip + opcode.len());
+                        },
+                    }
                 }
-            })
-            .any(|key| usize::from(key) >= self.constants.len());
-        assert!(
-            !missing_constants,
-            "constant index out of range",
-        );
+            }
 
-        // Assert [5]
-        // All constants referenced by OpCode::Closure must be of type Function.
-        let wrong_constant_types = decoded.iter()
-            .filter_map(|(opcode, _)| {
-                match opcode {
-                    // typed constants
-                    OpCode::Closure { fn_key, upvals: _ } => Some(*fn_key),
+            stack_size.into_iter()
+                .map(|(_, stack_size)| stack_size)
+                .max()
+                .unwrap()
+        }
 
-                    // not constants or any-typed constants
-                    _ => None,
-                }
-            })
-            .any(|fn_key| self.constants[usize::from(fn_key)].downcast::<Function>().is_none());
-        assert!(
-            !wrong_constant_types,
-            "constant has an incorrect type",
-        );
-
-        // Assert [6]
-        // Last opcode in the chunk must be a return to prevent reading past the end of the `code`
-        // slice.
-        assert!(
-            decoded.last().map(|(opcode, _)| matches!(opcode, OpCode::Return)).unwrap_or(false),
-            "last opcode must be a return",
-        );
+        // Run the checks
+        let decoded = check_decode(&self.code);
+        check_jumps(&decoded);
+        check_constants(&decoded, &self.constants);
+        check_constant_types(&decoded, &self.constants);
+        check_ends_return(&decoded);
+        let max_stack = check_stack_access(&decoded, self.params);
 
         // Now that the ChunkBuf has been checked we can construct a Chunk
         Chunk {
             code: self.code.into_boxed_slice(),
             constants: self.constants.into_boxed_slice(),
+            max_stack,
             source: self.source,
             spans: self.spans.into_boxed_slice(),
         }

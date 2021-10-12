@@ -82,7 +82,7 @@ pub fn compile<'alloc>(ast: AST<'alloc>, alloc: &'alloc Alloc) -> Result<ObjectR
     emitter.fn_stack.push(FnScope {
         name: Name::unique_static(&"<script>"),
         fndef_span: FreeSpan::zero(),
-        chunk: ChunkBuf::new(emitter.source),
+        chunk: ChunkBuf::new(emitter.source, 1),
         locals: vec![vec![script]],
         upvalues: Vec::default(),
     });
@@ -303,7 +303,7 @@ impl<'alloc> Emitter<'alloc> {
         self.fn_stack.push(FnScope {
             name,
             fndef_span: fn_item.span(),
-            chunk: ChunkBuf::new(self.source),
+            chunk: ChunkBuf::new(self.source, fn_item.parameters.items.len() + 1),
             locals: vec![vec![recur]],
             upvalues: Vec::default(),
         });
@@ -420,6 +420,8 @@ impl<'alloc> Emitter<'alloc> {
         // then
         self.emit(OpCode::Pop, while_stmt.body.left_brace_tok.span);
         self.block(&while_stmt.body);
+        // Loop block doesn't evaluate to anything
+        self.emit(OpCode::Pop, while_stmt.body.right_brace_tok.span);
         self.emit_loop(loop_start, while_stmt.body.right_brace_tok.span);
 
         // end
@@ -486,6 +488,8 @@ impl<'alloc> Emitter<'alloc> {
                             });
                         }
                         self.emit(OpCode::SetLocal { slot }, binary_expr.span());
+                        // Expression has to evaluate into something, assignment evaluates to Unit
+                        self.emit(OpCode::Unit, binary_expr.span());
                     } else if let Some((_slot, _upvalue)) = self.resolve_upvalue(name, name_span) {
                         todo!() // error: we can't assign upvalues
                     } else {
