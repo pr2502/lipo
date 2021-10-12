@@ -15,6 +15,16 @@ pub struct Value<'alloc> {
 impl<'alloc> super::sealed::Sealed for Value<'alloc> {}
 
 
+#[cfg(test)]
+#[test]
+fn value_size() {
+    use std::mem::size_of;
+
+    assert_eq!(size_of::<Value>(), size_of::<u64>());
+    assert_eq!(size_of::<Value>(), size_of::<Option<Value>>());
+}
+
+
 const TYPE_MASK: u64 = 0xFFFF_0000_0000_0000;
 const PAYLOAD_MASK: u64  = !TYPE_MASK;
 const TYPE_OFFSET: u8 = 48;
@@ -23,6 +33,7 @@ const TYPE_OFFSET: u8 = 48;
 unsafe fn new_object(ptr: NonNull<ObjectHeader>) -> NonZeroU64 {
     let ptr = ptr.as_ptr() as u64;
     debug_assert!((ptr & PAYLOAD_MASK) == ptr, "platform ptr uses TYPE_MASK bits");
+    // SAFETY `ptr` is NonNull therefore it's NonZero
     unsafe { NonZeroU64::new_unchecked(ptr) }
 }
 
@@ -31,6 +42,8 @@ const unsafe fn new_primitive(tag: TypeTag, payload: u64) -> NonZeroU64 {
     debug_assert!(tag.0 != TypeTag::OBJECT.0, "tried to create primitive with TypeTag::OBJECT");
 
     let tag = (tag.0 as u64) << TYPE_OFFSET;
+    // SAFETY TypeTag 0 is used for Object, Primitives use TypeTag >= 1, we can safely assume
+    // `tag | anything` is NonZero
     unsafe { NonZeroU64::new_unchecked(tag | payload) }
 }
 
@@ -82,13 +95,13 @@ impl<'alloc> Value<'alloc> {
     pub(super) fn new_object(o: ObjectRefAny<'alloc>) -> Value<'alloc> {
         Value {
             _alloc: PhantomData,
-            repr: unsafe { new_object(NonNull::new_unchecked(o.as_ptr())) },
+            repr: unsafe { new_object(o.as_ptr()) },
         }
     }
 
     pub(crate) fn kind(self) -> ValueKind<'alloc> {
         match type_tag(self.repr) {
-            TypeTag::OBJECT => ValueKind::Object(unsafe { ObjectRefAny::from_ptr(self.repr.get() as _) }),
+            TypeTag::OBJECT => ValueKind::Object(unsafe { ObjectRefAny::from_ptr(NonNull::new_unchecked(self.repr.get() as _)) }),
             _ => ValueKind::Primitive(unsafe { PrimitiveAny::from_repr(self.repr) }),
         }
     }

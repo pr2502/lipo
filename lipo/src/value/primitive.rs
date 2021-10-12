@@ -33,6 +33,15 @@ pub struct PrimitiveAny<'alloc> {
     repr: NonZeroU64,
 }
 
+#[cfg(test)]
+#[test]
+fn primitive_size() {
+    use std::mem::size_of;
+
+    assert_eq!(size_of::<PrimitiveAny>(), size_of::<u64>());
+    assert_eq!(size_of::<PrimitiveAny>(), size_of::<Option<PrimitiveAny>>());
+}
+
 impl<'alloc> PrimitiveAny<'alloc> {
     pub(super) unsafe fn from_repr(repr: NonZeroU64) -> PrimitiveAny<'alloc> {
         debug_assert!(repr::type_tag(repr) != TypeTag::OBJECT, "invalid repr for PrimitiveAny");

@@ -4,9 +4,9 @@ use crate::value::{Value, ValueKind};
 use crate::Primitive;
 use std::lazy::SyncOnceCell;
 use std::marker::PhantomData;
+use std::ptr::{self, NonNull};
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use std::sync::Mutex;
-use std::{mem, ptr};
 
 
 /// Header stores the vtable pointer and a intrusive linked list for GC.
@@ -46,25 +46,20 @@ impl Alloc {
 
     /// Take the current head of the alloc list and return an `Iterator` over all it's
     /// [`ObjectHeader`]s.
-    fn take_iter(&self) -> impl Iterator<Item = *mut ObjectHeader> {
+    fn take_iter(&self) -> impl Iterator<Item = NonNull<ObjectHeader>> {
         struct Iter(*mut ObjectHeader);
 
         impl Iterator for Iter {
-            type Item = *mut ObjectHeader;
+            type Item = NonNull<ObjectHeader>;
 
             fn next(&mut self) -> Option<Self::Item> {
-                if self.0.is_null() {
-                    return None;
-                }
-
+                let current = NonNull::new(self.0)?;
                 // SAFETY `Alloc::insert_atomic` maintains that `next` pointer
                 // is either valid or null
-                let current = unsafe { &*self.0 };
-
+                let current_ref = unsafe { current.as_ref() };
                 // Relaxed doesn't race because we own the list while iterating.
-                let next = current.next.load(Ordering::Relaxed);
-
-                Some(mem::replace(&mut self.0, next))
+                self.0 = current_ref.next.load(Ordering::Relaxed);
+                Some(current)
             }
         }
 
@@ -119,10 +114,11 @@ impl Alloc {
         });
         let obj = ObjectRef {
             alloc: PhantomData, // 'alloc - in return type
-            ptr: Box::into_raw(wrap),
+            // SAFETY Box::into_raw returns a NonNull pointer
+            ptr: unsafe { NonNull::new_unchecked(Box::into_raw(wrap)) }
         };
         // SAFETY ptr is valid because we obtained it from safe ObjectRef belonging to this Alloc
-        unsafe { self.insert_atomic(obj.upcast().ptr, &obj.upcast().header().next); }
+        unsafe { self.insert_atomic(obj.upcast().ptr.as_ptr(), &obj.upcast().header().next); }
         obj
     }
 
@@ -130,9 +126,9 @@ impl Alloc {
     ///
     /// # Safety
     /// `ptr` must originate from a previous call to `Alloc::alloc` on the same `Alloc` instance.
-    pub(super) unsafe fn dealloc<O: Object>(ptr: *mut ObjectWrap<O>) {
+    pub(super) unsafe fn dealloc<O: Object>(ptr: NonNull<ObjectWrap<O>>) {
         // SAFETY ptr was created from a `Box<ObjectWrap<O>>` in `Alloc::alloc`
-        let _drop = unsafe { Box::from_raw(ptr) };
+        let _drop = unsafe { Box::from_raw(ptr.as_ptr()) };
     }
 
     /// Collect unmarked objects
@@ -143,27 +139,27 @@ impl Alloc {
     /// call to `sweep`.
     pub unsafe fn sweep(&self) {
         // Extracts the next field from a `*mut ObjectHeader`
-        let header = |ptr: *mut ObjectHeader| {
+        let header = |ptr: NonNull<ObjectHeader>| {
             // SAFETY must audit uses of the lambda
-            unsafe { &*ptr }
+            unsafe { ptr.as_ref() }
         };
 
         // Linked list of objects left after collection
-        let mut retain_head = ptr::null_mut::<ObjectHeader>();
-        let mut retain_tail = ptr::null_mut();
+        let mut retain_head = Option::<NonNull<ObjectHeader>>::None;
+        let mut retain_tail = None;
 
         // Store object into the retain list.
-        let mut retain = |ptr: *mut ObjectHeader| {
-            assert!(!ptr.is_null(), "cannot retain nullptr");
+        let mut retain = |ptr: NonNull<ObjectHeader>| {
+            // assert!(!ptr.is_null(), "cannot retain nullptr");
 
-            if retain_head.is_null() {
+            if retain_head.is_none() {
                 // insert first element
-                retain_head = ptr;
-                retain_tail = ptr;
+                retain_head = Some(ptr);
+                retain_tail = Some(ptr);
             } else {
                 // SAFETY tail was set in the other branch
-                header(retain_tail).next.store(ptr, Ordering::Relaxed);
-                retain_tail = ptr;
+                header(retain_tail.unwrap()).next.store(ptr.as_ptr(), Ordering::Relaxed);
+                retain_tail = Some(ptr);
             }
         };
 
@@ -198,11 +194,11 @@ impl Alloc {
             }
         }
 
-        if !retain_head.is_null() {
+        if let Some(retain_head) = retain_head {
             // some objects were left after collection, insert them back into the alloc list
 
             // SAFETY reinserting only items from the list which were not dropped
-            unsafe { self.insert_atomic(retain_head, &header(retain_tail).next); }
+            unsafe { self.insert_atomic(retain_head.as_ptr(), &header(retain_tail.unwrap()).next); }
         }
     }
 }

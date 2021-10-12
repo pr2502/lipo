@@ -2,7 +2,7 @@ use std::fmt::{self, Debug};
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 use std::ops::Deref;
-use std::ptr;
+use std::ptr::{self, NonNull};
 
 
 #[doc(hidden)] pub mod __derive_object;
@@ -123,13 +123,26 @@ struct ObjectWrap<O: Object> {
 #[derive(Clone, Copy)]
 pub struct ObjectRefAny<'alloc> {
     alloc: PhantomData<&'alloc ()>,
-    ptr: *mut ObjectHeader,
+    ptr: NonNull<ObjectHeader>,
 }
 
 /// Reference to a garbage collected Object
 pub struct ObjectRef<'alloc, O: Object> {
     alloc: PhantomData<&'alloc ()>,
-    ptr: *mut ObjectWrap<O>,
+    ptr: NonNull<ObjectWrap<O>>,
+}
+
+#[cfg(test)]
+#[test]
+fn object_refs_size() {
+    use std::mem::size_of;
+    use crate::builtins::String;
+
+    assert_eq!(size_of::<ObjectRefAny>(), size_of::<u64>());
+    assert_eq!(size_of::<ObjectRefAny>(), size_of::<Option<ObjectRefAny>>());
+
+    assert_eq!(size_of::<ObjectRef<String>>(), size_of::<u64>());
+    assert_eq!(size_of::<ObjectRef<String>>(), size_of::<Option<ObjectRef<String>>>());
 }
 
 // Implement `Clone` and `Copy` manually, because deriving them inherits the `Clone+Copy`
@@ -230,11 +243,11 @@ impl<'alloc, O: Object> ObjectRef<'alloc, O> {
 }
 
 impl<'alloc> ObjectRefAny<'alloc> {
-    pub(crate) fn as_ptr(self) -> *mut ObjectHeader {
+    pub(crate) fn as_ptr(self) -> NonNull<ObjectHeader> {
         self.ptr
     }
 
-    pub(crate) unsafe fn from_ptr(ptr: *mut ObjectHeader) -> ObjectRefAny<'alloc> {
+    pub(crate) unsafe fn from_ptr(ptr: NonNull<ObjectHeader>) -> ObjectRefAny<'alloc> {
         ObjectRefAny {
             alloc: PhantomData, // 'alloc - in return type
             ptr,
@@ -242,7 +255,7 @@ impl<'alloc> ObjectRefAny<'alloc> {
     }
 
     fn header(&self) -> &ObjectHeader {
-        unsafe { &*self.ptr }
+        unsafe { self.ptr.as_ref() }
     }
 
     fn vtable(&self) -> &ObjectVtable {
@@ -307,7 +320,7 @@ impl<'alloc, O: Object> Deref for ObjectRef<'alloc, O> {
     fn deref(&self) -> &Self::Target {
         // SAFETY GC ensures the pointer stays valid.
         //        We never give mutable access to the value.
-        unsafe { &(*self.ptr).inner }
+        unsafe { &self.ptr.as_ref().inner }
     }
 }
 
