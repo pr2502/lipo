@@ -29,9 +29,11 @@ pub enum TokenKind {
     #[token("<")] Less,
     #[token("<=")] LessEqual,
 
-    // Literals
+    // Names
     #[regex(r"[a-zA-Z_][a-zA-Z_0-9]*")]
     Identifier,
+
+    // Literals
     #[regex(r#"[a-z]?#*"[^"]*""#, string_lit)]
     StringLit,
     #[regex(r"0b[0-9_]*")]
@@ -135,10 +137,11 @@ impl Display for TokenKind {
             T::Less => "`<`",
             T::LessEqual => "`<=`",
 
-            // Literals
+            // Names
             T::Identifier => "name",
-            T::StringLit => "string literal",
 
+            // Literals
+            T::StringLit => "string literal",
             T::BinaryNumber |
             T::OctalNumber |
             T::HexadecimalNumber |

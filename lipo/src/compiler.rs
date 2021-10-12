@@ -34,30 +34,28 @@ struct FnScope<'alloc> {
     name: Name<'alloc>,
     fndef_span: FreeSpan,
     chunk: ChunkBuf<'alloc>,
-    locals: Vec<Local<'alloc>>,
+    // Outer Vec represents nested blocks
+    locals: Vec<Vec<Local<'alloc>>>,
     upvalues: Vec<Upvalue<'alloc>>,
-    scope_depth: u32,
 }
 
 #[derive(Clone, Copy)]
 struct Local<'alloc> {
-    // name of the binding / reference
+    // Name of the binding / reference
     name: Name<'alloc>,
-    // where the binding was introduced
+    // Where the binding was introduced
     bind_span: FreeSpan,
-    // can be reassigned
+    // Binding can be reassigned
     mutable: bool,
-    // number of enclosing block scopes
-    depth: u32,
 }
 
 #[derive(Clone, Copy)]
 struct Upvalue<'alloc> {
-    // name of the binding / reference
+    // Name of the binding / reference
     name: Name<'alloc>,
-    // where the upvalue was captured (only the first time if recaptured)
+    // Where the upvalue was captured (only the first time if used referenced multiple times)
     capture_span: FreeSpan,
-    // reference to the parent scope's bindings
+    // Reference to the parent scope's bindings
     reference: UpvalueRef,
 }
 
@@ -80,15 +78,13 @@ pub fn compile<'alloc>(ast: AST<'alloc>, alloc: &'alloc Alloc) -> Result<ObjectR
         name: Name::unique_static(&""),
         bind_span: ast.eof.span,
         mutable: false,
-        depth: 0,
     };
     emitter.fn_stack.push(FnScope {
         name: Name::unique_static(&"<script>"),
         fndef_span: FreeSpan::zero(),
         chunk: ChunkBuf::new(emitter.source),
-        locals: vec![script],
+        locals: vec![vec![script]],
         upvalues: Vec::default(),
-        scope_depth: 0,
     });
 
     // Empty script outputs Unit
@@ -155,6 +151,7 @@ impl<'alloc> Emitter<'alloc> {
 impl<'alloc> FnScope<'alloc> {
     fn find_local(&self, name: Name) -> Option<(u16, Local<'alloc>)> {
         self.locals.iter()
+            .flatten()
             .enumerate()
             .find(|(_, loc)| loc.name == name)
             .map(|(slot, loc)| (slot.try_into().unwrap(), *loc))
@@ -175,27 +172,25 @@ impl<'alloc> Emitter<'alloc> {
                 span,
                 limit: MAX_LOCALS,
             });
-            return
+            return;
         }
         let shadowing = self.fn_scope()
-            .locals.iter()
+            .locals.last().unwrap().iter()
             .rev()
-            .take_while(|loc| loc.depth == self.fn_scope().scope_depth)
             .find(|loc| loc.name == name);
         if let Some(local) = shadowing.copied() {
             self.error(Shadowing {
                 shadowing_span: span,
                 shadowed_span: local.bind_span,
             });
-            return
+            return;
         }
-        let depth = self.fn_scope().scope_depth;
         self.fn_scope_mut()
-            .locals.push(Local {
+            .locals.last_mut().unwrap()
+            .push(Local {
                 name,
                 bind_span: span,
                 mutable,
-                depth,
             });
     }
 
@@ -261,25 +256,14 @@ impl<'alloc> Emitter<'alloc> {
     }
 
     fn begin_scope(&mut self) {
-        self.fn_scope_mut().scope_depth += 1;
+        self.fn_scope_mut().locals.push(Vec::new());
     }
 
     fn end_scope(&mut self, span: FreeSpan) {
-        assert!(self.fn_scope().scope_depth > 0);
-        self.fn_scope_mut().scope_depth -= 1;
+        let scope_locals = self.fn_scope_mut()
+            .locals.pop().unwrap();
 
-        let scope_depth = self.fn_scope().scope_depth;
-        let locals = &mut self.fn_scope_mut().locals;
-
-        let pop = locals
-            .iter()
-            .rev()
-            .take_while(|local| local.depth > scope_depth)
-            .count();
-
-        locals.truncate(locals.len() - pop);
-
-        let mut left = pop;
+        let mut left = scope_locals.len();
         while left > 0 {
             let pop1 = Ord::min((u8::MAX as usize) + 1, left);
             left -= pop1;
@@ -315,15 +299,13 @@ impl<'alloc> Emitter<'alloc> {
             name,
             bind_span: fn_item.span(),
             mutable: false,
-            depth: 0,
         };
         self.fn_stack.push(FnScope {
             name,
             fndef_span: fn_item.span(),
             chunk: ChunkBuf::new(self.source),
-            locals: vec![recur],
+            locals: vec![vec![recur]],
             upvalues: Vec::default(),
-            scope_depth: 0,
         });
 
         for (i, param) in fn_item.parameters.items.iter().enumerate() {
@@ -509,10 +491,10 @@ impl<'alloc> Emitter<'alloc> {
                     } else {
                         self.error(UndefinedName { name_span });
                     }
-                    return
+                    return;
                 }
             }
-            // TODO more complex assignment target
+            // TODO more complex assignment target?
             self.error(InvalidAssignmentTarget {
                 span: binary_expr.lhs.span(),
             });
@@ -547,7 +529,7 @@ impl<'alloc> Emitter<'alloc> {
             self.error(InvalidFieldExpr {
                 span: binary_expr.rhs.span(),
             });
-            return
+            return;
         }
 
         if op == T::Or {
@@ -610,7 +592,7 @@ impl<'alloc> Emitter<'alloc> {
         let span = FreeSpan::join(binary_expr.lhs.span(), binary_expr.operator.span);
         let end_jump = self.emit(OpCode::JumpIfFalse { offset: DUMMY }, span);
 
-        // pop lhs result, span of the `and` operator
+        // Pop lhs result, span of the `and` operator
         self.emit(OpCode::Pop, binary_expr.operator.span);
         self.expression(&binary_expr.rhs);
 
