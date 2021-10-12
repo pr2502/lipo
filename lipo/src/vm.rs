@@ -65,13 +65,9 @@ impl<'alloc> VM<'alloc> {
         match self.call_stack.last() {
             Some(frame) => frame,
             None => {
-                #[cfg(debug_assertions)]
-                { unreachable!("BUG: VM tried to continue with empty call stack") }
-
                 // SAFETY VM breaks the interpreter loop when `op_return` pops the last frame from
                 // the call_stack.
-                #[cfg(not(debug_assertions))]
-                unsafe { std::hint::unreachable_unchecked() }
+                debug_unreachable!("BUG: VM tried to continue with empty call stack")
             }
         }
     }
@@ -84,13 +80,9 @@ impl<'alloc> VM<'alloc> {
         match self.chunk().get_constant(key) {
             Some(constant) => constant,
             None => {
-                #[cfg(debug_assertions)]
-                { unreachable!("BUG: VM encountered invalid constant key {:?}, Chunk::check is incorrect", key) }
-
                 // SAFETY Chunk is checked when the VM is constructed, all constant references must
                 // be valid.
-                #[cfg(not(debug_assertions))]
-                unsafe { std::hint::unreachable_unchecked() }
+                debug_unreachable!("BUG: VM encountered invalid constant key {:?}, Chunk::check is incorrect", key)
             }
         }
     }
@@ -174,14 +166,10 @@ impl<'alloc> VM<'alloc> {
                 OpCode::CLOSURE         => self.op_closure(),
                 OpCode::RETURN          => if self.op_return() { break Ok(()) },
                 _ => {
-                    #[cfg(debug_assertions)]
-                    unreachable!("BUG: VM encountered invalid opcode {:#02X}, Chunk::check is incorrect", opcode);
-
                     // SAFETY Chunk is checked when the VM is constructed, all OpCodes must be valid.
                     // IP can only be at the start of an OpCode if every instruction consumes all of
                     // it's argument bytes.
-                    #[cfg(not(debug_assertions))]
-                    unsafe { std::hint::unreachable_unchecked(); }
+                    debug_unreachable!("BUG: VM encountered invalid opcode {:#02X}, Chunk::check is incorrect", opcode);
                 }
             }
         }
@@ -516,16 +504,19 @@ impl<'alloc> VM<'alloc> {
         let offset = usize::from(self.read_u16());
 
         let value = self.peek();
-        let Some(pred) = value.downcast::<bool>() else {
-            return Err(VmError::new(TypeError {
-                span: self.chunk().span(self.offset() - OpCode::JumpIfTrue { offset: 0 }.len()),
-                msg: "if predicate must be a Bool",
-            }));
-        };
-        if pred {
-            // SAFETY Chunk is checked when VM is constructed.
-            // - every jump must be at the start of a valid instruction
-            self.ip = unsafe { self.ip.add(offset) };
+        match value.downcast::<bool>() {
+            Some(true) => {
+                // SAFETY Chunk is checked when VM is constructed.
+                // - every jump must be at the start of a valid instruction
+                self.ip = unsafe { self.ip.add(offset) };
+            }
+            Some(false) => {}
+            None => {
+                return Err(VmError::new(TypeError {
+                    span: self.chunk().span(self.offset() - OpCode::JumpIfFalse { offset: 0 }.len()),
+                    msg: "if predicate must be a Bool",
+                }));
+            }
         }
         Ok(())
     }
@@ -646,13 +637,9 @@ impl<'alloc> VM<'alloc> {
 
         let constant = self.get_constant(key);
         let Some(function) = constant.downcast::<Function>() else {
-            #[cfg(debug_assertions)]
-            unreachable!("BUG: OpCode::Closure referenced a constant that was not a Function");
-
             // SAFETY Chunk is checked when the VM is constructed, all constant references
             // from OpCode::Closure must be valid and reference a Function object.
-            #[cfg(not(debug_assertions))]
-            unsafe { std::hint::unreachable_unchecked(); }
+            debug_unreachable!("BUG: OpCode::Closure referenced a constant that was not a Function");
         };
         let upvalues = self.stack.drain((self.stack.len() - upvals)..).collect();
         let closure = Value::from(Closure::new(function, upvalues, self.alloc));
