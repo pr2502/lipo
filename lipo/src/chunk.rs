@@ -42,6 +42,10 @@ impl<'alloc> Chunk<'alloc> {
         self.source
     }
 
+    pub fn max_stack(&self) -> usize {
+        self.max_stack
+    }
+
     /// Get span from byte offset of the OpCode
     ///
     /// Will panic if the byte offset code incorrect.

@@ -36,6 +36,8 @@ impl<'alloc> VM<'alloc> {
             ip: closure.function.chunk.code().as_ptr(),
             stack_offset: 0,
         };
+        let mut stack = Vec::with_capacity(1 + closure.function.chunk.max_stack());
+        stack.push(Value::from(closure));
         VM {
             // Init from the first frame
             ip: frame.ip,
@@ -43,7 +45,7 @@ impl<'alloc> VM<'alloc> {
 
             alloc,
             call_stack: vec![frame],
-            stack: vec![Value::from(closure)],
+            stack,
         }
     }
 
@@ -70,6 +72,11 @@ impl<'alloc> VM<'alloc> {
     }
 
     fn push(&mut self, value: Value<'alloc>) {
+        if self.stack.len() >= self.stack.capacity() {
+            // SAFETY Chunk is checked when the VM is constructed, maximum temporary stack size is
+            // statically known per function and VM::op_call reserves space accordingly.
+            debug_unreachable!("BUG: VM tried to push past stack capacity");
+        }
         self.stack.push(value);
     }
 
@@ -241,7 +248,7 @@ impl<'alloc> VM<'alloc> {
     fn op_set_local(&mut self) {
         let slot = usize::from(self.read_u16());
 
-        let value = self.peek();
+        let value = self.pop();
         let offset = self.stack_offset;
         let Some(slot) = self.stack.get_mut(offset + slot) else {
             debug_unreachable!("BUG: VM tried to access uninitialized stack, slot={}", slot);
@@ -626,6 +633,9 @@ impl<'alloc> VM<'alloc> {
 
             debug!("stack {:#?}", &self.stack[stack_start..]);
             debug!("function {} = {:?}", closure.function.name, &closure.function.chunk);
+
+            let required_cap = stack_start + closure.function.chunk.max_stack();
+            self.stack.reserve(required_cap - self.stack.len());
 
             // Save cached values back in the frame.
             let caller_frame = self.call_stack.last_mut().unwrap();
