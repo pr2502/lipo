@@ -12,6 +12,7 @@ impl Spanned for Item {
     fn span(&self) -> FreeSpan {
         match self {
             Item::Fn(inner) => inner.span(),
+            Item::Const(inner) => inner.span(),
             Item::Let(inner) => inner.span(),
             Item::Statement(inner) => inner.span(),
             Item::Expr(inner) => inner.span(),
@@ -32,6 +33,12 @@ impl Spanned for FnParam {
         } else {
             self.name.span
         }
+    }
+}
+
+impl Spanned for ConstItem {
+    fn span(&self) -> FreeSpan {
+        join(self.const_tok.span, self.semicolon_tok.span)
     }
 }
 

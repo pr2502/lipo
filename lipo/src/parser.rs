@@ -170,6 +170,7 @@ impl<'src> Parser<'src> {
         Ok(match self.peek_kind() {
             // Items
             T::FnKw => Item::Fn(self.fn_item()?),
+            T::Const => Item::Const(self.const_item()?),
             T::Let => Item::Let(self.let_item()?),
 
             // Statements
@@ -216,6 +217,15 @@ impl<'src> Parser<'src> {
         let right_paren_tok = self.expect_next(T::RightParen)?;
         let body = self.block()?;
         Ok(FnItem { fn_tok, name, left_paren_tok, parameters, right_paren_tok, body })
+    }
+
+    fn const_item(&mut self) -> Result<ConstItem> {
+        let const_tok = self.expect_next(T::Const).unwrap();
+        let name = self.name()?;
+        let equal_tok = self.expect_next(T::Equal)?;
+        let expr = self.expression()?;
+        let semicolon_tok = self.expect_next(T::Semicolon)?;
+        Ok(ConstItem { const_tok, name, equal_tok, expr, semicolon_tok })
     }
 
     fn let_item(&mut self) -> Result<LetItem> {

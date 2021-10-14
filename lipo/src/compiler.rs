@@ -282,6 +282,7 @@ impl<'alloc> Emitter<'alloc> {
 
         match item {
             Item::Fn(fn_item) => self.fn_item(fn_item),
+            Item::Const(_const_item) => todo!("const item"),
             Item::Let(let_item) => self.let_item(let_item),
             Item::Statement(stmt) => self.statement(stmt),
             Item::Expr(expr) => self.expr_item(expr),

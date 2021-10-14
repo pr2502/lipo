@@ -23,6 +23,7 @@ impl SourceDebug for Item {
     fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Item::Fn(inner) => inner.fmt(source, f),
+            Item::Const(inner) => inner.fmt(source, f),
             Item::Let(inner) => inner.fmt(source, f),
             Item::Statement(inner) => inner.fmt(source, f),
             Item::Expr(inner) => inner.fmt(source, f),
@@ -47,6 +48,15 @@ impl SourceDebug for FnParam {
         } else {
             self.name.fmt(source, f)
         }
+    }
+}
+
+impl SourceDebug for ConstItem {
+    fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("Const")
+            .field(&self.name.wrap(source))
+            .field(&self.expr.wrap(source))
+            .finish()
     }
 }
 

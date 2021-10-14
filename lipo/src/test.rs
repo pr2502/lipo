@@ -524,3 +524,11 @@ run! {
     ",
     Ok(_),
 }
+
+parse! {
+    const_binding,
+    r#"
+        const foo = "foo";
+    "#,
+    Ok(_),
+}

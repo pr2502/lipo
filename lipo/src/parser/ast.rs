@@ -27,6 +27,7 @@ pub struct AST<'alloc> {
 
 pub enum Item {
     Fn(FnItem),
+    Const(ConstItem),
     Let(LetItem),
     Statement(Statement),
     Expr(Expr),
@@ -44,6 +45,14 @@ pub struct FnItem {
 pub struct FnParam {
     pub mut_tok: Option<Token>,
     pub name: Identifier,
+}
+
+pub struct ConstItem {
+    pub const_tok: Token,
+    pub name: Identifier,
+    pub equal_tok: Token,
+    pub expr: Expression,
+    pub semicolon_tok: Token,
 }
 
 pub struct LetItem {
