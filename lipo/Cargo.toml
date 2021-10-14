@@ -3,15 +3,17 @@ name = "lipo"
 version = "0.1.0"
 edition = "2021"
 
+
 [dependencies]
+codespan-reporting = "0.11.1"
 fxhash = "0.2.1"
-log = { version = "0.4.14", features = ["max_level_trace", "release_max_level_info"] }
 logos = "0.12.0"
+termcolor = "1.1.2"
+tracing = { version = "0.1.29", features = ["max_level_trace", "release_max_level_info"] }
 unicode-width = { version = "0.1.8", optional = true }
 
 lipo_macro = { path = "../lipo_macro" }
-codespan-reporting = "0.11.1"
-termcolor = "1.1.2"
+
 
 [features]
 default = ["full-unicode"]
@@ -30,6 +32,7 @@ gc-stress = []
 # backtrace of the error.
 parser-error-panic = []
 
+
 [dev-dependencies]
-pretty_env_logger = "0.4.0"
+tracing-subscriber = "0.2.25"
 unindent = "0.1.7"

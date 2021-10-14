@@ -2,6 +2,7 @@ use crate::builtins::{Closure, Float, Function, Name, NativeFunction, Record, St
 use crate::chunk::Chunk;
 use crate::opcode::OpCode;
 use crate::{Alloc, ObjectRef, Trace, Value};
+use tracing::{debug, trace};
 
 
 pub mod error;
@@ -135,11 +136,18 @@ impl<'alloc> VM<'alloc> {
     }
 
     pub fn run(mut self) -> Result<(), VmError> {
-        log::debug!("script = {:?}", &self.chunk());
+        debug!("script = {:?}", &self.chunk());
 
         loop {
             #[cfg(feature = "gc-stress")]
             self.gc();
+
+            {
+                let code = &self.chunk().code()[self.offset()..];
+                let (opcode, _) = OpCode::decode(code).unwrap();
+                let stack = &self.stack[self.stack_offset..];
+                trace!(?opcode, ?stack, "");
+            }
 
             let opcode = self.read_u8();
 
@@ -616,8 +624,8 @@ impl<'alloc> VM<'alloc> {
             // Include callee in the new stack frame at slot 0.
             let stack_start = callee_idx;
 
-            log::debug!("stack {:#?}", &self.stack[stack_start..]);
-            log::debug!("function {} = {:?}", closure.function.name, &closure.function.chunk);
+            debug!("stack {:#?}", &self.stack[stack_start..]);
+            debug!("function {} = {:?}", closure.function.name, &closure.function.chunk);
 
             // Save cached values back in the frame.
             let caller_frame = self.call_stack.last_mut().unwrap();

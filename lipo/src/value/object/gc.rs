@@ -7,6 +7,7 @@ use std::marker::PhantomData;
 use std::ptr::{self, NonNull};
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use std::sync::Mutex;
+use tracing::info;
 
 
 /// Header stores the vtable pointer and a intrusive linked list for GC.
@@ -175,7 +176,7 @@ impl Alloc {
                 let to_drop: ObjectRefAny<'static> = unsafe { ObjectRefAny::from_ptr(object) };
 
 
-                log::info!(
+                info!(
                     "collecting Obj@{:?} {}",
                     to_drop.ptr,
                     {

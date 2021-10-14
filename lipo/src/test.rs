@@ -8,9 +8,16 @@ use crate::vm::{error::*, VM};
 
 fn init() {
     use std::sync::Once;
+    use tracing::Level;
+    use tracing_subscriber::{EnvFilter, FmtSubscriber};
+
     static INIT: Once = Once::new();
     INIT.call_once(|| {
-        pretty_env_logger::init();
+        FmtSubscriber::builder()
+            .without_time()
+            .with_max_level(Level::TRACE)
+            .with_env_filter(EnvFilter::from_default_env())
+            .init();
     });
 }
 
