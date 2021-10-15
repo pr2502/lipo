@@ -1,7 +1,7 @@
 use crate::builtins::{Function, String};
 use crate::opcode::OpCode;
 use crate::span::FreeSpan;
-use crate::{Object, ObjectRef, Trace, Value};
+use crate::{ObjectRef, Trace, Value};
 use fxhash::FxHashMap as HashMap;
 use std::assert_matches::assert_matches;
 use std::collections::hash_map::Entry;
@@ -11,7 +11,7 @@ use std::{iter, mem};
 
 
 /// Bytecode Chunk
-#[derive(Object, Trace, Hash, PartialEq, Eq)]
+#[derive(Trace, Hash, PartialEq, Eq)]
 pub struct Chunk<'alloc> {
     /// Packed bytecode
     code: Box<[u8]>,
@@ -26,6 +26,11 @@ pub struct Chunk<'alloc> {
     /// Includes the parameters
     max_stack: usize,
 
+    /// Upvalues
+    ///
+    /// Number of upvalues the Chunk works with, it
+    upvalues: u8,
+
     /// Source code
     source: ObjectRef<'alloc, String>,
 
@@ -36,10 +41,6 @@ pub struct Chunk<'alloc> {
 impl<'alloc> Chunk<'alloc> {
     pub fn code(&self) -> &[u8] {
         &self.code
-    }
-
-    pub fn source(&self) -> ObjectRef<'alloc, String> {
-        self.source
     }
 
     pub fn max_stack(&self) -> usize {
@@ -146,23 +147,30 @@ impl<'alloc> ChunkBuf<'alloc> {
     ///
     /// Asserted invariants are:
     ///
-    /// 1. All opcodes decode successfully
-    /// 2. All jumps are in bounds
-    /// 3. All jumps land on a valid opcode boundary
-    /// 4. All constants exist
-    /// 5. All constants referenced by Closure are type Function
-    /// 6. Chunk ends with the return opcode
-    /// 7. All branches and loops agree on the stack size at each point in execution.
-    /// 8. All stack accesses are within the initialized slots at that point in execution.
+    ///  1. All opcodes decode successfully
+    ///  2. All jumps are in bounds
+    ///  3. All jumps land on a valid opcode boundary
+    ///  4. All constants exist
+    ///  5. All constants referenced by Closure are type Function
+    ///  6. Chunk ends with the return opcode
+    ///  7. All branches and loops agree on the stack size at each point in execution.
+    ///  8. All stack accesses are within the initialized slots at that point in execution.
+    ///  9. All upvalue references are within the given bound.
+    /// 10. All opcode::Closure number of upvalues matches the referenced Function.
     ///
     /// For now stack slot accesses must still be checked by the VM.
     ///
     /// # TODO
-    /// - track stack effects and check stack access
-    /// - track max temp-stack size so we can resize stack before calling a function and not check
-    ///   for overflow on every push
     /// - return a Result instead of panicking
-    pub fn check(self) -> Chunk<'alloc> {
+    pub fn check(self, upvalues: u8) -> Chunk<'alloc> {
+        let ChunkBuf {
+            code,
+            constants,
+            params,
+            source,
+            spans,
+            ..
+        } = self;
 
         /// Assert [1]
         ///
@@ -359,21 +367,42 @@ impl<'alloc> ChunkBuf<'alloc> {
                 .unwrap()
         }
 
+        /// Assert [9] and [10]
+        ///
+        /// All upvalue accesses are within the provided bound. And all closure constructions have
+        /// matching number of upvalues to the referenced Function.
+        fn check_upvalue_access(decoded: &[(OpCode, usize)], constants: &[Value], upvalues: u8) {
+            for (opcode, _) in decoded {
+                match opcode {
+                    OpCode::GetUpvalue { slot } => {
+                        assert!(*slot <= upvalues, "upvalue access out of bounds");
+                    },
+                    OpCode::Closure { fn_key, upvals } => {
+                        let fun = constants[usize::from(*fn_key)].downcast::<Function>().unwrap();
+                        assert!(fun.chunk.upvalues == *upvals, "mismatched number of upvalues");
+                    }
+                    _ => {},
+                }
+            }
+        }
+
         // Run the checks
-        let decoded = check_decode(&self.code);
+        let decoded = check_decode(&code);
         check_jumps(&decoded);
-        check_constants(&decoded, &self.constants);
-        check_constant_types(&decoded, &self.constants);
+        check_constants(&decoded, &constants);
+        check_constant_types(&decoded, &constants);
         check_ends_return(&decoded);
-        let max_stack = check_stack_access(&decoded, self.params);
+        let max_stack = check_stack_access(&decoded, params);
+        check_upvalue_access(&decoded, &constants, upvalues);
 
         // Now that the ChunkBuf has been checked we can construct a Chunk
         Chunk {
-            code: self.code.into_boxed_slice(),
-            constants: self.constants.into_boxed_slice(),
+            code: code.into_boxed_slice(),
+            constants: constants.into_boxed_slice(),
             max_stack,
-            source: self.source,
-            spans: self.spans.into_boxed_slice(),
+            upvalues,
+            source,
+            spans: spans.into_boxed_slice(),
         }
     }
 }

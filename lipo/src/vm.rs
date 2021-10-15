@@ -36,8 +36,6 @@ impl<'alloc> VM<'alloc> {
             ip: closure.function.chunk.code().as_ptr(),
             stack_offset: 0,
         };
-        let mut stack = Vec::with_capacity(1 + closure.function.chunk.max_stack());
-        stack.push(Value::from(closure));
         VM {
             // Init from the first frame
             ip: frame.ip,
@@ -45,7 +43,7 @@ impl<'alloc> VM<'alloc> {
 
             alloc,
             call_stack: vec![frame],
-            stack,
+            stack: Vec::with_capacity(closure.function.chunk.max_stack()),
         }
     }
 
@@ -149,7 +147,7 @@ impl<'alloc> VM<'alloc> {
             #[cfg(feature = "gc-stress")]
             self.gc();
 
-            {
+            #[cfg(debug_assertions)] {
                 let code = &self.chunk().code()[self.offset()..];
                 let (opcode, _) = OpCode::decode(code).unwrap();
                 let stack = &self.stack[self.stack_offset..];
@@ -260,7 +258,7 @@ impl<'alloc> VM<'alloc> {
         let slot = usize::from(self.read_u8());
 
         let Some(&value) = self.frame().closure.upvalues.get(slot) else {
-            unreachable!("invalid upvalue access, slot={}", slot);
+            debug_unreachable!("BUG: VM tried to access non-existent upvalue, slot={}", slot);
         };
         self.push(value);
     }

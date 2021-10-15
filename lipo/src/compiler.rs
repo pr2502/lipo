@@ -74,16 +74,11 @@ pub fn compile<'alloc>(ast: AST<'alloc>, alloc: &'alloc Alloc) -> Result<ObjectR
         errors: Vec::default(),
     };
 
-    let script = Local {
-        name: Name::unique_static(&""),
-        bind_span: ast.eof.span,
-        mutable: false,
-    };
     emitter.fn_stack.push(FnScope {
         name: Name::unique_static(&"<script>"),
         fndef_span: FreeSpan::zero(),
-        chunk: ChunkBuf::new(emitter.source, 1),
-        locals: vec![vec![script]],
+        chunk: ChunkBuf::new(emitter.source, 0),
+        locals: vec![Vec::default()],
         upvalues: Vec::default(),
     });
 
@@ -104,7 +99,7 @@ pub fn compile<'alloc>(ast: AST<'alloc>, alloc: &'alloc Alloc) -> Result<ObjectR
         return Err(emitter.errors);
     }
 
-    let function = Function::new(script.chunk.check(), 0, Name::unique_static(&"<script>"), alloc);
+    let function = Function::new(script.chunk.check(0), 0, Name::unique_static(&"<script>"), alloc);
     Ok(Closure::new(function, Box::new([]), alloc))
 }
 
@@ -340,7 +335,7 @@ impl<'alloc> Emitter<'alloc> {
         }
 
         let function = Value::from(Function::new(
-            function.chunk.check(),
+            function.chunk.check(upvals),
             fn_item.parameters.items.len().try_into().unwrap(),
             function.name,
             self.alloc,
