@@ -73,9 +73,10 @@ pub fn compile<'alloc>(ast: AST<'alloc>, alloc: &'alloc Alloc) -> Result<ObjectR
         fn_stack: Vec::default(),
         errors: Vec::default(),
     };
+    let script_name = emitter.intern_string("<script>");
 
     emitter.fn_stack.push(FnScope {
-        name: Name::unique_static(&"<script>"),
+        name: script_name,
         fndef_span: FreeSpan::zero(),
         chunk: ChunkBuf::new(emitter.source, 0),
         locals: vec![Vec::default()],
@@ -99,7 +100,7 @@ pub fn compile<'alloc>(ast: AST<'alloc>, alloc: &'alloc Alloc) -> Result<ObjectR
         return Err(emitter.errors);
     }
 
-    let function = Function::new(script.chunk.check(0), 0, Name::unique_static(&"<script>"), alloc);
+    let function = Function::new(script.chunk.check(0), 0, script_name, alloc);
     Ok(Closure::new(function, Box::new([]), alloc))
 }
 
@@ -148,7 +149,7 @@ impl<'alloc> Emitter<'alloc> {
 }
 
 impl<'alloc> FnScope<'alloc> {
-    fn find_local(&self, name: Name) -> Option<(u16, Local<'alloc>)> {
+    fn find_local(&self, name: Name<'alloc>) -> Option<(u16, Local<'alloc>)> {
         self.locals.iter()
             .flatten()
             .enumerate()
@@ -156,7 +157,7 @@ impl<'alloc> FnScope<'alloc> {
             .map(|(slot, loc)| (slot.try_into().unwrap(), *loc))
     }
 
-    fn find_upvalue(&self, name: Name) -> Option<(u8, Upvalue<'alloc>)> {
+    fn find_upvalue(&self, name: Name<'alloc>) -> Option<(u8, Upvalue<'alloc>)> {
         self.upvalues.iter()
             .enumerate()
             .find(|(_, upval)| upval.name == name)

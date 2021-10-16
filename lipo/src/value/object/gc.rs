@@ -114,7 +114,7 @@ impl Alloc {
             inner,
         });
         let obj = ObjectRef {
-            alloc: PhantomData, // 'alloc - in return type
+            _alloc: PhantomData, // 'alloc - in return type
             // SAFETY Box::into_raw returns a NonNull pointer
             ptr: unsafe { NonNull::new_unchecked(Box::into_raw(wrap)) }
         };

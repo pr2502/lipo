@@ -1,6 +1,7 @@
 use super::object::gc::ObjectHeader;
 use super::object::ObjectRefAny;
 use super::primitive::{Primitive, PrimitiveAny};
+use std::cell::Cell;
 use std::marker::PhantomData;
 use std::num::NonZeroU64;
 use std::ptr::NonNull;
@@ -8,12 +9,37 @@ use std::ptr::NonNull;
 
 #[derive(Clone, Copy)]
 pub struct Value<'alloc> {
-    _alloc: PhantomData<&'alloc ()>,
+    /// Value is invariant over the `'alloc` lifetime.
+    ///
+    /// ```rust,compile_fail
+    /// # use lipo::Value;
+    /// fn shorter<'shorter>(int: &'shorter i32, value: Value<'shorter>) {}
+    ///
+    /// fn longer<'longer>(value: Value<'longer>) {
+    ///     let int = 1;
+    ///     shorter(&int, value);
+    /// }
+    /// ```
+    ///
+    /// This ensures we can't accidentally mix Values from different Allocators / VMs.
+    ///
+    /// ```rust,compile_fail
+    /// # use lipo::Value;
+    ///
+    /// fn cmp<'alloc1, 'alloc2>(val1: Value<'alloc1>, val2: Value<'alloc2>) -> bool {
+    ///     val1 == val2
+    /// }
+    /// ```
+    _alloc: PhantomData<Cell<&'alloc ()>>,
     repr: NonZeroU64,
 }
 
 impl<'alloc> super::sealed::Sealed for Value<'alloc> {}
 
+// SAFETY Cell is only included to enforce invariance over `'alloc` lifetime,
+// Value is still immutable and Send & Sync are still safe
+unsafe impl<'alloc> Send for Value<'alloc> {}
+unsafe impl<'alloc> Sync for Value<'alloc> {}
 
 #[cfg(test)]
 #[test]
@@ -78,7 +104,7 @@ pub(crate) enum ValueKind<'alloc> {
 }
 
 impl<'alloc> Value<'alloc> {
-    pub const fn unit() -> Value<'static> {
+    pub const fn unit() -> Value<'alloc> {
         Value {
             _alloc: PhantomData,
             repr: unsafe { new_primitive(TypeTag::UNIT, 0) },

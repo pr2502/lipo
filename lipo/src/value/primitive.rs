@@ -4,6 +4,7 @@ use std::fmt::{self, Debug};
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::num::NonZeroU64;
+use std::cell::Cell;
 
 
 mod sealed {
@@ -29,9 +30,14 @@ pub unsafe trait Primitive<'alloc>: sealed::Sealed + Debug + Hash + PartialEq + 
 
 #[derive(Clone, Copy)]
 pub struct PrimitiveAny<'alloc> {
-    _alloc: PhantomData<&'alloc ()>,
+    _alloc: PhantomData<Cell<&'alloc ()>>,
     repr: NonZeroU64,
 }
+
+// SAFETY Cell is only included to enforce invariance over `'alloc` lifetime,
+// PrimitiveAny is still immutable and Send & Sync are still safe
+unsafe impl<'alloc> Send for PrimitiveAny<'alloc> {}
+unsafe impl<'alloc> Sync for PrimitiveAny<'alloc> {}
 
 #[cfg(test)]
 #[test]
@@ -51,23 +57,11 @@ impl<'alloc> PrimitiveAny<'alloc> {
         }
     }
 
-    pub(super) fn is<'p_alloc: 'alloc, P: Primitive<'p_alloc>>(&self) -> bool {
+    pub(super) fn is<P: Primitive<'alloc>>(&self) -> bool {
         repr::type_tag(self.repr) == <P as Primitive>::TYPE_TAG
     }
 
-    pub(super) fn downcast<'p_alloc: 'alloc, P: Primitive<'p_alloc>>(self) -> Option<P> {
-        /// Make sure that the lifetime bounds on this function are sufficient to not allow
-        /// creating a non-'static `Primitive` type from a non-'static `Value`
-        /// ```rust,compile_fail
-        /// use lipo::{Alloc, Value};
-        /// use lipo::builtins::{Name, String};
-        ///
-        /// let alloc = Alloc::new();
-        /// let tst: Value<'_> = Value::from(String::new("hello", &alloc));
-        /// let _ = tst.downcast::<Name<'static>>();
-        /// ```
-        fn _check_lifetime_bounds() {}
-
+    pub(super) fn downcast<P: Primitive<'alloc>>(self) -> Option<P> {
         if self.is::<P>() {
             Some(<P as Primitive>::from_payload(repr::payload(self.repr)))
         } else {
@@ -78,7 +72,7 @@ impl<'alloc> PrimitiveAny<'alloc> {
 
 
 impl sealed::Sealed for () {}
-unsafe impl Primitive<'static> for () {
+unsafe impl<'alloc> Primitive<'alloc> for () {
     const TYPE_TAG: TypeTag = TypeTag::UNIT;
 
     const NAME: &'static str = "Unit";
@@ -94,7 +88,7 @@ unsafe impl Primitive<'static> for () {
 }
 
 impl sealed::Sealed for bool {}
-unsafe impl Primitive<'static> for bool {
+unsafe impl<'alloc> Primitive<'alloc> for bool {
     const TYPE_TAG: TypeTag = TypeTag::BOOL;
 
     const NAME: &'static str = "Bool";

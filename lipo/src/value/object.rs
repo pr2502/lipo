@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::fmt::{self, Debug};
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
@@ -122,13 +123,29 @@ struct ObjectWrap<O: Object> {
 /// Type erased reference to a garbage collected Object
 #[derive(Clone, Copy)]
 pub struct ObjectRefAny<'alloc> {
-    alloc: PhantomData<&'alloc ()>,
+    _alloc: PhantomData<Cell<&'alloc ()>>,
     ptr: NonNull<ObjectHeader>,
 }
 
+// SAFETY Cell is only included to enforce invariance over `'alloc` lifetime,
+// ObjectRefAny is still immutable and Send & Sync are still safe
+unsafe impl<'alloc> Send for ObjectRefAny<'alloc> {}
+unsafe impl<'alloc> Sync for ObjectRefAny<'alloc> {}
+
 /// Reference to a garbage collected Object
 pub struct ObjectRef<'alloc, O: Object> {
-    alloc: PhantomData<&'alloc ()>,
+    /// ObjectRef is invariant over the `'alloc` lifetime.
+    ///
+    /// ```rust,compile_fail
+    /// # use lipo::{ObjectRef, builtins::String};
+    /// fn shorter<'shorter>(int: &'shorter i32, string: ObjectRef<'shorter, String>) {}
+    ///
+    /// fn longer<'longer>(string: ObjectRef<'longer, String>) {
+    ///     let int = 1;
+    ///     shorter(&int, string);
+    /// }
+    /// ```
+    _alloc: PhantomData<Cell<&'alloc ()>>,
     ptr: NonNull<ObjectWrap<O>>,
 }
 
@@ -192,18 +209,18 @@ pub struct ObjectVtable {
     ///
     /// # Safety
     /// The receiver (first argument) must be of upcast ObjectRef<'static, Self>.
-    pub mark: unsafe fn(
+    pub mark: for<'alloc> unsafe fn(
         // this: Self
-        ObjectRefAny,
+        ObjectRefAny<'alloc>,
     ),
 
     /// Format Object using the [`std::fmt::Debug`] formatter.
     ///
     /// # Safety
     /// The receiver (first argument) must be of upcast ObjectRef<'static, Self>.
-    pub debug_fmt: unsafe fn(
+    pub debug_fmt: for<'alloc> unsafe fn(
         // this: Self
-        ObjectRefAny,
+        ObjectRefAny<'alloc>,
         // f: debug formatter from std
         &mut fmt::Formatter<'_>
     ) -> fmt::Result,
@@ -214,11 +231,11 @@ pub struct ObjectVtable {
     ///
     /// # Safety
     /// The receiver (first argument) must be of upcast ObjectRef<'static, Self>.
-    pub partial_eq: unsafe fn(
+    pub partial_eq: for<'alloc> unsafe fn(
         // this: Self
-        ObjectRefAny,
+        ObjectRefAny<'alloc>,
         // rhs: Any
-        ObjectRefAny,
+        ObjectRefAny<'alloc>,
     ) -> Option<bool>,
 
     /// Get Object hash code, dispatch for [`ObjectHashCode::hash_code`]
@@ -227,9 +244,9 @@ pub struct ObjectVtable {
     /// The receiver (first argument) must be of upcast ObjectRef<'static, Self>.
     // TODO panics if hashing is not supported,
     // maybe return an Option<usize>
-    pub hash_code: unsafe fn(
+    pub hash_code: for<'alloc> unsafe fn(
         // this: Self
-        ObjectRefAny,
+        ObjectRefAny<'alloc>,
     ) -> usize,
 }
 
@@ -249,7 +266,7 @@ impl<'alloc> ObjectRefAny<'alloc> {
 
     pub(crate) unsafe fn from_ptr(ptr: NonNull<ObjectHeader>) -> ObjectRefAny<'alloc> {
         ObjectRefAny {
-            alloc: PhantomData, // 'alloc - in return type
+            _alloc: PhantomData, // 'alloc - in return type
             ptr,
         }
     }
@@ -277,7 +294,7 @@ impl<'alloc> ObjectRefAny<'alloc> {
         if self.is::<O>() {
             // SAFETY Just checked the type tag matches.
             Some(ObjectRef {
-                alloc: self.alloc,
+                _alloc: self._alloc,
                 ptr: self.ptr.cast::<ObjectWrap<O>>(),
             })
         } else {

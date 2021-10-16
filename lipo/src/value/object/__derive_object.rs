@@ -35,7 +35,7 @@ unsafe fn downcast_unchecked<'alloc, O: Object>(this: ObjectRefAny<'alloc>) -> O
 /// - Object behind `this` must be unreachable through the VM roots and never again used.
 pub unsafe fn drop<O: Object>(this: ObjectRefAny<'static>) {
     // SAFETY caller must use correct receiver type
-    let ObjectRef { alloc: _, ptr } = unsafe { downcast_unchecked::<O>(this) };
+    let ObjectRef { _alloc: _, ptr } = unsafe { downcast_unchecked::<O>(this) };
 
     // SAFETY GC should only be calling this when the object is unreachable
     unsafe { gc::Alloc::dealloc::<O>(ptr) }

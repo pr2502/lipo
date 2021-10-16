@@ -1,4 +1,5 @@
 use fxhash::FxHashMap as HashMap;
+use std::cell::Cell;
 use std::fmt::{self, Debug, Display};
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
@@ -7,29 +8,27 @@ use std::{cmp, mem, ptr};
 
 #[derive(Clone, Copy)]
 pub struct Name<'interner> {
-    _alloc: PhantomData<&'interner NameInterner>,
+    /// Name is invariant over the `'interner` lifetime.
+    ///
+    /// ```rust,compile_fail
+    /// # use lipo::builtins::Name;
+    /// fn shorter<'shorter>(int: &'shorter i32, name: Name<'shorter>) {}
+    ///
+    /// fn longer<'longer>(name: Name<'longer>) {
+    ///     let int = 1;
+    ///     shorter(&int, name);
+    /// }
+    /// ```
+    _interner: PhantomData<Cell<&'interner NameInterner>>,
     string: &'static &'static str,
 }
 
-impl<'interner> Name<'interner> {
-    /// Returns a static **uninterned** name
-    ///
-    /// The returned Name is not guaranteed to be equal to any other Name except itself, this may
-    /// be surprising but it still holds up to Eq requirements: Reflexivity, Symmetry and
-    /// Transitivity.
-    ///
-    /// Multiple instances created using equivalent string literals may or may not be equal
-    /// depending on compiler optimizations.
-    pub fn unique_static(string: &'static &'static str) -> Name<'static> {
-        // Because we don't intern the string we can't guarantee its equality properties with other
-        // Names, but the caller can safely keep it for 'static because no interner will attempt to
-        // deallocate it.
-        Name {
-            _alloc: PhantomData,
-            string,
-        }
-    }
+// SAFETY Cell is only included to enforce invariance over `'interner` lifetime,
+// Name is still immutable and Send & Sync are still safe
+unsafe impl<'interner> Send for Name<'interner> {}
+unsafe impl<'interner> Sync for Name<'interner> {}
 
+impl<'interner> Name<'interner> {
     fn as_ptr(self) -> *const &'static str {
         self.string as _
     }
@@ -44,22 +43,25 @@ impl<'interner> Name<'interner> {
     }
 
     /// Only use for Primitive conversions
+    ///
+    /// # Safety
+    /// The `'interner` lifetime must match the originally destroyed lifetime precisely.
     pub(crate) unsafe fn from_u64(bits: u64) -> Name<'interner> {
         // SAFETY only restoring from a previous call to `Name::to_u64`
         Name {
-            _alloc: PhantomData,
+            _interner: PhantomData,
             string: unsafe { &*(bits as *const &'static str) },
         }
     }
 }
 
-impl<'alloc> Debug for Name<'alloc> {
+impl<'interner> Debug for Name<'interner> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         Debug::fmt(self.as_str(), f)
     }
 }
 
-impl<'alloc> Display for Name<'alloc> {
+impl<'interner> Display for Name<'interner> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         Display::fmt(self.as_str(), f)
     }
@@ -113,22 +115,29 @@ impl Drop for NameInterner {
 }
 
 impl NameInterner {
-    /// The returned lifetime is 'static but it refers to 'self. However if we returned '_ the
-    /// interner wouldn't be able to intern any other Names.
-    ///
     /// # Safety
-    /// The caller has to ensure that no returned Name outlives the interner.
-    pub(crate) unsafe fn intern(&mut self, string: &str) -> Name<'static> {
+    /// The caller has to ensure that no returned Name outlives the NameInterner.
+    pub(crate) unsafe fn intern<'interner>(&mut self, string: &str) -> Name<'interner> {
+        // Caller ensures that `&mut self` lives for the `'interner` lifetime, Rust however doesn't
+        // allow any kind of `'self` lifetime so we store Names with a `'static` lifetime and
+        // manually change it to whatever the caller gives us.
+        fn change_lifetime<'interner>(name: Name<'static>) -> Name<'interner> {
+            Name {
+                _interner: PhantomData,
+                string: name.string,
+            }
+        }
+
         if let Some(n) = self.dedup.get(string) {
-            return *n;
+            return change_lifetime(*n);
         }
 
         let inner = &*Box::leak(Box::<str>::from(string));
         let outer = &*Box::leak(Box::new(inner));
-        let name = Name { _alloc: PhantomData, string: outer };
+        let name = Name { _interner: PhantomData, string: outer };
 
         self.dedup.insert(inner, name);
 
-        name
+        change_lifetime(name)
     }
 }

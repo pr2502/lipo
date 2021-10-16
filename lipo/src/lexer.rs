@@ -186,7 +186,7 @@ pub struct Token {
 /// Lexer / scanner
 ///
 /// Wraps the [`logos`] lexer and acts as a "peekable" adapter and replaces the iterator
-/// `Option::None` with a [`T::Eof`]. Since the underlying lexer iterator is fused
+/// `Option::None` with a [`TokenKind::Eof`]. Since the underlying lexer iterator is fused
 /// [`next`](Lexer::next) will yield EOF indefinitely after it yields it once.
 ///
 /// # Cloning
