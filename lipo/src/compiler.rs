@@ -452,17 +452,18 @@ impl<'alloc> Emitter<'alloc> {
 
     fn expression(&mut self, expr: &Expression) {
         match expr {
-            Expression::Binary(binary_expr) => self.binary_expr(binary_expr),
-            Expression::Unary(unary_expr) => self.unary_expr(unary_expr),
             Expression::Unit(unit_expr) => self.unit_expr(unit_expr),
+            Expression::Primary(primary_expr) => self.primary_expr(primary_expr),
+            Expression::Unary(unary_expr) => self.unary_expr(unary_expr),
+            Expression::Binary(binary_expr) => self.binary_expr(binary_expr),
             Expression::Group(group_expr) => self.group_expr(group_expr),
             Expression::Tuple(tuple_expr) => self.tuple_expr(tuple_expr),
             Expression::Record(record_expr) => self.record_expr(record_expr),
             Expression::Block(block) => self.block(block),
             Expression::If(if_expr) => self.if_expr(if_expr),
+            Expression::Fn(_fn_expr) => todo!(),
             Expression::Call(call_expr) => self.call_expr(call_expr),
             Expression::String(string_expr) => self.string_expr(string_expr),
-            Expression::Primary(primary_expr) => self.primary_expr(primary_expr),
         }
     }
 

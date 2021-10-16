@@ -166,19 +166,23 @@ impl<'src> Parser<'src> {
 
 impl<'src> Parser<'src> {
     fn item(&mut self) -> Result<Item> {
+        let mut lex2 = self.lexer.clone();
+        let t0 = lex2.next().kind;
+        let t1 = lex2.next().kind;
+
         // TODO recovery
-        Ok(match self.peek_kind() {
+        Ok(match [t0, t1] {
             // Items
-            T::FnKw => Item::Fn(self.fn_item()?),
-            T::Const => Item::Const(self.const_item()?),
-            T::Let => Item::Let(self.let_item()?),
+            [T::FnKw, T::Identifier] => Item::Fn(self.fn_item()?),
+            [T::Const, _] => Item::Const(self.const_item()?),
+            [T::Let, _] => Item::Let(self.let_item()?),
 
             // Statements
-            T::For => Item::Statement(Statement::For(self.for_stmt()?)),
-            T::Assert => Item::Statement(Statement::Assert(self.assert_stmt()?)),
-            T::Print => Item::Statement(Statement::Print(self.print_stmt()?)),
-            T::Return => Item::Statement(Statement::Return(self.return_stmt()?)),
-            T::While => Item::Statement(Statement::While(self.while_stmt()?)),
+            [T::For, _] => Item::Statement(Statement::For(self.for_stmt()?)),
+            [T::Assert, _] => Item::Statement(Statement::Assert(self.assert_stmt()?)),
+            [T::Print, _] => Item::Statement(Statement::Print(self.print_stmt()?)),
+            [T::Return, _] => Item::Statement(Statement::Return(self.return_stmt()?)),
+            [T::While, _] => Item::Statement(Statement::While(self.while_stmt()?)),
 
             // Expr
             _ => {
@@ -193,6 +197,13 @@ impl<'src> Parser<'src> {
         let fn_tok = self.expect_next(T::FnKw)?;
         let name = self.name()?;
         let left_paren_tok = self.expect_next(T::LeftParen)?;
+        let parameters = self.fn_params()?;
+        let right_paren_tok = self.expect_next(T::RightParen)?;
+        let body = self.block()?;
+        Ok(FnItem { fn_tok, name, left_paren_tok, parameters, right_paren_tok, body })
+    }
+
+    fn fn_params(&mut self) -> Result<Delimited<Comma, FnParam>> {
         let mut parameters = Delimited::default();
         while !matches!(self.peek_kind(), T::Eof | T::RightParen) {
             let mut_tok = self.match_next(T::Mut);
@@ -214,9 +225,7 @@ impl<'src> Parser<'src> {
                 }
             }
         }
-        let right_paren_tok = self.expect_next(T::RightParen)?;
-        let body = self.block()?;
-        Ok(FnItem { fn_tok, name, left_paren_tok, parameters, right_paren_tok, body })
+        Ok(parameters)
     }
 
     fn const_item(&mut self) -> Result<ConstItem> {
@@ -395,6 +404,15 @@ impl<'src> Parser<'src> {
         }
     }
 
+    fn fn_expr(&mut self) -> Result<FnExpr> {
+        let fn_tok = self.expect_next(T::FnKw).unwrap();
+        let left_paren_tok = self.expect_next(T::LeftParen)?;
+        let parameters = self.fn_params()?;
+        let right_paren_tok = self.expect_next(T::RightParen)?;
+        let body = self.block()?;
+        Ok(FnExpr { fn_tok, left_paren_tok, parameters, right_paren_tok, body })
+    }
+
     fn if_expr(&mut self) -> Result<IfExpr> {
         let if_tok = self.expect_next(T::If)?;
         let pred = Box::new(self.expression()?);
@@ -417,6 +435,7 @@ impl<'src> Parser<'src> {
             match self.peek_kind() {
                 T::LeftParen => self.unit_or_group_or_tuple()?,//Expression::Group(self.group_expr()?),
                 T::LeftBrace => self.block_or_record()?,
+                T::FnKw => Expression::Fn(self.fn_expr()?),
                 T::If => Expression::If(self.if_expr()?),
                 T::Minus |
                 T::Not => {

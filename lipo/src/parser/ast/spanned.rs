@@ -115,24 +115,25 @@ impl Spanned for Block {
 impl Spanned for Expression {
     fn span(&self) -> FreeSpan {
         match self {
-            Expression::Binary(inner) => inner.span(),
-            Expression::Unary(inner) => inner.span(),
             Expression::Unit(inner) => inner.span(),
+            Expression::Primary(inner) => inner.span(),
+            Expression::Unary(inner) => inner.span(),
+            Expression::Binary(inner) => inner.span(),
             Expression::Group(inner) => inner.span(),
             Expression::Tuple(inner) => inner.span(),
             Expression::Record(inner) => inner.span(),
             Expression::Block(inner) => inner.span(),
             Expression::If(inner) => inner.span(),
+            Expression::Fn(inner) => inner.span(),
             Expression::Call(inner) => inner.span(),
             Expression::String(inner) => inner.span(),
-            Expression::Primary(inner) => inner.span(),
         }
     }
 }
 
-impl Spanned for BinaryExpr {
+impl Spanned for UnitExpr {
     fn span(&self) -> FreeSpan {
-        join(self.lhs.span(), self.rhs.span())
+        join(self.left_paren_tok.span, self.right_paren_tok.span)
     }
 }
 
@@ -142,9 +143,9 @@ impl Spanned for UnaryExpr {
     }
 }
 
-impl Spanned for UnitExpr {
+impl Spanned for BinaryExpr {
     fn span(&self) -> FreeSpan {
-        join(self.left_paren_tok.span, self.right_paren_tok.span)
+        join(self.lhs.span(), self.rhs.span())
     }
 }
 
@@ -193,6 +194,11 @@ impl Spanned for ElseBranch {
     }
 }
 
+impl Spanned for FnExpr {
+    fn span(&self) -> FreeSpan {
+        join(self.fn_tok.span, self.body.span())
+    }
+}
 
 impl Spanned for CallExpr {
     fn span(&self) -> FreeSpan {

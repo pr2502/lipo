@@ -141,25 +141,42 @@ impl SourceDebug for WhileStmt {
     }
 }
 
-impl SourceDebug for Block {
-    fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.body.as_slice().fmt(source, f)
-    }
-}
-
 impl SourceDebug for Expression {
     fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Expression::Binary(inner) => inner.fmt(source, f),
+            Expression::Unit(inner) => inner.fmt(source, f),
+            Expression::Primary(inner) => inner.fmt(source, f),
             Expression::Unary(inner) => inner.fmt(source, f),
+            Expression::Binary(inner) => inner.fmt(source, f),
             Expression::Group(inner) => inner.fmt(source, f),
+            Expression::Tuple(inner) => inner.fmt(source, f),
+            Expression::Record(inner) => inner.fmt(source, f),
             Expression::Block(inner) => inner.fmt(source, f),
             Expression::If(inner) => inner.fmt(source, f),
+            Expression::Fn(inner) => inner.fmt(source, f),
             Expression::Call(inner) => inner.fmt(source, f),
             Expression::String(inner) => inner.fmt(source, f),
-            Expression::Primary(inner) => inner.fmt(source, f),
-            _ => todo!(),
         }
+    }
+}
+
+impl SourceDebug for UnitExpr {
+    fn fmt(&self, _source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Unit")
+    }
+}
+
+impl SourceDebug for PrimaryExpr {
+    fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.token.span.anchor(source).as_str())
+    }
+}
+
+impl SourceDebug for UnaryExpr {
+    fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple(self.operator.span.anchor(source).as_str())
+            .field(&self.expr.wrap(source))
+            .finish()
     }
 }
 
@@ -172,17 +189,46 @@ impl SourceDebug for BinaryExpr {
     }
 }
 
-impl SourceDebug for UnaryExpr {
-    fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple(self.operator.span.anchor(source).as_str())
-            .field(&self.expr.wrap(source))
-            .finish()
-    }
-}
-
 impl SourceDebug for GroupExpr {
     fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.expr.fmt(source, f)
+    }
+}
+
+impl SourceDebug for TupleExpr {
+    fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut w = f.debug_tuple("Tuple");
+        for expr in &self.exprs.items {
+            w.field(&expr.wrap(source));
+        }
+        w.finish()
+    }
+}
+
+impl SourceDebug for RecordExpr {
+    fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut w = f.debug_tuple("Record");
+        for entry in &self.entries.items {
+            w.field(&entry.wrap(source));
+        }
+        w.finish()
+    }
+}
+
+impl SourceDebug for RecordEntry {
+    fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut w = f.debug_tuple("Entry");
+        w.field(&self.name.wrap(source));
+        if let Some(val) = &self.value {
+            w.field(&val.init.wrap(source));
+        }
+        w.finish()
+    }
+}
+
+impl SourceDebug for Block {
+    fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.body.as_slice().fmt(source, f)
     }
 }
 
@@ -195,6 +241,15 @@ impl SourceDebug for IfExpr {
             w.field("else", &else_branch.body.wrap(source));
         }
         w.finish()
+    }
+}
+
+impl SourceDebug for FnExpr {
+    fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Fn")
+            .field("params", &self.parameters.items.as_slice().wrap(source))
+            .field("body", &self.body.wrap(source))
+            .finish()
     }
 }
 
@@ -231,12 +286,6 @@ impl SourceDebug for StringExpr {
             }
         }
         w.finish()
-    }
-}
-
-impl SourceDebug for PrimaryExpr {
-    fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.token.span.anchor(source).as_str())
     }
 }
 

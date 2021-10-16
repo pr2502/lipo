@@ -115,6 +115,72 @@ pub struct WhileStmt {
     pub body: Block,
 }
 
+// Expressions
+//
+// Here we deviate from the Lox grammar a bit, not in meaning but in encoding. Because encoding the
+// operator precedence in the concrete syntax tree would make it very unergonomic to consume.
+// Instead we make `Expression` contain all the binary and unary operations directly.
+
+pub enum Expression {
+    Unit(UnitExpr),
+    Primary(PrimaryExpr),
+    Unary(UnaryExpr),
+    Binary(BinaryExpr),
+    Group(GroupExpr),
+    Tuple(TupleExpr),
+    Record(RecordExpr),
+    Block(Block),
+    If(IfExpr),
+    Fn(FnExpr),
+    Call(CallExpr),
+    String(StringExpr),
+}
+
+pub struct UnitExpr {
+    pub left_paren_tok: Token,
+    pub right_paren_tok: Token,
+}
+
+// PrimaryExpr can have the following tokens:
+// - True, False
+// - This, Super
+// - Number, String, Identifier
+pub struct PrimaryExpr {
+    pub token: Token,
+}
+
+pub struct UnaryExpr {
+    pub operator: Token,
+    pub expr: Box<Expression>,
+}
+
+// BinaryExpr represents the following rules from the Lox grammar:
+// - assignment     : `=`
+// - logic_or       : `or`
+// - logic_and      : `and`
+// - equality       : `/=`, `==`
+// - comparison     : `>`, `>=`, `<`, `<=`
+// - term           : `-`, `+`
+// - factor         : `/`, `*`
+// - call           : `.`
+pub struct BinaryExpr {
+    pub lhs: Box<Expression>,
+    pub operator: Token,
+    pub rhs: Box<Expression>,
+}
+
+pub struct GroupExpr {
+    pub left_paren_tok: Token,
+    pub expr: Box<Expression>,
+    pub right_paren_tok: Token,
+}
+
+pub struct TupleExpr {
+    pub left_paren_tok: Token,
+    pub exprs: Delimited<Comma, Expression>,
+    pub right_paren_tok: Token,
+}
+
 pub struct RecordExpr {
     pub left_brace_tok: Token,
     pub entries: Delimited<Comma, RecordEntry>,
@@ -137,63 +203,6 @@ pub struct Block {
     pub right_brace_tok: Token,
 }
 
-// Expressions
-//
-// Here we deviate from the Lox grammar a bit, not in meaning but in encoding. Because encoding the
-// operator precedence in the concrete syntax tree would make it very unergonomic to consume.
-// Instead we make `Expression` contain all the binary and unary operations directly.
-
-pub enum Expression {
-    Binary(BinaryExpr),
-    Unary(UnaryExpr),
-    Unit(UnitExpr),
-    Group(GroupExpr),
-    Tuple(TupleExpr),
-    Record(RecordExpr),
-    Block(Block),
-    If(IfExpr),
-    Call(CallExpr),
-    String(StringExpr),
-    Primary(PrimaryExpr),
-}
-
-// BinaryExpr represents the following rules from the Lox grammar:
-// - assignment     : `=`
-// - logic_or       : `or`
-// - logic_and      : `and`
-// - equality       : `/=`, `==`
-// - comparison     : `>`, `>=`, `<`, `<=`
-// - term           : `-`, `+`
-// - factor         : `/`, `*`
-// - call           : `.`
-pub struct BinaryExpr {
-    pub lhs: Box<Expression>,
-    pub operator: Token,
-    pub rhs: Box<Expression>,
-}
-
-pub struct UnaryExpr {
-    pub operator: Token,
-    pub expr: Box<Expression>,
-}
-
-pub struct UnitExpr {
-    pub left_paren_tok: Token,
-    pub right_paren_tok: Token,
-}
-
-pub struct GroupExpr {
-    pub left_paren_tok: Token,
-    pub expr: Box<Expression>,
-    pub right_paren_tok: Token,
-}
-
-pub struct TupleExpr {
-    pub left_paren_tok: Token,
-    pub exprs: Delimited<Comma, Expression>,
-    pub right_paren_tok: Token,
-}
-
 pub struct IfExpr {
     pub if_tok: Token,
     pub pred: Box<Expression>,
@@ -203,6 +212,14 @@ pub struct IfExpr {
 
 pub struct ElseBranch {
     pub else_tok: Token,
+    pub body: Block,
+}
+
+pub struct FnExpr {
+    pub fn_tok: Token,
+    pub left_paren_tok: Token,
+    pub parameters: Delimited<Comma, FnParam>,
+    pub right_paren_tok: Token,
     pub body: Block,
 }
 
@@ -229,14 +246,6 @@ pub enum StringFragment {
         ident: Identifier,
         fmt: Option<FreeSpan>,
     },
-}
-
-// PrimaryExpr can have the following tokens:
-// - True, False
-// - This, Super
-// - Number, String, Identifier
-pub struct PrimaryExpr {
-    pub token: Token,
 }
 
 /// List of `Item`s separated by `Delim`eters.
