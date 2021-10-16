@@ -2,7 +2,7 @@ use crate::diagnostic::{Diagnostic, Label, Severity};
 use crate::span::FreeSpan;
 use std::any::{Any, TypeId};
 use std::fmt::{self, Debug};
-use std::num::ParseFloatError;
+use std::num::{ParseFloatError, ParseIntError};
 
 
 pub trait Error: Debug + Any {
@@ -176,8 +176,19 @@ define_error! {
 }
 
 define_error! {
-    InvalidNumberLiteral {
+    InvalidFloatLiteral {
         cause: ParseFloatError,
+        span: FreeSpan,
+    },
+    message: "failed to parse a number literal",
+    labels: [
+        Label::primary(span, cause)
+    ],
+}
+
+define_error! {
+    InvalidInt32Literal {
+        cause: ParseIntError,
         span: FreeSpan,
     },
     message: "failed to parse a number literal",

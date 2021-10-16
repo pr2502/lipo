@@ -87,10 +87,11 @@ pub(super) const fn payload(repr: NonZeroU64) -> u64 {
 pub struct TypeTag(u16);
 
 impl TypeTag {
-    pub(super) const OBJECT: TypeTag   = TypeTag(0x0000);
-    pub(super) const UNIT: TypeTag     = TypeTag(0x0001);
-    pub(super) const BOOL: TypeTag     = TypeTag(0x0002);
-    pub(super) const NAME: TypeTag     = TypeTag(0x0003);
+    pub(super) const OBJECT: TypeTag    = TypeTag(0x0000);
+    pub(super) const UNIT: TypeTag      = TypeTag(0x0001);
+    pub(super) const BOOL: TypeTag      = TypeTag(0x0002);
+    pub(super) const NAME: TypeTag      = TypeTag(0x0003);
+    pub(super) const INT32: TypeTag     = TypeTag(0x0004);
 
     pub(super) const fn as_usize(self) -> usize {
         self.0 as usize

@@ -377,7 +377,7 @@ compile! {
 compile! {
     c_err_invalid_number,
     "1e-_;",
-    Err([e]) if e.is::<InvalidNumberLiteral>(),
+    Err([e]) if e.is::<InvalidFloatLiteral>(),
 }
 
 compile! {

@@ -148,6 +148,7 @@ impl_downcast_primitive! {
     (),
     bool,
     Name<'alloc>,
+    i32,
 }
 
 impl<'alloc, O> Downcast<O> for Value<'alloc>

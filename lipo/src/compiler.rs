@@ -862,29 +862,46 @@ impl<'alloc> Emitter<'alloc> {
         match op {
             T::True => {
                 self.emit(OpCode::True, span);
-            }
+            },
             T::False => {
                 self.emit(OpCode::False, span);
-            }
+            },
             T::SelfKw => {
                 todo!()
-            }
+            },
             T::BinaryNumber |
             T::OctalNumber |
             T::HexadecimalNumber => {
                 todo!()
-            }
-            T::DecimalNumber |
+            },
+            T::DecimalNumber => {
+                self.int32(primary_expr);
+            },
             T::DecimalPointNumber |
             T::ExponentialNumber => {
                 self.float(primary_expr);
-            }
+            },
             T::Identifier => {
                 let ident = Identifier { span };
                 let name = self.intern_ident(ident);
                 self.name(name, span);
-            }
+            },
             _ => unreachable!()
+        }
+    }
+
+    fn int32(&mut self, primary: &PrimaryExpr) {
+        let span = primary.token.span;
+        let slice = span.anchor(&self.source).as_str();
+        match slice.parse::<i32>() {
+            Ok(int) => {
+                let value = Value::from(int);
+                let key = self.insert_constant(value);
+                self.emit(OpCode::Constant { key }, span);
+            }
+            Err(cause) => {
+                self.error(InvalidInt32Literal { cause, span });
+            }
         }
     }
 
@@ -900,7 +917,7 @@ impl<'alloc> Emitter<'alloc> {
                 self.emit(OpCode::Constant { key }, span);
             }
             Err(cause) => {
-                self.error(InvalidNumberLiteral { cause, span });
+                self.error(InvalidFloatLiteral { cause, span });
             }
         }
     }

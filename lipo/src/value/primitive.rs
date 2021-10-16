@@ -1,10 +1,10 @@
 use super::{repr, TypeTag};
 use crate::name::Name;
+use std::cell::Cell;
 use std::fmt::{self, Debug};
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::num::NonZeroU64;
-use std::cell::Cell;
 
 
 mod sealed {
@@ -98,7 +98,11 @@ unsafe impl<'alloc> Primitive<'alloc> for bool {
     }
 
     fn from_payload(payload: u64) -> Self {
-        payload != 0
+        match payload {
+            0 => false,
+            1 => true,
+            _ => debug_unreachable!("BUG: atempted to create primitive bool from bits {:#b}", payload),
+        }
     }
 }
 
@@ -116,6 +120,28 @@ unsafe impl<'alloc> Primitive<'alloc> for Name<'alloc> {
         unsafe {
             Self::from_u64(payload)
         }
+    }
+}
+
+impl<'alloc> sealed::Sealed for i32 {}
+unsafe impl<'alloc> Primitive<'alloc> for i32 {
+    const TYPE_TAG: TypeTag = TypeTag::INT32;
+
+    const NAME: &'static str = "Int32";
+
+    fn to_payload(self) -> u64 {
+        // noop cast to an unsigned variant
+        // and zero extend
+        (self as u32) as u64
+    }
+
+    fn from_payload(payload: u64) -> Self {
+        if payload & (u32::MAX as u64) != payload {
+            debug_unreachable!("BUG: atempted to create primitive i32 from bits {:#b}", payload);
+        }
+        // truncate (and we asserted there are no 1s in the top 32 bits)
+        // and noop cast to signed
+        (payload as u32) as i32
     }
 }
 
@@ -149,7 +175,7 @@ impl<const N: usize> PrimitiveVtables<N> {
     }
 }
 
-static VTABLES: PrimitiveVtables<4> = {
+static VTABLES: PrimitiveVtables<5> = {
     // NOTE The order of the arrays here is very important, the offset into the array must match
     // the constants in `TypeTag`
     const _TYPE_TAG_SANITY_CHECK: () = {
@@ -162,12 +188,13 @@ static VTABLES: PrimitiveVtables<4> = {
             i += 1;
         }
     };
-    const VTABLES: PrimitiveVtables<4> = PrimitiveVtables {
+    const VTABLES: PrimitiveVtables<5> = PrimitiveVtables {
         _tags: Vtable([
             TypeTag::OBJECT,
             TypeTag::UNIT,
             TypeTag::BOOL,
             TypeTag::NAME,
+            TypeTag::INT32,
         ]),
 
         _name: Vtable([
@@ -175,6 +202,7 @@ static VTABLES: PrimitiveVtables<4> = {
             <()>::NAME,
             <bool>::NAME,
             <Name>::NAME,
+            <i32>::NAME,
         ]),
 
         // `drop` and `mark` are not implemented for primitive types
@@ -184,6 +212,7 @@ static VTABLES: PrimitiveVtables<4> = {
             debug_fmt::<()>,
             debug_fmt::<bool>,
             debug_fmt::<Name>,
+            debug_fmt::<i32>,
         ]),
 
         eq: Vtable([
@@ -191,6 +220,7 @@ static VTABLES: PrimitiveVtables<4> = {
             eq::<()>,
             eq::<bool>,
             eq::<Name>,
+            eq::<i32>,
         ]),
 
         hash_code: Vtable([
@@ -198,6 +228,7 @@ static VTABLES: PrimitiveVtables<4> = {
             hash::<()>,
             hash::<bool>,
             hash::<Name>,
+            hash::<i32>,
         ]),
     };
     VTABLES
@@ -208,7 +239,9 @@ fn debug_fmt<'alloc, P: Primitive<'alloc>>(this: PrimitiveAny, f: &mut fmt::Form
 }
 
 fn eq<'alloc, P: Primitive<'alloc>>(this: PrimitiveAny, other: PrimitiveAny) -> bool {
-    debug_assert!(repr::type_tag(this.repr) == repr::type_tag(other.repr));
+    if repr::type_tag(this.repr) != repr::type_tag(other.repr) {
+        debug_unreachable!("BUG: comparing primitive values of different types");
+    }
     PartialEq::eq(
         &P::from_payload(repr::payload(this.repr)),
         &P::from_payload(repr::payload(other.repr)),
