@@ -323,11 +323,10 @@ run! {
     closure,
     r#"
         fn make_closure(param) {
-            fn closure() {
+            fn() {
                 print param;
                 return param;
             }
-            return closure;
         }
         let closure = make_closure("a");
         let closure2 = make_closure("b");
@@ -341,9 +340,7 @@ compile! {
     c_err_capture_mutable_binding,
     r#"
         let mut a = "a";
-        fn closure() {
-            return a;
-        }
+        let closure = fn() a;
         a = "b";
         assert closure() == "???";
     "#,
@@ -539,6 +536,14 @@ run! {
         assert (fn() 1)() == 1;
         let two = fn() 2;
         assert two() == 2;
+        let three = fn() {
+            let one = 1;
+            let two = 2;
+            let three = 3;
+            let four = 4;
+            three
+        };
+        assert three() == 3;
     ",
     Ok(_),
 }

@@ -46,10 +46,6 @@ impl<'alloc> Closure<'alloc> {
     ) -> ObjectRef<'alloc, Closure<'alloc>> {
         alloc.alloc(Closure { function, upvalues })
     }
-
-    pub fn function(&self) -> ObjectRef<'alloc, Function<'alloc>> {
-        self.function
-    }
 }
 
 impl<'alloc> Debug for Closure<'alloc> {

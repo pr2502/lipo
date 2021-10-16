@@ -87,7 +87,7 @@ fn main() -> anyhow::Result<()> {
     };
 
     if opts.dbg_bytecode {
-        pretty_print_bytecode(script.function());
+        pretty_print_bytecode(script);
     }
 
     let vm = lipo::VM::new(script, &alloc);

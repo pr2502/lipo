@@ -24,16 +24,18 @@ pub struct VM<'alloc> {
 
 #[derive(Debug)]
 struct Frame<'alloc> {
-    closure: ObjectRef<'alloc, Closure<'alloc>>,
+    function: ObjectRef<'alloc, Function<'alloc>>,
+    closure: Option<ObjectRef<'alloc, Closure<'alloc>>>,
     ip: *const u8,
     stack_offset: usize,
 }
 
 impl<'alloc> VM<'alloc> {
-    pub fn new(closure: ObjectRef<'alloc, Closure<'alloc>>, alloc: &'alloc Alloc) -> VM<'alloc> {
+    pub fn new(function: ObjectRef<'alloc, Function<'alloc>>, alloc: &'alloc Alloc) -> VM<'alloc> {
         let frame = Frame {
-            closure,
-            ip: closure.function.chunk.code().as_ptr(),
+            function,
+            closure: None,
+            ip: function.chunk.code().as_ptr(),
             stack_offset: 0,
         };
         VM {
@@ -43,7 +45,7 @@ impl<'alloc> VM<'alloc> {
 
             alloc,
             call_stack: vec![frame],
-            stack: Vec::with_capacity(closure.function.chunk.max_stack()),
+            stack: Vec::with_capacity(function.chunk.max_stack()),
         }
     }
 
@@ -90,7 +92,7 @@ impl<'alloc> VM<'alloc> {
     }
 
     fn chunk(&self) -> &Chunk<'alloc> {
-        &self.frame().closure.function.chunk
+        &self.frame().function.chunk
     }
 
     fn get_constant(&self, key: u16) -> Value<'alloc> {
@@ -109,7 +111,12 @@ impl<'alloc> VM<'alloc> {
         // check memory usage first.
 
         self.stack.iter().for_each(Trace::mark);
-        self.call_stack.iter().for_each(|frame| frame.closure.mark());
+        self.call_stack.iter().for_each(|frame| {
+            if let Some(closure) = &frame.closure {
+                closure.mark();
+            }
+            frame.function.mark();
+        });
 
         // SAFETY we've marked all the roots above
         unsafe { self.alloc.sweep(); }
@@ -257,7 +264,10 @@ impl<'alloc> VM<'alloc> {
     fn op_get_upval(&mut self) {
         let slot = usize::from(self.read_u8());
 
-        let Some(&value) = self.frame().closure.upvalues.get(slot) else {
+        let Some(closure) = &self.frame().closure else {
+            debug_unreachable!("BUG: VM tried to access upvalue outside a closure");
+        };
+        let Some(&value) = closure.upvalues.get(slot) else {
             debug_unreachable!("BUG: VM tried to access non-existent upvalue, slot={}", slot);
         };
         self.push(value);
@@ -615,6 +625,44 @@ impl<'alloc> VM<'alloc> {
                     Err(VmError::new(NativeError { msg: err.msg }))
                 }
             }
+        } else if let Some(function) = callee.downcast::<Function>() {
+            let arity = usize::try_from(function.arity).unwrap();
+            if arity != args {
+                return Err(VmError::new(WrongArity {
+                    span: self.chunk().span(self.offset() - OpCode::Call { args: 0 }.len()),
+                    arity,
+                    args,
+                }));
+            }
+
+            // Include callee in the new stack frame at slot 0.
+            let stack_start = callee_idx;
+
+            debug!("stack {:#?}", &self.stack[stack_start..]);
+            debug!("function {} = {:?}", function.name, &function.chunk);
+
+            let required_cap = stack_start + function.chunk.max_stack();
+            self.stack.reserve(required_cap - self.stack.len());
+
+            // Save cached values back in the frame.
+            let caller_frame = self.call_stack.last_mut().unwrap();
+            caller_frame.ip = self.ip;
+            caller_frame.stack_offset = self.stack_offset;
+
+            let callee_frame = Frame {
+                function,
+                closure: None,
+                ip: function.chunk.code().as_ptr(),
+                stack_offset: stack_start,
+            };
+
+            // Initialize cache for the new frame.
+            self.ip = callee_frame.ip;
+            self.stack_offset = callee_frame.stack_offset;
+
+            self.call_stack.push(callee_frame);
+
+            Ok(())
         } else if let Some(closure) = callee.downcast::<Closure>() {
             let arity = usize::try_from(closure.function.arity).unwrap();
             if arity != args {
@@ -629,7 +677,7 @@ impl<'alloc> VM<'alloc> {
             let stack_start = callee_idx;
 
             debug!("stack {:#?}", &self.stack[stack_start..]);
-            debug!("function {} = {:?}", closure.function.name, &closure.function.chunk);
+            debug!("closure {} = {:?}", closure.function.name, &closure.function.chunk);
 
             let required_cap = stack_start + closure.function.chunk.max_stack();
             self.stack.reserve(required_cap - self.stack.len());
@@ -640,7 +688,8 @@ impl<'alloc> VM<'alloc> {
             caller_frame.stack_offset = self.stack_offset;
 
             let callee_frame = Frame {
-                closure,
+                function: closure.function,
+                closure: Some(closure),
                 ip: closure.function.chunk.code().as_ptr(),
                 stack_offset: stack_start,
             };

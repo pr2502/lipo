@@ -76,6 +76,9 @@ impl<'alloc> Debug for Chunk<'alloc> {
 
         writeln!(f, "Chunk {{")?;
 
+        writeln!(f, "    max_stack: {}", self.max_stack)?;
+        writeln!(f, "    upvalues: {}", self.upvalues)?;
+
         if !self.constants.is_empty() {
             writeln!(f, "    constants:")?;
             for (index, val) in self.constants.iter().enumerate() {

@@ -119,6 +119,23 @@ define_error! {
 }
 
 define_error! {
+    CaptureNotClosure {
+        bind_span: FreeSpan,
+        fndef_span: FreeSpan,
+        capture_span: FreeSpan,
+    },
+    message: "function cannot capture a variable because it's not a closure",
+    labels: [
+        Label::primary(capture_span, "captured variable here"),
+        Label::secondary(bind_span, "binding created here"),
+        Label::secondary(fndef_span, "this function is not a closure"),
+    ],
+    notes: [
+        "help: closures are defined without a name like `let closure = fn() { captured_var };`",
+    ],
+}
+
+define_error! {
     DuplicateRecordEntry {
         duplicate_span: FreeSpan,
         previous_span: FreeSpan,

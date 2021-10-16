@@ -1,4 +1,4 @@
-use crate::builtins::{Closure, Float, Function, String};
+use crate::builtins::{Float, Function, String};
 use crate::chunk::{ChunkBuf, LoopPoint, PatchPlace};
 use crate::lexer::T;
 use crate::name::Name;
@@ -37,6 +37,8 @@ struct FnScope<'alloc> {
     // Outer Vec represents nested blocks
     locals: Vec<Vec<Local<'alloc>>>,
     upvalues: Vec<Upvalue<'alloc>>,
+    // Can capture upvalues
+    closure: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -66,7 +68,7 @@ enum UpvalueRef {
     Upvalue(u8),
 }
 
-pub fn compile<'alloc>(ast: AST<'alloc>, alloc: &'alloc Alloc) -> Result<ObjectRef<'alloc, Closure<'alloc>>, Vec<CompilerError>> {
+pub fn compile<'alloc>(ast: AST<'alloc>, alloc: &'alloc Alloc) -> Result<ObjectRef<'alloc, Function<'alloc>>, Vec<CompilerError>> {
     let mut emitter = Emitter {
         alloc,
         source: ast.source,
@@ -81,6 +83,7 @@ pub fn compile<'alloc>(ast: AST<'alloc>, alloc: &'alloc Alloc) -> Result<ObjectR
         chunk: ChunkBuf::new(emitter.source, 0),
         locals: vec![Vec::default()],
         upvalues: Vec::default(),
+        closure: false,
     });
 
     // Empty script outputs Unit
@@ -100,8 +103,7 @@ pub fn compile<'alloc>(ast: AST<'alloc>, alloc: &'alloc Alloc) -> Result<ObjectR
         return Err(emitter.errors);
     }
 
-    let function = Function::new(script.chunk.check(0), 0, script_name, alloc);
-    Ok(Closure::new(function, Box::new([]), alloc))
+    Ok(Function::new(script.chunk.check(0), 0, script_name, alloc))
 }
 
 const DUMMY: u16 = u16::MAX;
@@ -238,6 +240,13 @@ impl<'alloc> Emitter<'alloc> {
             } else {
                 let slot: u8 = fn_scope.upvalues.len()
                     .try_into().expect("too many upvalues"); // TODO error handling
+                if !fn_scope.closure {
+                    self.errors.push(CompilerError::new(CaptureNotClosure {
+                        bind_span: local.bind_span,
+                        capture_span: span,
+                        fndef_span: fn_scope.fndef_span,
+                    }));
+                }
                 fn_scope.upvalues.push(Upvalue {
                     name,
                     capture_span: span,
@@ -307,6 +316,8 @@ impl<'alloc> Emitter<'alloc> {
             chunk: ChunkBuf::new(self.source, fn_item.parameters.items.len() + 1),
             locals: vec![vec![recur]],
             upvalues: Vec::default(),
+            // No upvalues in fn_item
+            closure: false,
         });
 
         for (i, param) in fn_item.parameters.items.iter().enumerate() {
@@ -329,24 +340,16 @@ impl<'alloc> Emitter<'alloc> {
         // Implicit Return at the end of function body
         self.emit(OpCode::Return, fn_item.body.right_brace_tok.span);
 
-        let function = self.fn_stack.pop().unwrap();
-        let upvals = function.upvalues.len().try_into().unwrap();
-
-        for upval in &function.upvalues {
-            match upval.reference {
-                UpvalueRef::Local(slot) => self.emit(OpCode::GetLocal { slot }, upval.capture_span),
-                UpvalueRef::Upvalue(slot) => self.emit(OpCode::GetUpvalue { slot }, upval.capture_span),
-            };
-        }
-
+        let fn_scope = self.fn_stack.pop().unwrap();
         let function = Value::from(Function::new(
-            function.chunk.check(upvals),
+            fn_scope.chunk.check(0),
             fn_item.parameters.items.len().try_into().unwrap(),
-            function.name,
+            fn_scope.name,
             self.alloc,
         ));
-        let fn_key = self.insert_constant(function);
-        self.emit(OpCode::Closure { fn_key, upvals }, fn_item.span());
+        let key = self.insert_constant(function);
+        // Populate the local variable declared above
+        self.emit(OpCode::Constant { key }, fn_item.span());
 
         // Item output is Unit
         self.emit(OpCode::Unit, fn_item.span().shrink_to_hi());
@@ -736,12 +739,23 @@ impl<'alloc> Emitter<'alloc> {
 
     fn fn_expr(&mut self, fn_expr: &FnExpr) {
         let name = self.intern_string("<closure>");
+        // FIXME? Because the callee is lower on the stack than its arguments the VM has to leave
+        // it on the stack while it runs, and because we use one field to mean both where the
+        // callee stack starts and where it should be truncated when it returns we have to leave
+        // the callee in stack slot 0. However unlike named functions (fn_item) anonymous functions
+        // can't call themselves, so the first variable name should be unresolvable.
+        let dummy = Local {
+            name,
+            bind_span: FreeSpan::zero(),
+            mutable: false,
+        };
         self.fn_stack.push(FnScope {
             name,
             fndef_span: fn_expr.span(),
-            chunk: ChunkBuf::new(self.source, fn_expr.parameters.items.len()),
-            locals: Vec::from([Vec::default()]),
+            chunk: ChunkBuf::new(self.source, fn_expr.parameters.items.len() + 1),
+            locals: Vec::from([Vec::from([dummy])]),
             upvalues: Vec::default(),
+            closure: true,
         });
 
         for (i, param) in fn_expr.parameters.items.iter().enumerate() {
