@@ -138,8 +138,12 @@ impl<'alloc> Emitter<'alloc> {
         self.fn_scope_mut().chunk.insert_constant(value)
     }
 
-    fn intern_name(&self, ident: Identifier) -> Name<'alloc> {
-        self.alloc.intern_name(ident.span.anchor(&self.source).as_str())
+    fn intern_ident(&self, ident: Identifier) -> Name<'alloc> {
+        self.intern_string(ident.span.anchor(&self.source).as_str())
+    }
+
+    fn intern_string(&self, string: &str) -> Name<'alloc> {
+        self.alloc.intern_name(string)
     }
 }
 
@@ -285,7 +289,7 @@ impl<'alloc> Emitter<'alloc> {
     }
 
     fn fn_item(&mut self, fn_item: &FnItem) {
-        let name = self.intern_name(fn_item.name);
+        let name = self.intern_ident(fn_item.name);
 
         // Add an immutable local into the outer fn
         self.add_local(name, false, fn_item.span());
@@ -312,7 +316,7 @@ impl<'alloc> Emitter<'alloc> {
                     limit: MAX_ARGS,
                 });
             }
-            let param_name = self.intern_name(param.name);
+            let param_name = self.intern_ident(param.name);
             self.add_local(param_name, param.mut_tok.is_some(), param.span());
         }
 
@@ -357,7 +361,7 @@ impl<'alloc> Emitter<'alloc> {
             self.emit(OpCode::Unit, span);
         }
 
-        let name = self.intern_name(let_item.name);
+        let name = self.intern_ident(let_item.name);
         self.add_local(name, let_item.mut_tok.is_some(), let_item.span());
 
         // Item output is Unit
@@ -461,7 +465,7 @@ impl<'alloc> Emitter<'alloc> {
             Expression::Record(record_expr) => self.record_expr(record_expr),
             Expression::Block(block) => self.block(block),
             Expression::If(if_expr) => self.if_expr(if_expr),
-            Expression::Fn(_fn_expr) => todo!(),
+            Expression::Fn(fn_expr) => self.fn_expr(fn_expr),
             Expression::Call(call_expr) => self.call_expr(call_expr),
             Expression::String(string_expr) => self.string_expr(string_expr),
         }
@@ -475,7 +479,7 @@ impl<'alloc> Emitter<'alloc> {
             if let Expression::Primary(primary) = &*binary_expr.lhs {
                 if primary.token.kind == T::Identifier {
                     let name_span = primary.token.span;
-                    let name = self.alloc.intern_name(name_span.anchor(&self.source).as_str());
+                    let name = self.intern_ident(Identifier { span: name_span });
                     self.expression(&binary_expr.rhs);
                     if let Some((slot, local)) = self.resolve_local(name) {
                         if !local.mutable {
@@ -508,7 +512,7 @@ impl<'alloc> Emitter<'alloc> {
             if let Expression::Primary(primary) = &*binary_expr.rhs {
                 match primary.token.kind {
                     T::Identifier => {
-                        let name = self.intern_name(Identifier { span: primary.token.span });
+                        let name = self.intern_ident(Identifier { span: primary.token.span });
                         let value = Value::from(name);
                         let name_key = self.insert_constant(value);
 
@@ -668,7 +672,7 @@ impl<'alloc> Emitter<'alloc> {
                 });
                 return;
             }
-            entries.push((self.intern_name(entry.name), entry));
+            entries.push((self.intern_ident(entry.name), entry));
         }
 
         // Stable sort to make the duplicate diagnostics make sense (keep source order)
@@ -729,6 +733,51 @@ impl<'alloc> Emitter<'alloc> {
         self.patch_jump(else_jump);
     }
 
+    fn fn_expr(&mut self, fn_expr: &FnExpr) {
+        let name = self.intern_string("<closure>");
+        self.fn_stack.push(FnScope {
+            name,
+            fndef_span: fn_expr.span(),
+            chunk: ChunkBuf::new(self.source, fn_expr.parameters.items.len()),
+            locals: Vec::from([Vec::default()]),
+            upvalues: Vec::default(),
+        });
+
+        for (i, param) in fn_expr.parameters.items.iter().enumerate() {
+            if i >= MAX_ARGS {
+                self.error(TooManyParameters {
+                    extra_param_span: param.span(),
+                    fn_params_span: FreeSpan::join(fn_expr.left_paren_tok.span, fn_expr.right_paren_tok.span),
+                    limit: MAX_ARGS,
+                });
+            }
+            let param_name = self.intern_ident(param.name);
+            self.add_local(param_name, param.mut_tok.is_some(), param.span());
+        }
+
+        self.expression(&fn_expr.body);
+        self.emit(OpCode::Return, fn_expr.body.span().shrink_to_hi());
+
+        let function = self.fn_stack.pop().unwrap();
+        let upvals = function.upvalues.len().try_into().unwrap();
+
+        for upval in &function.upvalues {
+            match upval.reference {
+                UpvalueRef::Local(slot) => self.emit(OpCode::GetLocal { slot }, upval.capture_span),
+                UpvalueRef::Upvalue(slot) => self.emit(OpCode::GetUpvalue { slot }, upval.capture_span),
+            };
+        }
+
+        let function = Value::from(Function::new(
+            function.chunk.check(upvals),
+            fn_expr.parameters.items.len().try_into().unwrap(),
+            function.name,
+            self.alloc,
+        ));
+        let fn_key = self.insert_constant(function);
+        self.emit(OpCode::Closure { fn_key, upvals }, fn_expr.span());
+    }
+
     fn call_expr(&mut self, call_expr: &CallExpr) {
         // TODO PERF special-case Expr::Field as a direct method lookup on the lhs type
         self.expression(&call_expr.callee);
@@ -763,7 +812,7 @@ impl<'alloc> Emitter<'alloc> {
             match frag {
                 StringFragment::Literal { span, unescaped } => self.string_frag_literal(unescaped, *span),
                 StringFragment::Interpolation { ident, fmt: None } => {
-                    let name = self.intern_name(*ident);
+                    let name = self.intern_ident(*ident);
                     self.name(name, ident.span);
                     // TODO format with empty fmt
                 }
@@ -817,7 +866,7 @@ impl<'alloc> Emitter<'alloc> {
             }
             T::Identifier => {
                 let ident = Identifier { span };
-                let name = self.intern_name(ident);
+                let name = self.intern_ident(ident);
                 self.name(name, span);
             }
             _ => unreachable!()

@@ -409,7 +409,7 @@ impl<'src> Parser<'src> {
         let left_paren_tok = self.expect_next(T::LeftParen)?;
         let parameters = self.fn_params()?;
         let right_paren_tok = self.expect_next(T::RightParen)?;
-        let body = self.block()?;
+        let body = Box::new(self.expression()?);
         Ok(FnExpr { fn_tok, left_paren_tok, parameters, right_paren_tok, body })
     }
 

@@ -220,7 +220,7 @@ pub struct FnExpr {
     pub left_paren_tok: Token,
     pub parameters: Delimited<Comma, FnParam>,
     pub right_paren_tok: Token,
-    pub body: Block,
+    pub body: Box<Expression>,
 }
 
 pub struct CallExpr {

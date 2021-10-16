@@ -532,3 +532,13 @@ parse! {
     "#,
     Ok(_),
 }
+
+run! {
+    anonymous_function,
+    r"
+        assert (fn() 1)() == 1;
+        let two = fn() 2;
+        assert two() == 2;
+    ",
+    Ok(_),
+}
