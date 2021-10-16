@@ -33,7 +33,7 @@ impl SourceDebug for Item {
 
 impl SourceDebug for FnItem {
     fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Fun")
+        f.debug_struct("Fn")
             .field("name", &self.name.wrap(source))
             .field("params", &self.parameters.items.as_slice().wrap(source))
             .field("body", &self.body.wrap(source))

@@ -15,6 +15,14 @@ impl<'alloc> Function<'alloc> {
     pub fn new(chunk: Chunk<'alloc>, arity: u32, name: Name<'alloc>, alloc: &'alloc Alloc) -> ObjectRef<'alloc, Function<'alloc>> {
         alloc.alloc(Function { chunk, name, arity })
     }
+
+    pub fn name(&self) -> Name<'alloc> {
+        self.name
+    }
+
+    pub fn chunk(&self) -> &Chunk<'alloc> {
+        &self.chunk
+    }
 }
 
 impl<'alloc> Debug for Function<'alloc> {
@@ -37,6 +45,10 @@ impl<'alloc> Closure<'alloc> {
         alloc: &'alloc Alloc,
     ) -> ObjectRef<'alloc, Closure<'alloc>> {
         alloc.alloc(Closure { function, upvalues })
+    }
+
+    pub fn function(&self) -> ObjectRef<'alloc, Function<'alloc>> {
+        self.function
     }
 }
 

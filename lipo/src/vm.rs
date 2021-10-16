@@ -295,7 +295,6 @@ impl<'alloc> VM<'alloc> {
         let field_name = self.get_constant(field_key)
             .downcast::<Name>().unwrap();
         let Some(value) = record.get(field_name) else {
-            dbg!(field_name);
             return Err(VmError::new(TypeError {
                 span: self.chunk().span(self.offset() - OpCode::GetRecord { name_key: 0 }.len()),
                 msg: "record doesn't contain the requested field",

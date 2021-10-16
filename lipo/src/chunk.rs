@@ -62,6 +62,10 @@ impl<'alloc> Chunk<'alloc> {
     pub fn get_constant(&self, key: u16) -> Option<Value<'alloc>> {
         self.constants.get(usize::from(key)).copied()
     }
+
+    pub fn constants(&self) -> &[Value<'alloc>] {
+        &self.constants
+    }
 }
 
 impl<'alloc> Debug for Chunk<'alloc> {
@@ -73,14 +77,14 @@ impl<'alloc> Debug for Chunk<'alloc> {
         writeln!(f, "Chunk {{")?;
 
         if !self.constants.is_empty() {
-            writeln!(f, "constants:")?;
+            writeln!(f, "    constants:")?;
             for (index, val) in self.constants.iter().enumerate() {
-                writeln!(f, "#{:<3} {:?}", index, val)?;
+                writeln!(f, "    {:>4}  {:?}", index, val)?;
             }
             writeln!(f)?;
         }
 
-        writeln!(f, "code:")?;
+        writeln!(f, "    code:")?;
         let opcodes = Iter::new(&self.code);
         let spans = self.spans.iter()
             .map(|fs| fs.anchor(&self.source));
@@ -89,9 +93,9 @@ impl<'alloc> Debug for Chunk<'alloc> {
             let (line, _) = span.lines();
             if line != prev_line {
                 prev_line = line;
-                write!(f, "{:>4}", line)?;
+                write!(f, "    {:>4}", line)?;
             } else {
-                write!(f, "   |")?;
+                write!(f, "       |")?;
             };
             let opcodefmt = format!("{:?}", opcode);
             write!(f, "  {:<36} |", opcodefmt)?;
