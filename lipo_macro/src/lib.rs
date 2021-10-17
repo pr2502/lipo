@@ -150,3 +150,13 @@ fn mark_children(data: &Data) -> proc_macro2::TokenStream {
         Data::Enum(_) | Data::Union(_) => unimplemented!(),
     }
 }
+
+
+mod opcode;
+
+#[proc_macro]
+pub fn define_opcodes(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as opcode::Args);
+    let output = opcode::define_opcodes(input);
+    TokenStream::from(output)
+}

@@ -181,11 +181,15 @@ impl<'alloc> ChunkBuf<'alloc> {
         self.spans.push(span);
 
         PatchPlace {
-            position: matches!(
-                opcode.tag(),
-                OpCode::JUMP | OpCode::JUMP_IF_TRUE | OpCode::JUMP_IF_FALSE
-            )
-            .then(|| position),
+            position: match opcode {
+                OpCode::Jump { offset } |
+                OpCode::JumpIfTrue { offset } |
+                OpCode::JumpIfFalse { offset } => {
+                    assert!(offset == u16::MAX, "invalid placeholder instruction");
+                    Some(position)
+                },
+                _ => None,
+            },
         }
     }
 

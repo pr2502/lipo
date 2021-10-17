@@ -106,8 +106,6 @@ pub fn compile<'alloc>(ast: AST<'alloc>, alloc: &'alloc Alloc) -> Result<ObjectR
     Ok(Function::new(script.chunk.check(0), 0, script_name, alloc))
 }
 
-const DUMMY: u16 = u16::MAX;
-
 impl<'alloc> Emitter<'alloc> {
     fn error(&mut self, err: impl Error) {
         self.errors.push(CompilerError::new(err));
@@ -419,7 +417,7 @@ impl<'alloc> Emitter<'alloc> {
         // while <pred>
         self.expression(&while_stmt.pred);
         let span = FreeSpan::join(while_stmt.while_tok.span, while_stmt.pred.span());
-        let exit_jump = self.emit(OpCode::JumpIfFalse { offset: DUMMY }, span);
+        let exit_jump = self.emit(OpCode::JumpIfFalse_UNPATCHED, span);
 
         // then
         self.emit(OpCode::Pop, while_stmt.body.left_brace_tok.span);
@@ -599,7 +597,7 @@ impl<'alloc> Emitter<'alloc> {
         // If lhs is false, short-circuit, jump over rhs
         // Span both lhs and the `and` operator
         let span = FreeSpan::join(binary_expr.lhs.span(), binary_expr.operator.span);
-        let end_jump = self.emit(OpCode::JumpIfFalse { offset: DUMMY }, span);
+        let end_jump = self.emit(OpCode::JumpIfFalse_UNPATCHED, span);
 
         // Pop lhs result, span of the `and` operator
         self.emit(OpCode::Pop, binary_expr.operator.span);
@@ -614,7 +612,7 @@ impl<'alloc> Emitter<'alloc> {
         // If lhs is true, short-circuit, jump over rhs
         // Span of both lhs and the `or` operator
         let span = FreeSpan::join(binary_expr.lhs.span(), binary_expr.operator.span);
-        let end_jump = self.emit(OpCode::JumpIfTrue { offset: DUMMY }, span);
+        let end_jump = self.emit(OpCode::JumpIfTrue_UNPATCHED, span);
 
         // Pop lhs result, span of the `or` operator
         self.emit(OpCode::Pop, binary_expr.operator.span);
@@ -717,12 +715,12 @@ impl<'alloc> Emitter<'alloc> {
     fn if_expr(&mut self, if_expr: &IfExpr) {
         // if <pred>
         self.expression(&if_expr.pred);
-        let then_jump = self.emit(OpCode::JumpIfFalse { offset: DUMMY }, if_expr.if_tok.span);
+        let then_jump = self.emit(OpCode::JumpIfFalse_UNPATCHED, if_expr.if_tok.span);
 
         // then
         self.emit(OpCode::Pop, if_expr.if_tok.span);
         self.block(&if_expr.body);
-        let else_jump = self.emit(OpCode::Jump { offset: DUMMY }, if_expr.if_tok.span);
+        let else_jump = self.emit(OpCode::Jump_UNPATCHED, if_expr.if_tok.span);
 
         // else
         self.patch_jump(then_jump);
