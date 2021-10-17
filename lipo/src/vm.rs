@@ -385,7 +385,6 @@ impl<'alloc> VM<'alloc> {
         let strings = usize::from(self.read_u8()) + 2;
 
         let mut buffer = std::string::String::new();
-
         let from = self.stack.len().checked_sub(strings)
             .expect("peek past the start of stack");
         for value in self.stack.drain(from..) {

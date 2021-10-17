@@ -304,8 +304,8 @@ impl OpCode {
             // make record, pops `2*len`, pushes one
             OpCode::MakeRecord { len } => (2 * usize::from(len), 1),
 
-            // call, pops `args`, pushes one
-            OpCode::Call { args } => (usize::from(args), 1),
+            // call, pops `args` and 1 callee, pushes one
+            OpCode::Call { args } => (usize::from(args) + 1, 1),
 
             // concat, pops N+2, pushes one
             OpCode::Concat { n } => (usize::from(n) + 2, 1),
