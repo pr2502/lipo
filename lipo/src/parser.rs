@@ -118,7 +118,7 @@ pub fn parse<'alloc>(source: ObjectRef<'alloc, String>) -> Result<AST> {
         lexer: Lexer::new(&source),
     };
     let items = parser.block_inner()?;
-    let eof = parser.expect_next(T::Eof)?;
+    let eof = parser.expect_next(T::Eof)?.into();
     Ok(AST {
         source,
         items,
@@ -173,7 +173,7 @@ impl<'src> Parser<'src> {
         // TODO recovery
         Ok(match [t0, t1] {
             // Items
-            [T::FnKw, T::Identifier] => Item::Fn(self.fn_item()?),
+            [T::FnKw, T::Name] => Item::Fn(self.fn_item()?),
             [T::Const, _] => Item::Const(self.const_item()?),
             [T::Let, _] => Item::Let(self.let_item()?),
 
@@ -187,26 +187,27 @@ impl<'src> Parser<'src> {
             // Expr
             _ => {
                 let expr = self.expression()?;
-                let semicolon_tok = self.match_next(T::Semicolon);
+                let semicolon_tok = self.match_next(T::Semicolon).map(<_>::into);
                 Item::Expr(Expr { expr, semicolon_tok })
             }
         })
     }
 
     fn fn_item(&mut self) -> Result<FnItem> {
-        let fn_tok = self.expect_next(T::FnKw)?;
+        let fn_kw = self.expect_next(T::FnKw)?.into();
         let name = self.name()?;
-        let left_paren_tok = self.expect_next(T::LeftParen)?;
+        let left_paren = self.expect_next(T::LeftParen)?.into();
         let parameters = self.fn_params()?;
-        let right_paren_tok = self.expect_next(T::RightParen)?;
+        let right_paren = self.expect_next(T::RightParen)?.into();
+        let parens = Parens { left: left_paren, right: right_paren };
         let body = self.block()?;
-        Ok(FnItem { fn_tok, name, left_paren_tok, parameters, right_paren_tok, body })
+        Ok(FnItem { fn_kw, name, parens, parameters, body })
     }
 
     fn fn_params(&mut self) -> Result<Delimited<Comma, FnParam>> {
         let mut parameters = Delimited::default();
         while !matches!(self.peek_kind(), T::Eof | T::RightParen) {
-            let mut_tok = self.match_next(T::Mut);
+            let mut_tok = self.match_next(T::Mut).map(<_>::into);
             let name = self.name()?;
             parameters.items.push(FnParam { mut_tok, name });
 
@@ -229,25 +230,26 @@ impl<'src> Parser<'src> {
     }
 
     fn const_item(&mut self) -> Result<ConstItem> {
-        let const_tok = self.expect_next(T::Const).unwrap();
+        let const_tok = self.expect_next(T::Const).unwrap().into();
         let name = self.name()?;
-        let equal_tok = self.expect_next(T::Equal)?;
+        let equal_tok = self.expect_next(T::Equal)?.into();
         let expr = self.expression()?;
-        let semicolon_tok = self.expect_next(T::Semicolon)?;
+        let semicolon_tok = self.expect_next(T::Semicolon)?.into();
         Ok(ConstItem { const_tok, name, equal_tok, expr, semicolon_tok })
     }
 
     fn let_item(&mut self) -> Result<LetItem> {
-        let let_tok = self.expect_next(T::Let)?;
-        let mut_tok = self.match_next(T::Mut);
+        let let_tok = self.expect_next(T::Let).unwrap().into();
+        let mut_tok = self.match_next(T::Mut).map(<_>::into);
         let name = self.name()?;
         let init = if let Some(equal_tok) = self.match_next(T::Equal) {
+            let equal_tok = equal_tok.into();
             let expr = self.expression()?;
             Some(LetInit { equal_tok, expr })
         } else {
             None
         };
-        let semicolon_tok = self.expect_next(T::Semicolon)?;
+        let semicolon_tok = self.expect_next(T::Semicolon)?.into();
         Ok(LetItem { let_tok, mut_tok, name, init, semicolon_tok })
     }
 
@@ -257,32 +259,32 @@ impl<'src> Parser<'src> {
     }
 
     fn assert_stmt(&mut self) -> Result<AssertStmt> {
-        let assert_tok = self.expect_next(T::Assert)?;
+        let assert_tok = self.expect_next(T::Assert).unwrap().into();
         let expr = self.expression()?;
-        let semicolon_tok = self.expect_next(T::Semicolon)?;
+        let semicolon_tok = self.expect_next(T::Semicolon)?.into();
         Ok(AssertStmt { assert_tok, expr, semicolon_tok })
     }
 
     fn print_stmt(&mut self) -> Result<PrintStmt> {
-        let print_tok = self.expect_next(T::Print)?;
+        let print_tok = self.expect_next(T::Print).unwrap().into();
         let expr = self.expression()?;
-        let semicolon_tok = self.expect_next(T::Semicolon)?;
+        let semicolon_tok = self.expect_next(T::Semicolon)?.into();
         Ok(PrintStmt { print_tok, expr, semicolon_tok })
     }
 
     fn return_stmt(&mut self) -> Result<ReturnStmt> {
-        let return_tok = self.expect_next(T::Return)?;
+        let return_tok = self.expect_next(T::Return).unwrap().into();
         let expr = if self.peek_kind() != T::Semicolon {
             Some(self.expression()?)
         } else {
             None
         };
-        let semicolon_tok = self.expect_next(T::Semicolon)?;
+        let semicolon_tok = self.expect_next(T::Semicolon)?.into();
         Ok(ReturnStmt { return_tok, expr, semicolon_tok })
     }
 
     fn while_stmt(&mut self) -> Result<WhileStmt> {
-        let while_tok = self.expect_next(T::While)?;
+        let while_tok = self.expect_next(T::While).unwrap().into();
         let pred = self.expression()?;
         let body = self.block()?;
         Ok(WhileStmt { while_tok, pred, body })
@@ -297,13 +299,13 @@ impl<'src> Parser<'src> {
 
         match [t0, t1, t2] {
             // Start of a Record literal
-            [T::LeftBrace, T::Identifier, T::Colon ] |
+            [T::LeftBrace, T::Name, T::Colon ] |
             // Start of a simplified Record literal
-            [T::LeftBrace, T::Identifier, T::Comma ] |
+            [T::LeftBrace, T::Name, T::Comma ] |
             // Start and end of a simplified Record literal, this one could also be a Block with a
             // single ident in it but we give Record a priority because it's more useful than a
             // block with a single Primary expression.
-            [T::LeftBrace, T::Identifier, T::RightBrace ] |
+            [T::LeftBrace, T::Name, T::RightBrace ] |
             // Empty Record or Block, Record has again priority because it's more useful than empty
             // block.
             [T::LeftBrace, T::RightBrace, _ ] => {
@@ -314,10 +316,11 @@ impl<'src> Parser<'src> {
     }
 
     fn record(&mut self) -> Result<RecordExpr> {
-        let left_brace_tok = self.expect_next(T::LeftBrace)?;
+        let left_brace = self.expect_next(T::LeftBrace).unwrap().into();
         let entries = self.record_entry_list()?;
-        let right_brace_tok = self.expect_next(T::RightBrace)?;
-        Ok(RecordExpr { left_brace_tok, entries, right_brace_tok })
+        let right_brace = self.expect_next(T::RightBrace)?.into();
+        let braces = Braces { left: left_brace, right: right_brace };
+        Ok(RecordExpr { braces, entries })
     }
 
     fn record_entry_list(&mut self) -> Result<Delimited<Comma, RecordEntry>> {
@@ -336,6 +339,7 @@ impl<'src> Parser<'src> {
             let name = self.name()?;
 
             let value = if let Some(colon_tok) = self.match_next(T::Colon) {
+                let colon_tok = colon_tok.into();
                 let init = Box::new(self.expression()?);
                 Some(EntryInit { colon_tok, init })
             } else {
@@ -345,8 +349,7 @@ impl<'src> Parser<'src> {
             entries.items.push(RecordEntry { name, value });
 
             if let Some(comma_tok) = self.match_next(T::Comma) {
-                let comma = Comma { span: comma_tok.span };
-                entries.delim.push(comma);
+                entries.delim.push(comma_tok.into());
             }
 
             match self.peek_kind() {
@@ -361,10 +364,11 @@ impl<'src> Parser<'src> {
     }
 
     fn block(&mut self) -> Result<Block> {
-        let left_brace_tok = self.expect_next(T::LeftBrace)?;
+        let left_brace = self.expect_next(T::LeftBrace).unwrap().into();
         let body = self.block_inner()?;
-        let right_brace_tok = self.expect_next(T::RightBrace)?;
-        Ok(Block { left_brace_tok, body, right_brace_tok })
+        let right_brace = self.expect_next(T::RightBrace)?.into();
+        let braces = Braces { left: left_brace, right: right_brace };
+        Ok(Block { braces, body })
     }
 
     fn block_inner(&mut self) -> Result<Vec<Item>> {
@@ -386,38 +390,44 @@ impl<'src> Parser<'src> {
     }
 
     fn unit_or_group_or_tuple(&mut self) -> Result<Expression> {
-        let left_paren_tok = self.expect_next(T::LeftParen).unwrap();
+        let left_paren = self.expect_next(T::LeftParen).unwrap().into();
 
-        if let Some(right_paren_tok) = self.match_next(T::RightParen) {
-            return Ok(Expression::Unit(UnitExpr { left_paren_tok, right_paren_tok }));
+        if let Some(right_paren) = self.match_next(T::RightParen) {
+            let right_paren = right_paren.into();
+            let parens = Parens { left: left_paren, right: right_paren };
+            return Ok(Expression::Unit(UnitExpr { parens }));
         }
 
         let exprs = self.expression_list()?;
-        let right_paren_tok = self.expect_next(T::RightParen)?;
+        let right_paren = self.expect_next(T::RightParen)?.into();
+        let parens = Parens { left: left_paren, right: right_paren };
+
         if exprs.delim.is_empty() {
             assert_eq!(exprs.items.len(), 1);
 
             let expr = Box::new(exprs.items.into_iter().next().unwrap());
-            Ok(Expression::Group(GroupExpr { left_paren_tok, expr, right_paren_tok }))
+            Ok(Expression::Group(GroupExpr { parens, expr }))
         } else {
-            Ok(Expression::Tuple(TupleExpr { left_paren_tok, exprs, right_paren_tok }))
+            Ok(Expression::Tuple(TupleExpr { parens, exprs }))
         }
     }
 
     fn fn_expr(&mut self) -> Result<FnExpr> {
-        let fn_tok = self.expect_next(T::FnKw).unwrap();
-        let left_paren_tok = self.expect_next(T::LeftParen)?;
+        let fn_tok = self.expect_next(T::FnKw).unwrap().into();
+        let left_paren = self.expect_next(T::LeftParen)?.into();
         let parameters = self.fn_params()?;
-        let right_paren_tok = self.expect_next(T::RightParen)?;
+        let right_paren = self.expect_next(T::RightParen)?.into();
+        let parens = Parens { left: left_paren, right: right_paren };
         let body = Box::new(self.expression()?);
-        Ok(FnExpr { fn_tok, left_paren_tok, parameters, right_paren_tok, body })
+        Ok(FnExpr { fn_tok, parens, parameters, body })
     }
 
     fn if_expr(&mut self) -> Result<IfExpr> {
-        let if_tok = self.expect_next(T::If)?;
+        let if_tok = self.expect_next(T::If).unwrap().into();
         let pred = Box::new(self.expression()?);
         let body = self.block()?;
         let else_branch = if let Some(else_tok) = self.match_next(T::Else) {
+            let else_tok = else_tok.into();
             let body = self.block()?;
             Some(ElseBranch { else_tok, body })
         } else {
@@ -433,7 +443,7 @@ impl<'src> Parser<'src> {
     fn expr_bp(&mut self, min_bp: u8) -> Result<Expression> {
         let mut lhs = {
             match self.peek_kind() {
-                T::LeftParen => self.unit_or_group_or_tuple()?,//Expression::Group(self.group_expr()?),
+                T::LeftParen => self.unit_or_group_or_tuple()?,
                 T::LeftBrace => self.block_or_record()?,
                 T::FnKw => Expression::Fn(self.fn_expr()?),
                 T::If => Expression::If(self.if_expr()?),
@@ -447,6 +457,7 @@ impl<'src> Parser<'src> {
                         expr: Box::new(expr),
                     })
                 },
+                T::StringExpr => Expression::String(self.string_expr()?),
                 T::True |
                 T::False |
                 T::BinaryNumber |
@@ -455,11 +466,7 @@ impl<'src> Parser<'src> {
                 T::DecimalNumber |
                 T::DecimalPointNumber |
                 T::ExponentialNumber |
-                T::Identifier => {
-                    let token = self.lexer.next();
-                    Expression::Primary(PrimaryExpr { token })
-                },
-                T::StringLit => Expression::String(self.string_expr()?),
+                T::Name => Expression::Primary(self.primary()),
                 _ => {
                     let found = self.lexer.next();
                     self.error(ParserError::ExpectedExpressionStart { found })?;
@@ -541,10 +548,11 @@ impl<'src> Parser<'src> {
     }
 
     fn call_expr(&mut self, callee: Box<Expression>) -> Result<CallExpr> {
-        let left_paren_tok = self.expect_next(T::LeftParen)?;
+        let left_paren = self.expect_next(T::LeftParen).unwrap().into();
         let arguments = self.expression_list()?;
-        let right_paren_tok = self.expect_next(T::RightParen)?;
-        Ok(CallExpr { callee, left_paren_tok, arguments, right_paren_tok })
+        let right_paren = self.expect_next(T::RightParen)?.into();
+        let parens = Parens { left: left_paren, right: right_paren };
+        Ok(CallExpr { callee, parens, arguments })
     }
 
     fn expression_list(&mut self) -> Result<Delimited<Comma, Expression>> {
@@ -563,8 +571,7 @@ impl<'src> Parser<'src> {
             args.items.push(self.expression()?);
 
             if let Some(comma_tok) = self.match_next(T::Comma) {
-                let comma = Comma { span: comma_tok.span };
-                args.delim.push(comma);
+                args.delim.push(comma_tok.into());
             }
 
             match self.peek_kind() {
@@ -578,9 +585,24 @@ impl<'src> Parser<'src> {
         }
     }
 
-    fn name(&mut self) -> Result<Identifier> {
-        let token = self.expect_next(T::Identifier)?;
-        Ok(Identifier { span: token.span })
+    fn primary(&mut self) -> PrimaryExpr {
+        let token = self.lexer.next();
+        match token.kind {
+            T::True => PrimaryExpr::True(token.into()),
+            T::False => PrimaryExpr::False(token.into()),
+            T::BinaryNumber => PrimaryExpr::BinaryNumber(token.into()),
+            T::OctalNumber => PrimaryExpr::OctalNumber(token.into()),
+            T::HexadecimalNumber => PrimaryExpr::HexadecimalNumber(token.into()),
+            T::DecimalNumber => PrimaryExpr::DecimalNumber(token.into()),
+            T::DecimalPointNumber => PrimaryExpr::DecimalPointNumber(token.into()),
+            T::ExponentialNumber => PrimaryExpr::ExponentialNumber(token.into()),
+            T::Name => PrimaryExpr::Name(token.into()),
+            _ => unreachable!(),
+        }
+    }
+
+    fn name(&mut self) -> Result<Name> {
+        Ok(self.expect_next(T::Name).unwrap().into())
     }
 }
 
@@ -653,7 +675,7 @@ fn infix_binding_power(kind: TokenKind) -> Option<(u8, u8)> {
 // String interpolation parsing
 impl<'src> Parser<'src> {
     fn string_expr(&mut self) -> Result<StringExpr> {
-        let span = self.expect_next(T::StringLit)?.span;
+        let span = self.expect_next(T::StringExpr)?.span;
         let slice = span.anchor(self.lexer.source()).as_str();
 
         let (modifier, slice) = match slice.as_bytes() {
@@ -788,28 +810,28 @@ fn string_interpolation(slice: &str, span: FreeSpan) -> Result<StringFragment> {
         end: span.end - 1, // skip '}'
     };
 
-    let ident = |len| -> Result<_> {
+    let name = |len| -> Result<_> {
         let slice = &slice[..len];
         let mut lex = logos::Lexer::<TokenKind>::new(slice);
-        if !(matches!(lex.next(), Some(T::Identifier)) && matches!(lex.next(), None)) {
-            todo!("error: invalid identifier in string interpolation");
+        if !(matches!(lex.next(), Some(T::Name)) && matches!(lex.next(), None)) {
+            todo!("error: invalid name in string interpolation");
         }
         let span = FreeSpan {
             start: span.start,
             end: span.start + (len as u32),
         };
-        Ok(Identifier { span })
+        Ok(Name { span })
     };
 
     if let Some(colon_idx) = slice.find(':') {
-        let ident = ident(colon_idx)?;
+        let name = name(colon_idx)?;
         let fmt = Some(FreeSpan {
             start: span.start + (colon_idx as u32),
             end: span.end,
         });
-        Ok(StringFragment::Interpolation { ident, fmt })
+        Ok(StringFragment::Interpolation { name, fmt })
     } else {
-        let ident = ident(slice.len())?;
-        Ok(StringFragment::Interpolation { ident, fmt: None })
+        let name = name(slice.len())?;
+        Ok(StringFragment::Interpolation { name, fmt: None })
     }
 }

@@ -20,7 +20,7 @@ mod spanned;
 pub struct AST<'alloc> {
     pub source: ObjectRef<'alloc, String>,
     pub items: Vec<Item>,
-    pub eof: Token,
+    pub eof: Eof,
 }
 
 // Items
@@ -34,43 +34,42 @@ pub enum Item {
 }
 
 pub struct FnItem {
-    pub fn_tok: Token,
-    pub name: Identifier,
-    pub left_paren_tok: Token,
+    pub fn_kw: FnKw,
+    pub name: Name,
+    pub parens: Parens,
     pub parameters: Delimited<Comma, FnParam>,
-    pub right_paren_tok: Token,
     pub body: Block,
 }
 
 pub struct FnParam {
-    pub mut_tok: Option<Token>,
-    pub name: Identifier,
+    pub mut_tok: Option<Mut>,
+    pub name: Name,
 }
 
 pub struct ConstItem {
-    pub const_tok: Token,
-    pub name: Identifier,
-    pub equal_tok: Token,
+    pub const_tok: Const,
+    pub name: Name,
+    pub equal_tok: Equal,
     pub expr: Expression,
-    pub semicolon_tok: Token,
+    pub semicolon_tok: Semicolon,
 }
 
 pub struct LetItem {
-    pub let_tok: Token,
-    pub mut_tok: Option<Token>,
-    pub name: Identifier,
+    pub let_tok: Let,
+    pub mut_tok: Option<Mut>,
+    pub name: Name,
     pub init: Option<LetInit>,
-    pub semicolon_tok: Token,
+    pub semicolon_tok: Semicolon,
 }
 
 pub struct LetInit {
-    pub equal_tok: Token,
+    pub equal_tok: Equal,
     pub expr: Expression,
 }
 
 pub struct Expr {
     pub expr: Expression,
-    pub semicolon_tok: Option<Token>,
+    pub semicolon_tok: Option<Semicolon>,
 }
 
 // Statements
@@ -84,33 +83,33 @@ pub enum Statement {
 }
 
 pub struct ForStmt {
-    pub for_tok: Token,
-    pub elem: Identifier,
-    pub in_tok: Token,
+    pub for_tok: For,
+    pub elem: Name,
+    pub in_tok: In,
     pub iter: Expression,
     pub body: Block,
 }
 
 pub struct AssertStmt {
-    pub assert_tok: Token,
+    pub assert_tok: Assert,
     pub expr: Expression,
-    pub semicolon_tok: Token,
+    pub semicolon_tok: Semicolon,
 }
 
 pub struct PrintStmt {
-    pub print_tok: Token,
+    pub print_tok: Print,
     pub expr: Expression,
-    pub semicolon_tok: Token,
+    pub semicolon_tok: Semicolon,
 }
 
 pub struct ReturnStmt {
-    pub return_tok: Token,
+    pub return_tok: Return,
     pub expr: Option<Expression>,
-    pub semicolon_tok: Token,
+    pub semicolon_tok: Semicolon,
 }
 
 pub struct WhileStmt {
-    pub while_tok: Token,
+    pub while_tok: While,
     pub pred: Expression,
     pub body: Block,
 }
@@ -137,16 +136,19 @@ pub enum Expression {
 }
 
 pub struct UnitExpr {
-    pub left_paren_tok: Token,
-    pub right_paren_tok: Token,
+    pub parens: Parens,
 }
 
-// PrimaryExpr can have the following tokens:
-// - True, False
-// - This, Super
-// - Number, String, Identifier
-pub struct PrimaryExpr {
-    pub token: Token,
+pub enum PrimaryExpr {
+    Name(Name),
+    True(True),
+    False(False),
+    BinaryNumber(BinaryNumber),
+    OctalNumber(OctalNumber),
+    HexadecimalNumber(HexadecimalNumber),
+    DecimalNumber(DecimalNumber),
+    DecimalPointNumber(DecimalPointNumber),
+    ExponentialNumber(ExponentialNumber),
 }
 
 pub struct UnaryExpr {
@@ -170,64 +172,58 @@ pub struct BinaryExpr {
 }
 
 pub struct GroupExpr {
-    pub left_paren_tok: Token,
+    pub parens: Parens,
     pub expr: Box<Expression>,
-    pub right_paren_tok: Token,
 }
 
 pub struct TupleExpr {
-    pub left_paren_tok: Token,
+    pub parens: Parens,
     pub exprs: Delimited<Comma, Expression>,
-    pub right_paren_tok: Token,
 }
 
 pub struct RecordExpr {
-    pub left_brace_tok: Token,
+    pub braces: Braces,
     pub entries: Delimited<Comma, RecordEntry>,
-    pub right_brace_tok: Token,
 }
 
 pub struct RecordEntry {
-    pub name: Identifier,
+    pub name: Name,
     pub value: Option<EntryInit>,
 }
 
 pub struct EntryInit {
-    pub colon_tok: Token,
+    pub colon_tok: Colon,
     pub init: Box<Expression>,
 }
 
 pub struct Block {
-    pub left_brace_tok: Token,
+    pub braces: Braces,
     pub body: Vec<Item>,
-    pub right_brace_tok: Token,
 }
 
 pub struct IfExpr {
-    pub if_tok: Token,
+    pub if_tok: If,
     pub pred: Box<Expression>,
     pub body: Block,
     pub else_branch: Option<ElseBranch>,
 }
 
 pub struct ElseBranch {
-    pub else_tok: Token,
+    pub else_tok: Else,
     pub body: Block,
 }
 
 pub struct FnExpr {
-    pub fn_tok: Token,
-    pub left_paren_tok: Token,
+    pub fn_tok: FnKw,
+    pub parens: Parens,
     pub parameters: Delimited<Comma, FnParam>,
-    pub right_paren_tok: Token,
     pub body: Box<Expression>,
 }
 
 pub struct CallExpr {
     pub callee: Box<Expression>,
-    pub left_paren_tok: Token,
+    pub parens: Parens,
     pub arguments: Delimited<Comma, Expression>,
-    pub right_paren_tok: Token,
 }
 
 pub struct StringExpr {
@@ -243,7 +239,7 @@ pub enum StringFragment {
         unescaped: std::string::String,
     },
     Interpolation {
-        ident: Identifier,
+        name: Name,
         fmt: Option<FreeSpan>,
     },
 }
@@ -267,14 +263,75 @@ impl<D, I> Default for Delimited<D, I> {
     }
 }
 
-/// Specialized Token where kind == Identifier
+/// It's unnecessary to store the whole `Token` in the AST when we statically know what `TokenKind`
+/// it must be. So we have newtypes for specific `TokenKind`s which only hold their `span`.
+//
+// At some point we may want to optimize this further and only store the offset instead of the
+// whole span as for most of these their lenght is statically known.
+macro_rules! specialized_tokens {
+    ( $($name:ident),* $(,)? ) => {
+        $(
+            #[derive(Clone, Copy)]
+            pub struct $name {
+                pub span: FreeSpan,
+            }
+
+            impl From<Token> for $name {
+                fn from(tok: Token) -> Self {
+                    assert!(tok.kind == crate::lexer::TokenKind::$name);
+                    $name { span: tok.span }
+                }
+            }
+        )*
+    };
+}
+
+specialized_tokens! {
+    Assert,
+    Colon,
+    Comma,
+    Const,
+    Else,
+    Eof,
+    Equal,
+    False,
+    FnKw,
+    For,
+    If,
+    In,
+    LeftBrace,
+    LeftParen,
+    Let,
+    Mut,
+    Name,
+    Print,
+    Return,
+    RightBrace,
+    RightParen,
+    Semicolon,
+    True,
+    While,
+    BinaryNumber,
+    OctalNumber,
+    HexadecimalNumber,
+    DecimalNumber,
+    DecimalPointNumber,
+    ExponentialNumber,
+}
+
 #[derive(Clone, Copy)]
-pub struct Identifier {
+pub struct Number {
     pub span: FreeSpan,
 }
 
-/// Specialized Token where kind == Comma
 #[derive(Clone, Copy)]
-pub struct Comma {
-    pub span: FreeSpan,
+pub struct Parens {
+    pub left: LeftParen,
+    pub right: RightParen,
+}
+
+#[derive(Clone, Copy)]
+pub struct Braces {
+    pub left: LeftBrace,
+    pub right: RightBrace,
 }

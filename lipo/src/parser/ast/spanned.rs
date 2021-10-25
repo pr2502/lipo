@@ -22,7 +22,7 @@ impl Spanned for Item {
 
 impl Spanned for FnItem {
     fn span(&self) -> FreeSpan {
-        join(self.fn_tok.span, self.body.span())
+        join(self.fn_kw.span, self.body.span())
     }
 }
 
@@ -108,7 +108,7 @@ impl Spanned for WhileStmt {
 
 impl Spanned for Block {
     fn span(&self) -> FreeSpan {
-        join(self.left_brace_tok.span, self.right_brace_tok.span)
+        self.braces.span()
     }
 }
 
@@ -133,7 +133,7 @@ impl Spanned for Expression {
 
 impl Spanned for UnitExpr {
     fn span(&self) -> FreeSpan {
-        join(self.left_paren_tok.span, self.right_paren_tok.span)
+        self.parens.span()
     }
 }
 
@@ -151,19 +151,19 @@ impl Spanned for BinaryExpr {
 
 impl Spanned for GroupExpr {
     fn span(&self) -> FreeSpan {
-        join(self.left_paren_tok.span, self.right_paren_tok.span)
+        self.parens.span()
     }
 }
 
 impl Spanned for TupleExpr {
     fn span(&self) -> FreeSpan {
-        join(self.left_paren_tok.span, self.right_paren_tok.span)
+        self.parens.span()
     }
 }
 
 impl Spanned for RecordExpr {
     fn span(&self) -> FreeSpan {
-        join(self.left_brace_tok.span, self.right_brace_tok.span)
+        self.braces.span()
     }
 }
 
@@ -202,13 +202,23 @@ impl Spanned for FnExpr {
 
 impl Spanned for CallExpr {
     fn span(&self) -> FreeSpan {
-        join(self.callee.span(), self.right_paren_tok.span)
+        join(self.callee.span(), self.parens.right.span)
     }
 }
 
 impl Spanned for PrimaryExpr {
     fn span(&self) -> FreeSpan {
-        self.token.span
+        match self {
+            PrimaryExpr::Name(inner) => inner.span,
+            PrimaryExpr::True(inner) => inner.span,
+            PrimaryExpr::False(inner) => inner.span,
+            PrimaryExpr::BinaryNumber(inner) => inner.span,
+            PrimaryExpr::OctalNumber(inner) => inner.span,
+            PrimaryExpr::HexadecimalNumber(inner) => inner.span,
+            PrimaryExpr::DecimalNumber(inner) => inner.span,
+            PrimaryExpr::DecimalPointNumber(inner) => inner.span,
+            PrimaryExpr::ExponentialNumber(inner) => inner.span,
+        }
     }
 }
 
@@ -217,6 +227,24 @@ impl Spanned for StringExpr {
         join(
             self.modifier_span.unwrap_or(self.open_delim_span),
             self.close_delim_span,
+        )
+    }
+}
+
+impl Spanned for Parens {
+    fn span(&self) -> FreeSpan {
+        join(
+            self.left.span,
+            self.right.span,
+        )
+    }
+}
+
+impl Spanned for Braces {
+    fn span(&self) -> FreeSpan {
+        join(
+            self.left.span,
+            self.right.span,
         )
     }
 }

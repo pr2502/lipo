@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::fmt::SourceDebug;
+use crate::span::Spanned;
 use std::fmt::{self, Debug};
 
 
@@ -168,7 +169,7 @@ impl SourceDebug for UnitExpr {
 
 impl SourceDebug for PrimaryExpr {
     fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.token.span.anchor(source).as_str())
+        f.write_str(self.span().anchor(source).as_str())
     }
 }
 
@@ -273,13 +274,13 @@ impl SourceDebug for StringExpr {
                 StringFragment::Literal { span, .. } => {
                     w.field(&span.anchor(source).as_str());
                 }
-                StringFragment::Interpolation { ident, fmt: None } => {
-                    w.field(&ident.wrap(source));
+                StringFragment::Interpolation { name, fmt: None } => {
+                    w.field(&name.wrap(source));
                 }
-                StringFragment::Interpolation { ident, fmt: Some(fmt) } => {
+                StringFragment::Interpolation { name, fmt: Some(fmt) } => {
                     w.field(&format_args!(
                         "{}:{:?}",
-                        ident.span.anchor(source).as_str(),
+                        name.span.anchor(source).as_str(),
                         fmt.anchor(source).as_str(),
                     ));
                 }
@@ -289,7 +290,7 @@ impl SourceDebug for StringExpr {
     }
 }
 
-impl SourceDebug for Identifier {
+impl SourceDebug for Name {
     fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.span.anchor(source).as_str())
     }

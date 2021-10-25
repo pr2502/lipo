@@ -171,7 +171,7 @@ define_error! {
         Label::primary(span, "tried to use as a field"),
     ],
     notes: [
-        "help: for Tuples use non-negative integers and for Records use identifiers, for example `tuple.0; record.field`",
+        "help: for Tuples use non-negative integers and for Records use names, for example `tuple.0; record.field`",
     ],
 }
 

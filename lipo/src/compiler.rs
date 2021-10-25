@@ -3,7 +3,7 @@ use crate::chunk::{ChunkBuf, LoopPoint, PatchPlace};
 use crate::lexer::T;
 use crate::name::Name;
 use crate::opcode::OpCode;
-use crate::parser::ast::*;
+use crate::parser::ast::{self, *};
 use crate::span::{FreeSpan, Spanned};
 use crate::value::Value;
 use crate::{Alloc, ObjectRef};
@@ -139,8 +139,8 @@ impl<'alloc> Emitter<'alloc> {
         self.fn_scope_mut().chunk.insert_constant(value)
     }
 
-    fn intern_ident(&self, ident: Identifier) -> Name<'alloc> {
-        self.intern_string(ident.span.anchor(&self.source).as_str())
+    fn intern_token(&self, name_tok: ast::Name) -> Name<'alloc> {
+        self.intern_string(name_tok.span.anchor(&self.source).as_str())
     }
 
     fn intern_string(&self, string: &str) -> Name<'alloc> {
@@ -297,7 +297,7 @@ impl<'alloc> Emitter<'alloc> {
     }
 
     fn fn_item(&mut self, fn_item: &FnItem) {
-        let name = self.intern_ident(fn_item.name);
+        let name = self.intern_token(fn_item.name);
 
         // Add an immutable local into the outer fn
         self.add_local(name, false, fn_item.span());
@@ -322,21 +322,21 @@ impl<'alloc> Emitter<'alloc> {
             if i >= MAX_ARGS {
                 self.error(TooManyParameters {
                     extra_param_span: param.span(),
-                    fn_params_span: FreeSpan::join(fn_item.left_paren_tok.span, fn_item.right_paren_tok.span),
+                    fn_params_span: fn_item.parens.span(),
                     limit: MAX_ARGS,
                 });
             }
-            let param_name = self.intern_ident(param.name);
+            let param_name = self.intern_token(param.name);
             self.add_local(param_name, param.mut_tok.is_some(), param.span());
         }
 
         // Empty function body implicitly returns Unit
-        self.emit(OpCode::Unit, fn_item.body.left_brace_tok.span);
+        self.emit(OpCode::Unit, fn_item.body.braces.left.span);
 
         self.block_inner(&fn_item.body.body);
 
         // Implicit Return at the end of function body
-        self.emit(OpCode::Return, fn_item.body.right_brace_tok.span);
+        self.emit(OpCode::Return, fn_item.body.braces.right.span);
 
         let fn_scope = self.fn_stack.pop().unwrap();
         let function = Value::from(Function::new(
@@ -363,7 +363,7 @@ impl<'alloc> Emitter<'alloc> {
             self.emit(OpCode::Unit, span);
         }
 
-        let name = self.intern_ident(let_item.name);
+        let name = self.intern_token(let_item.name);
         self.add_local(name, let_item.mut_tok.is_some(), let_item.span());
 
         // Item output is Unit
@@ -420,15 +420,15 @@ impl<'alloc> Emitter<'alloc> {
         let exit_jump = self.emit(OpCode::JumpIfFalse_UNPATCHED, span);
 
         // then
-        self.emit(OpCode::Pop, while_stmt.body.left_brace_tok.span);
+        self.emit(OpCode::Pop, while_stmt.body.braces.left.span);
         self.block(&while_stmt.body);
         // Loop block doesn't evaluate to anything
-        self.emit(OpCode::Pop, while_stmt.body.right_brace_tok.span);
-        self.emit_loop(loop_start, while_stmt.body.right_brace_tok.span);
+        self.emit(OpCode::Pop, while_stmt.body.braces.right.span);
+        self.emit_loop(loop_start, while_stmt.body.braces.right.span);
 
         // end
         self.patch_jump(exit_jump);
-        self.emit(OpCode::Pop, while_stmt.body.right_brace_tok.span);
+        self.emit(OpCode::Pop, while_stmt.body.braces.right.span);
     }
 
     fn block(&mut self, block: &Block) {
@@ -439,7 +439,7 @@ impl<'alloc> Emitter<'alloc> {
 
         self.block_inner(&block.body);
 
-        self.end_scope(block.right_brace_tok.span);
+        self.end_scope(block.braces.right.span);
     }
 
     fn block_inner(&mut self, items: &[Item]) {
@@ -477,65 +477,60 @@ impl<'alloc> Emitter<'alloc> {
         let op = binary_expr.operator.kind;
 
         if op == T::Equal {
-            // For now only allow assigning to an identifier
-            if let Expression::Primary(primary) = &*binary_expr.lhs {
-                if primary.token.kind == T::Identifier {
-                    let name_span = primary.token.span;
-                    let name = self.intern_ident(Identifier { span: name_span });
-                    self.expression(&binary_expr.rhs);
-                    if let Some((slot, local)) = self.resolve_local(name) {
-                        if !local.mutable {
-                            self.error(AssignImmutableBinding {
-                                bind_span: local.bind_span,
-                                assign_span: binary_expr.span(),
-                            });
-                        }
-                        self.emit(OpCode::SetLocal { slot }, binary_expr.span());
-                        // Expression has to evaluate into something, assignment evaluates to Unit
-                        self.emit(OpCode::Unit, binary_expr.span());
-                    } else if let Some((_slot, _upvalue)) = self.resolve_upvalue(name, name_span) {
-                        todo!() // error: we can't assign upvalues
-                    } else {
-                        self.error(UndefinedName { name_span });
+            // For now only allow assigning to a name
+            if let Expression::Primary(PrimaryExpr::Name(name_tok)) = &*binary_expr.lhs {
+                let name = self.intern_token(*name_tok);
+                self.expression(&binary_expr.rhs);
+                if let Some((slot, local)) = self.resolve_local(name) {
+                    if !local.mutable {
+                        self.error(AssignImmutableBinding {
+                            bind_span: local.bind_span,
+                            assign_span: binary_expr.span(),
+                        });
                     }
-                    return;
+                    self.emit(OpCode::SetLocal { slot }, binary_expr.span());
+                    // Expression has to evaluate into something, assignment evaluates to Unit
+                    self.emit(OpCode::Unit, binary_expr.span());
+                } else if let Some((_slot, _upvalue)) = self.resolve_upvalue(name, name_tok.span) {
+                    todo!() // error: we can't assign upvalues
+                } else {
+                    self.error(UndefinedName { name_span: name_tok.span });
                 }
+            } else {
+                // TODO more complex assignment target?
+                self.error(InvalidAssignmentTarget {
+                    span: binary_expr.lhs.span(),
+                });
             }
-            // TODO more complex assignment target?
-            self.error(InvalidAssignmentTarget {
-                span: binary_expr.lhs.span(),
-            });
             return;
         }
 
         if op == T::Dot {
             self.expression(&binary_expr.lhs);
 
-            if let Expression::Primary(primary) = &*binary_expr.rhs {
-                match primary.token.kind {
-                    T::Identifier => {
-                        let name = self.intern_ident(Identifier { span: primary.token.span });
-                        let value = Value::from(name);
-                        let name_key = self.insert_constant(value);
+            match &*binary_expr.rhs {
+                Expression::Primary(PrimaryExpr::Name(name_tok)) => {
+                    let name = self.intern_token(*name_tok);
+                    let value = Value::from(name);
+                    let name_key = self.insert_constant(value);
 
-                        let span = FreeSpan::join(binary_expr.operator.span, binary_expr.rhs.span());
-                        self.emit(OpCode::GetRecord { name_key }, span);
-                        return;
-                    }
-                    T::DecimalNumber => {
-                        let span = primary.token.span.anchor(&self.source).as_str();
-                        let slot = span.parse::<u8>().expect("invalid tuple slot");
+                    let span = FreeSpan::join(binary_expr.operator.span, binary_expr.rhs.span());
+                    self.emit(OpCode::GetRecord { name_key }, span);
+                    return;
+                }
+                Expression::Primary(PrimaryExpr::DecimalNumber(number)) => {
+                    let span = number.span.anchor(&self.source).as_str();
+                    let slot = span.parse::<u8>().expect("invalid tuple slot");
 
-                        let span = FreeSpan::join(binary_expr.operator.span, binary_expr.rhs.span());
-                        self.emit(OpCode::GetTuple { slot }, span);
-                        return;
-                    }
-                    _ => {}
+                    let span = FreeSpan::join(binary_expr.operator.span, binary_expr.rhs.span());
+                    self.emit(OpCode::GetTuple { slot }, span);
+                    return;
+                }
+                _ => {
+                    let span = binary_expr.rhs.span();
+                    self.error(InvalidFieldExpr { span });
                 }
             }
-            self.error(InvalidFieldExpr {
-                span: binary_expr.rhs.span(),
-            });
             return;
         }
 
@@ -674,7 +669,7 @@ impl<'alloc> Emitter<'alloc> {
                 });
                 return;
             }
-            entries.push((self.intern_ident(entry.name), entry));
+            entries.push((self.intern_token(entry.name), entry));
         }
 
         // Stable sort to make the duplicate diagnostics make sense (keep source order)
@@ -760,11 +755,11 @@ impl<'alloc> Emitter<'alloc> {
             if i >= MAX_ARGS {
                 self.error(TooManyParameters {
                     extra_param_span: param.span(),
-                    fn_params_span: FreeSpan::join(fn_expr.left_paren_tok.span, fn_expr.right_paren_tok.span),
+                    fn_params_span: fn_expr.parens.span(),
                     limit: MAX_ARGS,
                 });
             }
-            let param_name = self.intern_ident(param.name);
+            let param_name = self.intern_token(param.name);
             self.add_local(param_name, param.mut_tok.is_some(), param.span());
         }
 
@@ -824,12 +819,12 @@ impl<'alloc> Emitter<'alloc> {
         for frag in fragments {
             match frag {
                 StringFragment::Literal { span, unescaped } => self.string_frag_literal(unescaped, *span),
-                StringFragment::Interpolation { ident, fmt: None } => {
-                    let name = self.intern_ident(*ident);
-                    self.name(name, ident.span);
+                StringFragment::Interpolation { name: name_tok, fmt: None } => {
+                    let name = self.intern_token(*name_tok);
+                    self.name(name, name_tok.span);
                     // TODO format with empty fmt
                 }
-                StringFragment::Interpolation { ident: _, fmt: Some(_fmt) } => {
+                StringFragment::Interpolation { name: _, fmt: Some(_fmt) } => {
                     todo!("string interpolation fmt");
                 }
             }
@@ -854,42 +849,35 @@ impl<'alloc> Emitter<'alloc> {
     }
 
     fn primary_expr(&mut self, primary_expr: &PrimaryExpr) {
-        let op = primary_expr.token.kind;
-        let span = primary_expr.span();
-
-        match op {
-            T::True => {
-                self.emit(OpCode::True, span);
+        match primary_expr {
+            PrimaryExpr::True(tok) => {
+                self.emit(OpCode::True, tok.span);
             },
-            T::False => {
-                self.emit(OpCode::False, span);
+            PrimaryExpr::False(tok) => {
+                self.emit(OpCode::False, tok.span);
             },
-            T::SelfKw => {
+            PrimaryExpr::BinaryNumber(_) |
+            PrimaryExpr::OctalNumber(_) |
+            PrimaryExpr::HexadecimalNumber(_) => {
                 todo!()
             },
-            T::BinaryNumber |
-            T::OctalNumber |
-            T::HexadecimalNumber => {
-                todo!()
+            PrimaryExpr::DecimalNumber(tok) => {
+                self.int32(tok.span);
             },
-            T::DecimalNumber => {
-                self.int32(primary_expr);
+            PrimaryExpr::DecimalPointNumber(decimal_point) => {
+                self.float(decimal_point.span);
             },
-            T::DecimalPointNumber |
-            T::ExponentialNumber => {
-                self.float(primary_expr);
+            PrimaryExpr::ExponentialNumber(exponential) => {
+                self.float(exponential.span);
             },
-            T::Identifier => {
-                let ident = Identifier { span };
-                let name = self.intern_ident(ident);
-                self.name(name, span);
+            PrimaryExpr::Name(name_tok) => {
+                let name = self.intern_token(*name_tok);
+                self.name(name, name_tok.span);
             },
-            _ => unreachable!()
         }
     }
 
-    fn int32(&mut self, primary: &PrimaryExpr) {
-        let span = primary.token.span;
+    fn int32(&mut self, span: FreeSpan) {
         let slice = span.anchor(&self.source).as_str();
         match slice.parse::<i32>() {
             Ok(int) => {
@@ -903,8 +891,7 @@ impl<'alloc> Emitter<'alloc> {
         }
     }
 
-    fn float(&mut self, primary: &PrimaryExpr) {
-        let span = primary.token.span;
+    fn float(&mut self, span: FreeSpan) {
         let slice = span.anchor(&self.source).as_str();
         match slice.parse::<f64>() {
             Ok(float) => {
