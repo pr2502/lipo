@@ -26,6 +26,11 @@ pub struct Chunk<'alloc> {
     /// Includes the parameters
     max_stack: usize,
 
+    /// Params
+    ///
+    /// Number of input parameters (initial stack values without the callee at 0)
+    params: u8,
+
     /// Upvalues
     ///
     /// Number of upvalues the Chunk works with, it
@@ -45,6 +50,10 @@ impl<'alloc> Chunk<'alloc> {
 
     pub fn max_stack(&self) -> usize {
         self.max_stack
+    }
+
+    pub fn params(&self) -> u8 {
+        self.params
     }
 
     /// Get span from byte offset of the OpCode
@@ -77,6 +86,7 @@ impl<'alloc> Debug for Chunk<'alloc> {
         writeln!(f, "Chunk {{")?;
 
         writeln!(f, "    max_stack: {}", self.max_stack)?;
+        writeln!(f, "    params: {}", self.params)?;
         writeln!(f, "    upvalues: {}", self.upvalues)?;
 
         if !self.constants.is_empty() {
@@ -125,8 +135,11 @@ pub struct ChunkBuf<'alloc> {
     /// Deduplicating map for constant pool
     constant_hash: HashMap<Value<'alloc>, u16>,
 
-    /// Function parameters / initial stack size
-    params: usize,
+    /// Function parameters (initial stack size without callee)
+    params: u8,
+
+    /// Function upvalues
+    pub upvalues: u8,
 
     /// Source code
     source: ObjectRef<'alloc, String>,
@@ -136,12 +149,13 @@ pub struct ChunkBuf<'alloc> {
 }
 
 impl<'alloc> ChunkBuf<'alloc> {
-    pub fn new(source: ObjectRef<'alloc, String>, params: usize) -> ChunkBuf<'alloc> {
+    pub fn new(source: ObjectRef<'alloc, String>, params: u8) -> ChunkBuf<'alloc> {
         ChunkBuf {
             code: Vec::default(),
             constants: Vec::default(),
             constant_hash: HashMap::default(),
             params,
+            upvalues: 0,
             source,
             spans: Vec::default(),
         }

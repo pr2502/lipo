@@ -103,7 +103,7 @@ pub fn compile<'alloc>(ast: AST<'alloc>, alloc: &'alloc Alloc) -> Result<ObjectR
         return Err(emitter.errors);
     }
 
-    Ok(Function::new(script.chunk.check(0), 0, script_name, alloc))
+    Ok(Function::new(script.chunk.check(), script_name, alloc))
 }
 
 impl<'alloc> Emitter<'alloc> {
@@ -298,6 +298,9 @@ impl<'alloc> Emitter<'alloc> {
 
     fn fn_item(&mut self, fn_item: &FnItem) {
         let name = self.intern_token(fn_item.name);
+        // If the function has too many parameters we'll emit a specific error, the `0` is a dummy
+        // value which will get discarded with the chunk.
+        let params = fn_item.parameters.items.len().try_into().unwrap_or(0);
 
         // Add an immutable local into the outer fn
         self.add_local(name, false, fn_item.span());
@@ -311,7 +314,7 @@ impl<'alloc> Emitter<'alloc> {
         self.fn_stack.push(FnScope {
             name,
             fndef_span: fn_item.span(),
-            chunk: ChunkBuf::new(self.source, fn_item.parameters.items.len() + 1),
+            chunk: ChunkBuf::new(self.source, params),
             locals: vec![vec![recur]],
             upvalues: Vec::default(),
             // No upvalues in fn_item
@@ -340,8 +343,7 @@ impl<'alloc> Emitter<'alloc> {
 
         let fn_scope = self.fn_stack.pop().unwrap();
         let function = Value::from(Function::new(
-            fn_scope.chunk.check(0),
-            fn_item.parameters.items.len().try_into().unwrap(),
+            fn_scope.chunk.check(),
             fn_scope.name,
             self.alloc,
         ));
@@ -732,11 +734,15 @@ impl<'alloc> Emitter<'alloc> {
 
     fn fn_expr(&mut self, fn_expr: &FnExpr) {
         let name = self.intern_string("<closure>");
+        // If the function has too many parameters we'll emit a specific error, the `0` is a dummy
+        // value which will get discarded with the chunk.
+        let params = fn_expr.parameters.items.len().try_into().unwrap_or(0);
         // FIXME? Because the callee is lower on the stack than its arguments the VM has to leave
         // it on the stack while it runs, and because we use one field to mean both where the
         // callee stack starts and where it should be truncated when it returns we have to leave
         // the callee in stack slot 0. However unlike named functions (fn_item) anonymous functions
-        // can't call themselves, so the first variable name should be unresolvable.
+        // can't call themselves, so the first variable name should be unresolvable and doesn't
+        // theoretically need to be there.
         let dummy = Local {
             name,
             bind_span: FreeSpan::zero(),
@@ -745,7 +751,7 @@ impl<'alloc> Emitter<'alloc> {
         self.fn_stack.push(FnScope {
             name,
             fndef_span: fn_expr.span(),
-            chunk: ChunkBuf::new(self.source, fn_expr.parameters.items.len() + 1),
+            chunk: ChunkBuf::new(self.source, params),
             locals: Vec::from([Vec::from([dummy])]),
             upvalues: Vec::default(),
             closure: true,
@@ -767,7 +773,6 @@ impl<'alloc> Emitter<'alloc> {
         self.emit(OpCode::Return, fn_expr.body.span().shrink_to_hi());
 
         let function = self.fn_stack.pop().unwrap();
-        let upvals = function.upvalues.len().try_into().unwrap();
 
         for upval in &function.upvalues {
             match upval.reference {
@@ -776,12 +781,10 @@ impl<'alloc> Emitter<'alloc> {
             };
         }
 
-        let function = Value::from(Function::new(
-            function.chunk.check(upvals),
-            fn_expr.parameters.items.len().try_into().unwrap(),
-            function.name,
-            self.alloc,
-        ));
+        let upvals = function.upvalues.len().try_into().unwrap();
+        let mut chunk = function.chunk;
+        chunk.upvalues = upvals;
+        let function = Value::from(Function::new(chunk.check(), function.name, self.alloc));
         let fn_key = self.insert_constant(function);
         self.emit(OpCode::Closure { fn_key, upvals }, fn_expr.span());
     }

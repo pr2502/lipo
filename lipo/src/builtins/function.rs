@@ -6,22 +6,13 @@ use std::fmt::{self, Debug};
 
 #[derive(Object, Trace, Hash, PartialEq, Eq)]
 pub struct Function<'alloc> {
-    pub(crate) chunk: Chunk<'alloc>,
-    pub(crate) name: Name<'alloc>,
-    pub(crate) arity: u32,
+    pub chunk: Chunk<'alloc>,
+    pub name: Name<'alloc>,
 }
 
 impl<'alloc> Function<'alloc> {
-    pub fn new(chunk: Chunk<'alloc>, arity: u32, name: Name<'alloc>, alloc: &'alloc Alloc) -> ObjectRef<'alloc, Function<'alloc>> {
-        alloc.alloc(Function { chunk, name, arity })
-    }
-
-    pub fn name(&self) -> Name<'alloc> {
-        self.name
-    }
-
-    pub fn chunk(&self) -> &Chunk<'alloc> {
-        &self.chunk
+    pub fn new(chunk: Chunk<'alloc>, name: Name<'alloc>, alloc: &'alloc Alloc) -> ObjectRef<'alloc, Function<'alloc>> {
+        alloc.alloc(Function { chunk, name })
     }
 }
 
@@ -34,8 +25,8 @@ impl<'alloc> Debug for Function<'alloc> {
 
 #[derive(Object, Trace)]
 pub struct Closure<'alloc> {
-    pub(crate) function: ObjectRef<'alloc, Function<'alloc>>,
-    pub(crate) upvalues: Box<[Value<'alloc>]>,
+    pub function: ObjectRef<'alloc, Function<'alloc>>,
+    pub upvalues: Box<[Value<'alloc>]>,
 }
 
 impl<'alloc> Closure<'alloc> {

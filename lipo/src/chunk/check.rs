@@ -30,11 +30,12 @@ impl<'alloc> ChunkBuf<'alloc> {
     ///
     /// # TODO
     /// - return a Result instead of panicking
-    pub fn check(self, upvalues: u8) -> Chunk<'alloc> {
+    pub fn check(self) -> Chunk<'alloc> {
         let ChunkBuf {
             code,
             constants,
             params,
+            upvalues,
             source,
             spans,
             ..
@@ -52,6 +53,7 @@ impl<'alloc> ChunkBuf<'alloc> {
             constants: constants.into_boxed_slice(),
             max_stack,
             upvalues,
+            params,
             source,
             spans: spans.into_boxed_slice(),
         }
@@ -142,13 +144,15 @@ fn check_constants(decoded: &[(OpCode, usize)], constants: &[Value]) {
 /// All threads must diverge before they reach the end of of the Chunk, this generalizes [6].
 ///
 /// Returns the maximum stack required for all the temporaries in this Chunk.
-fn check_stack(decoded: &[(OpCode, usize)], params: usize) -> usize {
+fn check_stack(decoded: &[(OpCode, usize)], params: u8) -> usize {
     struct StackSize {
         size: usize,
         /// What was the previous ip of the thread that first set the stack size
         prev_ip: usize,
     }
-    let mut stack_size = BTreeMap::from([(0, StackSize { size: params, prev_ip: 0 })]);
+
+    let init_size = usize::from(params) + 1;
+    let mut stack_size = BTreeMap::from([(0, StackSize { size: init_size, prev_ip: 0 })]);
     let mut threads = BTreeSet::from([0]);
 
     for &(opcode, ip) in decoded {

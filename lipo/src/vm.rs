@@ -648,7 +648,7 @@ impl<'alloc> VM<'alloc> {
                 }
             }
         } else if let Some(function) = callee.downcast::<Function>() {
-            let arity = usize::try_from(function.arity).unwrap();
+            let arity = usize::from(function.chunk.params());
             if arity != args {
                 return Err(VmError::new(WrongArity {
                     span: self.chunk().span(self.offset() - OpCode::Call { args: 0 }.len()),
@@ -686,7 +686,7 @@ impl<'alloc> VM<'alloc> {
 
             Ok(())
         } else if let Some(closure) = callee.downcast::<Closure>() {
-            let arity = usize::try_from(closure.function.arity).unwrap();
+            let arity = usize::from(closure.function.chunk.params());
             if arity != args {
                 return Err(VmError::new(WrongArity {
                     span: self.chunk().span(self.offset() - OpCode::Call { args: 0 }.len()),
