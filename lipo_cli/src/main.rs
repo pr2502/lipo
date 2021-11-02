@@ -8,6 +8,18 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use structopt::StructOpt;
 
+
+fn init_tracing() {
+    use tracing::Level;
+    use tracing_subscriber::{EnvFilter, FmtSubscriber};
+
+    FmtSubscriber::builder()
+        .without_time()
+        .with_max_level(Level::TRACE)
+        .with_env_filter(EnvFilter::from_default_env())
+        .init();
+}
+
 #[derive(StructOpt)]
 struct Opts {
     /// Input file
@@ -44,7 +56,7 @@ fn pretty_print_bytecode<'alloc>(fun: ObjectRef<'alloc, builtins::Function<'allo
 
 fn main() -> anyhow::Result<()> {
     let opts = Opts::from_args();
-    pretty_env_logger::init();
+    init_tracing();
 
     let input = if opts.file == Path::new("-") {
         let mut buf = String::new();

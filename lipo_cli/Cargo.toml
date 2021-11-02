@@ -5,7 +5,8 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0"
-pretty_env_logger = "0.4.0"
 structopt = "0.3.23"
+tracing = { version = "0.1.29", features = ["max_level_trace", "release_max_level_info"] }
+tracing-subscriber = "0.2.25"
 
 lipo = { path = "../lipo" }
