@@ -8,6 +8,7 @@ use std::ptr::NonNull;
 
 
 #[derive(Clone, Copy)]
+#[repr(transparent)]
 pub struct Value<'alloc> {
     /// Value is invariant over the `'alloc` lifetime.
     ///

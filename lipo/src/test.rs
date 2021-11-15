@@ -522,10 +522,11 @@ run! {
     Ok(_),
 }
 
-parse! {
+run! {
     const_binding,
     r#"
-        const foo = "foo";
+        const foo = true;
+        print "{foo}";
     "#,
     Ok(_),
 }
@@ -544,6 +545,22 @@ run! {
             three
         };
         assert three() == 3;
+    ",
+    Ok(_),
+}
+
+run! {
+    call_function_from_function,
+    r"
+        fn first() {
+            1
+        }
+
+        fn second() {
+            assert 1 == first();
+        }
+
+        second()
     ",
     Ok(_),
 }

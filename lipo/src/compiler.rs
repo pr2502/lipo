@@ -9,6 +9,11 @@ use crate::value::Value;
 use crate::{Alloc, ObjectRef};
 
 
+pub mod constant;
+
+use constant::ConstCell;
+
+
 pub mod error;
 
 use error::*;
@@ -36,6 +41,7 @@ struct FnScope<'alloc> {
     chunk: ChunkBuf<'alloc>,
     // Outer Vec represents nested blocks
     locals: Vec<Vec<Local<'alloc>>>,
+    consts: Vec<Vec<Const<'alloc>>>,
     upvalues: Vec<Upvalue<'alloc>>,
     // Can capture upvalues
     closure: bool,
@@ -49,6 +55,14 @@ struct Local<'alloc> {
     bind_span: FreeSpan,
     // Binding can be reassigned
     mutable: bool,
+}
+
+#[derive(Clone, Copy)]
+struct Const<'alloc> {
+    name: Name<'alloc>,
+    bind_span: FreeSpan,
+    const_cell: ObjectRef<'alloc, ConstCell<'alloc>>,
+    const_key: u16,
 }
 
 #[derive(Clone, Copy)]
@@ -81,17 +95,14 @@ pub fn compile<'alloc>(ast: AST<'alloc>, alloc: &'alloc Alloc) -> Result<ObjectR
         name: script_name,
         fndef_span: FreeSpan::zero(),
         chunk: ChunkBuf::new(emitter.source, 0),
-        locals: vec![Vec::default()],
+        locals: Vec::default(),
+        consts: Vec::default(),
         upvalues: Vec::default(),
         closure: false,
     });
 
-    // Empty script outputs Unit
-    emitter.emit(OpCode::Unit, FreeSpan::zero());
-
+    emitter.begin_scope();
     emitter.block_inner(&ast.items);
-
-    // Implicit return at the end of script
     emitter.emit(OpCode::Return, ast.eof.span);
 
     let script = emitter.fn_stack.pop().expect("BUG: missing function");
@@ -157,6 +168,13 @@ impl<'alloc> FnScope<'alloc> {
             .map(|(slot, loc)| (slot.try_into().unwrap(), *loc))
     }
 
+    fn find_const(&self, name: Name<'alloc>) -> Option<Const<'alloc>> {
+        self.consts.iter()
+            .flatten()
+            .find(|cnst| cnst.name == name)
+            .copied()
+    }
+
     fn find_upvalue(&self, name: Name<'alloc>) -> Option<(u8, Upvalue<'alloc>)> {
         self.upvalues.iter()
             .enumerate()
@@ -166,7 +184,34 @@ impl<'alloc> FnScope<'alloc> {
 }
 
 impl<'alloc> Emitter<'alloc> {
+    fn add_const(&mut self, name: Name<'alloc>, span: FreeSpan) {
+        // TODO limit max consts
+        let conflict = self.fn_scope()
+            .consts.last().unwrap().iter()
+            .rev()
+            .find(|cnst| cnst.name == name);
+        if let Some(cnst) = conflict.copied() {
+            self.error(Shadowing { // TODO specialize shadowing into const-const, local-const
+                shadowing_span: span,
+                shadowed_span: cnst.bind_span,
+            });
+        }
+        // Insert placeholder constant to obtain a stable key
+        let const_cell = ConstCell::new(self.alloc);
+        let const_key = self.fn_scope_mut().chunk
+            .insert_constant(Value::from(const_cell));
+        self.fn_scope_mut()
+            .consts.last_mut().unwrap()
+            .push(Const {
+                name,
+                bind_span: span,
+                const_cell,
+                const_key,
+            });
+    }
+
     fn add_local(&mut self, name: Name<'alloc>, mutable: bool, span: FreeSpan) {
+        // FIXME limit max locals correctly, this just limits maximum number of local block scopes
         if self.fn_scope().locals.len() >= MAX_LOCALS {
             self.error(TooManyLocals {
                 span,
@@ -197,6 +242,25 @@ impl<'alloc> Emitter<'alloc> {
     fn resolve_local(&self, name: Name<'alloc>) -> Option<(u16, Local<'alloc>)> {
         self.fn_scope()
             .find_local(name)
+    }
+
+    fn resolve_const(&mut self, name: Name<'alloc>) -> Option<Const<'alloc>> {
+        if let Some(local_const) = self.fn_scope().find_const(name) {
+            return Some(local_const);
+        }
+
+        let outer_const = self.fn_stack.iter()
+            .rev()
+            .skip(1)
+            .find_map(|fn_scope| fn_scope.find_const(name))?;
+        let const_key = self.fn_scope_mut()
+            .chunk
+            .insert_constant(Value::from(outer_const.const_cell));
+        let local_const = Const { const_key, ..outer_const };
+        self.fn_scope_mut()
+            .consts[0]
+            .push(local_const);
+        Some(local_const)
     }
 
     fn resolve_upvalue(&mut self, name: Name<'alloc>, span: FreeSpan) -> Option<(u8, Upvalue<'alloc>)> {
@@ -263,7 +327,9 @@ impl<'alloc> Emitter<'alloc> {
     }
 
     fn begin_scope(&mut self) {
-        self.fn_scope_mut().locals.push(Vec::new());
+        let fn_scope = self.fn_scope_mut();
+        fn_scope.locals.push(Vec::new());
+        fn_scope.consts.push(Vec::new());
     }
 
     fn end_scope(&mut self, span: FreeSpan) {
@@ -283,27 +349,11 @@ impl<'alloc> Emitter<'alloc> {
 }
 
 impl<'alloc> Emitter<'alloc> {
-    fn item(&mut self, item: &Item) {
-        // Pop the previous item output
-        self.emit(OpCode::Pop, item.span().shrink_to_lo());
-
-        match item {
-            Item::Fn(fn_item) => self.fn_item(fn_item),
-            Item::Const(_const_item) => todo!("const item"),
-            Item::Let(let_item) => self.let_item(let_item),
-            Item::Statement(stmt) => self.statement(stmt),
-            Item::Expr(expr) => self.expr_item(expr),
-        }
-    }
-
     fn fn_item(&mut self, fn_item: &FnItem) {
         let name = self.intern_token(fn_item.name);
         // If the function has too many parameters we'll emit a specific error, the `0` is a dummy
         // value which will get discarded with the chunk.
         let params = fn_item.parameters.items.len().try_into().unwrap_or(0);
-
-        // Add an immutable local into the outer fn
-        self.add_local(name, false, fn_item.span());
 
         // Reference to callee in the 0th stack slot
         let recur = Local {
@@ -316,6 +366,7 @@ impl<'alloc> Emitter<'alloc> {
             fndef_span: fn_item.span(),
             chunk: ChunkBuf::new(self.source, params),
             locals: vec![vec![recur]],
+            consts: vec![Vec::default()],
             upvalues: Vec::default(),
             // No upvalues in fn_item
             closure: false,
@@ -333,12 +384,8 @@ impl<'alloc> Emitter<'alloc> {
             self.add_local(param_name, param.mut_tok.is_some(), param.span());
         }
 
-        // Empty function body implicitly returns Unit
-        self.emit(OpCode::Unit, fn_item.body.braces.left.span);
-
+        self.begin_scope();
         self.block_inner(&fn_item.body.body);
-
-        // Implicit Return at the end of function body
         self.emit(OpCode::Return, fn_item.body.braces.right.span);
 
         let fn_scope = self.fn_stack.pop().unwrap();
@@ -347,12 +394,58 @@ impl<'alloc> Emitter<'alloc> {
             fn_scope.name,
             self.alloc,
         ));
-        let key = self.insert_constant(function);
-        // Populate the local variable declared above
-        self.emit(OpCode::Constant { key }, fn_item.span());
+        let Const { const_cell, .. } = self.resolve_const(name).unwrap();
+        const_cell.set(function).unwrap();
+    }
 
-        // Item output is Unit
-        self.emit(OpCode::Unit, fn_item.span().shrink_to_hi());
+    fn const_item(&mut self, const_item: &ConstItem) {
+        let name = self.intern_token(const_item.name);
+        let Const { const_cell, .. } = self.resolve_const(name).unwrap();
+
+        match &const_item.expr {
+            Expression::Primary(primary_expr) => match primary_expr {
+                PrimaryExpr::True(_) => {
+                    const_cell.set(Value::from(true)).unwrap();
+                },
+                PrimaryExpr::False(_) => {
+                    const_cell.set(Value::from(false)).unwrap();
+                },
+                PrimaryExpr::BinaryNumber(_) |
+                PrimaryExpr::OctalNumber(_) |
+                PrimaryExpr::HexadecimalNumber(_) => {
+                    todo!()
+                },
+                PrimaryExpr::DecimalNumber(DecimalNumber { span }) => {
+                    let slice = span.anchor(&self.source).as_str();
+                    match slice.parse::<i32>() {
+                        Ok(int) => {
+                            const_cell.set(Value::from(int)).unwrap();
+                        }
+                        Err(cause) => {
+                            self.error(InvalidInt32Literal { cause, span: *span });
+                        }
+                    }
+                },
+                PrimaryExpr::DecimalPointNumber(DecimalPointNumber { span }) |
+                PrimaryExpr::ExponentialNumber(ExponentialNumber { span }) => {
+                    let slice = span.anchor(&self.source).as_str();
+                    match slice.parse::<f64>() {
+                        Ok(float) => {
+                            let float = Float::new(float, self.alloc)
+                                .expect("impossible number literal");
+                            const_cell.set(Value::from(float)).unwrap();
+                        }
+                        Err(cause) => {
+                            self.error(InvalidFloatLiteral { cause, span: *span });
+                        }
+                    }
+                },
+                PrimaryExpr::Name(_) => {
+                    todo!()
+                },
+            },
+            _ => todo!(),
+        }
     }
 
     fn let_item(&mut self, let_item: &LetItem) {
@@ -367,9 +460,6 @@ impl<'alloc> Emitter<'alloc> {
 
         let name = self.intern_token(let_item.name);
         self.add_local(name, let_item.mut_tok.is_some(), let_item.span());
-
-        // Item output is Unit
-        self.emit(OpCode::Unit, let_item.span().shrink_to_hi());
     }
 
     fn statement(&mut self, stmt: &Statement) {
@@ -380,9 +470,6 @@ impl<'alloc> Emitter<'alloc> {
             Statement::Return(return_stmt) => self.return_stmt(return_stmt),
             Statement::While(while_stmt) => self.while_stmt(while_stmt),
         }
-
-        // Item output is Unit
-        self.emit(OpCode::Unit, stmt.span().shrink_to_hi());
     }
 
     fn for_stmt(&mut self, _for_stmt: &ForStmt) {
@@ -435,26 +522,56 @@ impl<'alloc> Emitter<'alloc> {
 
     fn block(&mut self, block: &Block) {
         self.begin_scope();
-
-        // Empty block evaluates to Unit
-        self.emit(OpCode::Unit, block.span().shrink_to_lo());
-
         self.block_inner(&block.body);
-
         self.end_scope(block.braces.right.span);
     }
 
     fn block_inner(&mut self, items: &[Item]) {
-        for i in items {
-            self.item(i);
+        // Register constants
+        for item in items {
+            match item {
+                Item::Fn(fn_item) => {
+                    let name = self.intern_token(fn_item.name);
+                    self.add_const(name, FreeSpan::join(fn_item.fn_kw.span, fn_item.name.span));
+                },
+                Item::Const(const_item) => {
+                    let name = self.intern_token(const_item.name);
+                    self.add_const(name, FreeSpan::join(const_item.const_tok.span, const_item.name.span));
+                },
+                Item::Let(_) |
+                Item::Statement(_) |
+                Item::Expr(_) => {},
+            }
+        }
+
+        // Compile code
+        let mut ret = false;
+        for item in items {
+            match item {
+                Item::Fn(fn_item) => self.fn_item(fn_item),
+                Item::Const(const_item) => self.const_item(const_item),
+
+                Item::Let(let_item) => self.let_item(let_item),
+                Item::Statement(stmt) => self.statement(stmt),
+                Item::Expr(expr) => {
+                    ret |= self.expr_item(expr);
+                },
+            }
+        }
+
+        if !ret {
+            // Empty block evaluates to Unit
+            self.emit(OpCode::Unit, FreeSpan::zero());
         }
     }
 
-    fn expr_item(&mut self, expr: &Expr) {
+    fn expr_item(&mut self, expr: &Expr) -> bool {
         self.expression(&expr.expr);
         if let Some(semicolon_tok) = &expr.semicolon_tok {
             self.emit(OpCode::Pop, semicolon_tok.span);
-            self.emit(OpCode::Unit, semicolon_tok.span);
+            false
+        } else {
+            true
         }
     }
 
@@ -493,6 +610,8 @@ impl<'alloc> Emitter<'alloc> {
                     self.emit(OpCode::SetLocal { slot }, binary_expr.span());
                     // Expression has to evaluate into something, assignment evaluates to Unit
                     self.emit(OpCode::Unit, binary_expr.span());
+                } else if let Some(_cnst) = self.resolve_const(name) {
+                    todo!() // error: we can't assign constants
                 } else if let Some((_slot, _upvalue)) = self.resolve_upvalue(name, name_tok.span) {
                     todo!() // error: we can't assign upvalues
                 } else {
@@ -753,6 +872,7 @@ impl<'alloc> Emitter<'alloc> {
             fndef_span: fn_expr.span(),
             chunk: ChunkBuf::new(self.source, params),
             locals: Vec::from([Vec::from([dummy])]),
+            consts: Vec::from([Vec::default()]),
             upvalues: Vec::default(),
             closure: true,
         });
@@ -769,6 +889,7 @@ impl<'alloc> Emitter<'alloc> {
             self.add_local(param_name, param.mut_tok.is_some(), param.span());
         }
 
+        self.begin_scope();
         self.expression(&fn_expr.body);
         self.emit(OpCode::Return, fn_expr.body.span().shrink_to_hi());
 
@@ -913,6 +1034,8 @@ impl<'alloc> Emitter<'alloc> {
     fn name(&mut self, name: Name<'alloc>, span: FreeSpan) {
         if let Some((slot, _)) = self.resolve_local(name) {
             self.emit(OpCode::GetLocal { slot }, span);
+        } else if let Some(cnst) = self.resolve_const(name) {
+            self.emit(OpCode::Constant { key: cnst.const_key }, span);
         } else if let Some((slot, _)) = self.resolve_upvalue(name, span) {
             self.emit(OpCode::GetUpvalue { slot }, span);
         } else {

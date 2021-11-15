@@ -1,4 +1,5 @@
 use crate::builtins::String;
+use crate::compiler::constant::ConstCell;
 use crate::opcode::OpCode;
 use crate::span::FreeSpan;
 use crate::{ObjectRef, Trace, Value};
@@ -263,6 +264,14 @@ impl<'alloc> ChunkBuf<'alloc> {
     }
 
     pub fn insert_constant(&mut self, value: Value<'alloc>) -> u16 {
+        // Don't try to deduplicate ConstCell, we don't have the Value yet
+        if value.is::<ConstCell>() {
+            let key = self.constants.len();
+            let key = key.try_into().expect("constant pool size limit reached");
+            self.constants.push(value);
+            return key;
+        }
+
         match self.constant_hash.entry(value) {
             Entry::Vacant(e) => {
                 let key = self.constants.len();
