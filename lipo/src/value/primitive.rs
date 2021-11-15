@@ -1,6 +1,6 @@
 use super::{repr, TypeTag};
 use crate::name::Name;
-use std::cell::Cell;
+use crate::util::Invariant;
 use std::fmt::{self, Debug};
 use std::hash::Hash;
 use std::marker::PhantomData;
@@ -30,14 +30,9 @@ pub unsafe trait Primitive<'alloc>: sealed::Sealed + Debug + Hash + PartialEq + 
 
 #[derive(Clone, Copy)]
 pub struct PrimitiveAny<'alloc> {
-    _alloc: PhantomData<Cell<&'alloc ()>>,
+    _alloc: PhantomData<Invariant<'alloc>>,
     repr: NonZeroU64,
 }
-
-// SAFETY Cell is only included to enforce invariance over `'alloc` lifetime,
-// PrimitiveAny is still immutable and Send & Sync are still safe
-unsafe impl<'alloc> Send for PrimitiveAny<'alloc> {}
-unsafe impl<'alloc> Sync for PrimitiveAny<'alloc> {}
 
 #[cfg(test)]
 #[test]

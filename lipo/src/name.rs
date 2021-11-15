@@ -1,5 +1,5 @@
+use crate::util::Invariant;
 use fxhash::FxHashMap as HashMap;
-use std::cell::Cell;
 use std::fmt::{self, Debug, Display};
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
@@ -19,14 +19,9 @@ pub struct Name<'interner> {
     ///     shorter(&int, name);
     /// }
     /// ```
-    _interner: PhantomData<Cell<&'interner NameInterner>>,
+    _interner: PhantomData<Invariant<'interner>>,
     string: &'static &'static str,
 }
-
-// SAFETY Cell is only included to enforce invariance over `'interner` lifetime,
-// Name is still immutable and Send & Sync are still safe
-unsafe impl<'interner> Send for Name<'interner> {}
-unsafe impl<'interner> Sync for Name<'interner> {}
 
 impl<'interner> Name<'interner> {
     fn as_ptr(self) -> *const &'static str {

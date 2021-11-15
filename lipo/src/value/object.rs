@@ -1,4 +1,4 @@
-use std::cell::Cell;
+use crate::util::Invariant;
 use std::fmt::{self, Debug};
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
@@ -123,14 +123,9 @@ struct ObjectWrap<O: Object> {
 /// Type erased reference to a garbage collected Object
 #[derive(Clone, Copy)]
 pub struct ObjectRefAny<'alloc> {
-    _alloc: PhantomData<Cell<&'alloc ()>>,
+    _alloc: PhantomData<Invariant<'alloc>>,
     ptr: NonNull<ObjectHeader>,
 }
-
-// SAFETY Cell is only included to enforce invariance over `'alloc` lifetime,
-// ObjectRefAny is still immutable and Send & Sync are still safe
-unsafe impl<'alloc> Send for ObjectRefAny<'alloc> {}
-unsafe impl<'alloc> Sync for ObjectRefAny<'alloc> {}
 
 /// Reference to a garbage collected Object
 pub struct ObjectRef<'alloc, O: Object> {
@@ -145,7 +140,7 @@ pub struct ObjectRef<'alloc, O: Object> {
     ///     shorter(&int, string);
     /// }
     /// ```
-    _alloc: PhantomData<Cell<&'alloc ()>>,
+    _alloc: PhantomData<Invariant<'alloc>>,
     ptr: NonNull<ObjectWrap<O>>,
 }
 

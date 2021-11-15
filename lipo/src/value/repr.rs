@@ -1,7 +1,7 @@
 use super::object::gc::ObjectHeader;
 use super::object::ObjectRefAny;
 use super::primitive::{Primitive, PrimitiveAny};
-use std::cell::Cell;
+use crate::util::Invariant;
 use std::marker::PhantomData;
 use std::num::NonZeroU64;
 use std::ptr::NonNull;
@@ -31,16 +31,11 @@ pub struct Value<'alloc> {
     ///     val1 == val2
     /// }
     /// ```
-    _alloc: PhantomData<Cell<&'alloc ()>>,
+    _alloc: PhantomData<Invariant<'alloc>>,
     repr: NonZeroU64,
 }
 
 impl<'alloc> super::sealed::Sealed for Value<'alloc> {}
-
-// SAFETY Cell is only included to enforce invariance over `'alloc` lifetime,
-// Value is still immutable and Send & Sync are still safe
-unsafe impl<'alloc> Send for Value<'alloc> {}
-unsafe impl<'alloc> Sync for Value<'alloc> {}
 
 #[cfg(test)]
 #[test]

@@ -1,5 +1,5 @@
+use crate::util::Invariant;
 use crate::{Alloc, Object, ObjectRef, Trace, Value};
-use std::cell::Cell;
 use std::fmt::{self, Debug};
 use std::marker::PhantomData;
 use std::mem;
@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Object)]
 pub struct ConstCell<'alloc> {
-    _alloc: PhantomData<Cell<&'alloc ()>>,
+    _alloc: PhantomData<Invariant<'alloc>>,
     cell: AtomicU64,
 }
 
@@ -42,10 +42,6 @@ unsafe impl<'alloc> Trace for ConstCell<'alloc> {
         }
     }
 }
-
-// SAFETY Cell is only included to enforce invariance over `'alloc` lifetime
-unsafe impl<'alloc> Send for ConstCell<'alloc> {}
-unsafe impl<'alloc> Sync for ConstCell<'alloc> {}
 
 impl<'alloc> Debug for ConstCell<'alloc> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
