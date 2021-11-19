@@ -235,14 +235,14 @@ pub struct ObjectVtable {
 
     /// Get Object hash code, dispatch for [`ObjectHashCode::hash_code`]
     ///
+    /// Returns `None` when `this` doesn't support hashing.
+    ///
     /// # Safety
     /// The receiver (first argument) must be of upcast ObjectRef<'static, Self>.
-    // TODO panics if hashing is not supported,
-    // maybe return an Option<usize>
     pub hash_code: for<'alloc> unsafe fn(
         // this: Self
         ObjectRefAny<'alloc>,
-    ) -> usize,
+    ) -> Option<usize>,
 }
 
 impl<'alloc, O: Object> ObjectRef<'alloc, O> {
@@ -303,6 +303,13 @@ impl<'alloc> ObjectRefAny<'alloc> {
         // SAFETY we're using this Object's own vtable
         unsafe { partial_eq(*self, *other) }
     }
+
+    pub fn hash_code(&self) -> Option<usize> {
+        let ObjectVtable { hash_code, .. } = self.vtable();
+
+        // SAFETY we're using this Object's own vtable
+        unsafe { hash_code(*self) }
+    }
 }
 
 impl<'alloc> Debug for ObjectRefAny<'alloc> {
@@ -311,18 +318,6 @@ impl<'alloc> Debug for ObjectRefAny<'alloc> {
 
         // SAFETY we're using this Object's own vtable
         unsafe { debug_fmt(*self, f) }
-    }
-}
-
-// TODO remove this impl, not all objects can be hashed
-impl<'alloc> Hash for ObjectRefAny<'alloc> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        let ObjectVtable { hash_code, .. } = self.vtable();
-
-        // SAFETY we're using this Object's own vtable
-        let code = unsafe { hash_code(*self) };
-
-        state.write_usize(code);
     }
 }
 

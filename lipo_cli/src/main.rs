@@ -40,12 +40,12 @@ struct Opts {
 fn pretty_print_bytecode<'alloc>(fun: ObjectRef<'alloc, builtins::Function<'alloc>>) {
     fn recur<'alloc>(
         fun: ObjectRef<'alloc, builtins::Function<'alloc>>,
-        printed: &mut HashSet<ObjectRef<'alloc, builtins::Function<'alloc>>>,
+        printed: &mut HashSet<*const builtins::Function<'alloc>>,
     ) {
         eprintln!("{} = {:?}", fun.name, fun.chunk);
         for constant in fun.chunk.constants() {
             if let Some(fun) = constant.downcast::<builtins::Function>() {
-                if printed.insert(fun) {
+                if printed.insert(&*fun as *const _) {
                     recur(fun, printed);
                 }
             }

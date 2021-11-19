@@ -4,7 +4,7 @@ use crate::{Alloc, Object, ObjectRef, Trace, Value};
 use std::fmt::{self, Debug};
 
 
-#[derive(Object, Trace, Hash, PartialEq, Eq)]
+#[derive(Object, Trace)]
 pub struct Function<'alloc> {
     pub chunk: Chunk<'alloc>,
     pub name: Name<'alloc>,

@@ -1,7 +1,6 @@
 use crate::name::Name;
 use crate::value::object::{Object, ObjectRef};
 use std::fmt::{self, Debug};
-use std::hash::{Hash, Hasher};
 
 
 pub mod primitive;
@@ -90,6 +89,13 @@ impl<'alloc> Value<'alloc> {
             _ => None,
         }
     }
+
+    pub fn hash_code(&self) -> Option<usize> {
+        match self.kind() {
+            ValueKind::Object(o) => o.hash_code(),
+            ValueKind::Primitive(p) => Some(p.hash_code()),
+        }
+    }
 }
 
 
@@ -168,31 +174,6 @@ where
         match self.kind() {
             ValueKind::Object(o) => o.downcast::<O>(),
             _ => None,
-        }
-    }
-}
-
-
-// FIXME std::PartialEq and std::Hash are implemented because of some internal requirements,
-// we want to remove these in the future to prevent users relying on these implementations.
-// Not all `Value`s are meant to be comparable and hashable, it depends on the underlying type.
-
-impl<'alloc> PartialEq for Value<'alloc> {
-    fn eq(&self, other: &Self) -> bool {
-        self.partial_eq(other).unwrap_or(false)
-    }
-}
-
-impl<'alloc> Eq for Value<'alloc> {}
-
-impl<'alloc> Hash for Value<'alloc> {
-    fn hash<H>(&self, state: &mut H)
-    where
-        H: Hasher,
-    {
-        match self.kind() {
-            ValueKind::Object(o) => o.hash(state),
-            ValueKind::Primitive(p) => state.write_usize(p.hash_code()),
         }
     }
 }

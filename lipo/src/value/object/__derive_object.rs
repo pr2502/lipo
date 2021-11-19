@@ -86,9 +86,14 @@ pub unsafe fn partial_eq<'alloc, O: Object>(this: ObjectRefAny<'alloc>, other: O
 ///
 /// # Safety
 /// - Caller must provide correct receiver type, that is `this.is::<O>()` must be always true.
-pub unsafe fn hash_code<'alloc, O: Object>(this: ObjectRefAny<'alloc>) -> usize {
+pub unsafe fn hash_code<'alloc, O: Object>(this: ObjectRefAny<'alloc>) -> Option<usize> {
     // SAFETY caller must use correct receiver type
     let this = unsafe { downcast_unchecked::<O>(this) };
 
-    <O as ObjectHashCode>::hash_code(&*this)
+    if <O as ObjectHashCode>::supported() {
+        Some(<O as ObjectHashCode>::hash_code(&*this))
+    } else {
+        // Type doesn't support hashing
+        None
+    }
 }

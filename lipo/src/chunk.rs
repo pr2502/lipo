@@ -8,11 +8,12 @@ use std::assert_matches::assert_matches;
 use std::collections::hash_map::Entry;
 use std::convert::TryInto;
 use std::fmt::{self, Debug};
+use std::hash::Hash;
 use std::iter;
 
 
 /// Bytecode Chunk
-#[derive(Trace, Hash, PartialEq, Eq)]
+#[derive(Trace)]
 pub struct Chunk<'alloc> {
     /// Packed bytecode
     code: Box<[u8]>,
@@ -125,6 +126,27 @@ impl<'alloc> Debug for Chunk<'alloc> {
 }
 
 
+/// Wrapper around `Value` which allows to deduplicate `Value`s implementing `Hash + Eq` using a
+/// `HashMap`.
+struct DedupValue<'alloc>(Value<'alloc>);
+
+impl<'alloc> PartialEq for DedupValue<'alloc> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.partial_eq(&other.0).unwrap_or(false)
+    }
+}
+
+impl<'alloc> Eq for DedupValue<'alloc> {}
+
+impl<'alloc> Hash for DedupValue<'alloc> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        if let Some(hash_code) = self.0.hash_code() {
+            state.write_usize(hash_code);
+        }
+    }
+}
+
+
 /// Incomplete and/or unchecked [`Chunk`].
 pub struct ChunkBuf<'alloc> {
     /// Packed bytecode buffer
@@ -134,7 +156,7 @@ pub struct ChunkBuf<'alloc> {
     constants: Vec<Value<'alloc>>,
 
     /// Deduplicating map for constant pool
-    constant_hash: HashMap<Value<'alloc>, u16>,
+    constant_hash: HashMap<DedupValue<'alloc>, u16>,
 
     /// Function parameters (initial stack size without callee)
     params: u8,
@@ -272,7 +294,7 @@ impl<'alloc> ChunkBuf<'alloc> {
             return key;
         }
 
-        match self.constant_hash.entry(value) {
+        match self.constant_hash.entry(DedupValue(value)) {
             Entry::Vacant(e) => {
                 let key = self.constants.len();
                 let key = key.try_into().expect("constant pool size limit reached");
