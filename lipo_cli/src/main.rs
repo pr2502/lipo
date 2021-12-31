@@ -1,11 +1,11 @@
-use anyhow::Context;
-use lipo::builtins;
-use lipo::error::Report;
-use lipo::ObjectRef;
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
+
+use anyhow::Context;
+use lipo::error::Report;
+use lipo::{builtins, ObjectRef};
 use structopt::StructOpt;
 
 
@@ -27,7 +27,6 @@ struct Opts {
     file: PathBuf,
 
     // Debugging options
-
     /// Pretty print successfully parsed AST
     #[structopt(long)]
     dbg_ast: bool,
@@ -61,12 +60,14 @@ fn main() -> anyhow::Result<()> {
     let input = if opts.file == Path::new("-") {
         let mut buf = String::new();
         let stdin = io::stdin();
-        stdin.lock().read_to_string(&mut buf)
+        stdin
+            .lock()
+            .read_to_string(&mut buf)
             .context("reading stdin")?;
         buf
     } else {
-        let mut file = File::open(&opts.file)
-            .with_context(|| format!("opening file {:?}", &opts.file))?;
+        let mut file =
+            File::open(&opts.file).with_context(|| format!("opening file {:?}", &opts.file))?;
         let mut buf = String::new();
         file.read_to_string(&mut buf)
             .with_context(|| format!("reading file {:?}", &opts.file))?;
@@ -81,7 +82,7 @@ fn main() -> anyhow::Result<()> {
         Err(err) => {
             err.report(&src);
             return Ok(());
-        }
+        },
     };
 
     if opts.dbg_ast {
@@ -95,7 +96,7 @@ fn main() -> anyhow::Result<()> {
                 err.report(&src);
             }
             return Ok(());
-        }
+        },
     };
 
     if opts.dbg_bytecode {

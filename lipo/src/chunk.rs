@@ -1,15 +1,17 @@
-use crate::builtins::String;
-use crate::compiler::constant::ConstCell;
-use crate::opcode::OpCode;
-use crate::span::FreeSpan;
-use crate::{ObjectRef, Trace, Value};
-use fxhash::FxHashMap as HashMap;
 use std::assert_matches::assert_matches;
 use std::collections::hash_map::Entry;
 use std::convert::TryInto;
 use std::fmt::{self, Debug};
 use std::hash::Hash;
 use std::iter;
+
+use fxhash::FxHashMap as HashMap;
+
+use crate::builtins::String;
+use crate::compiler::constant::ConstCell;
+use crate::opcode::OpCode;
+use crate::span::FreeSpan;
+use crate::{ObjectRef, Trace, Value};
 
 
 /// Bytecode Chunk
@@ -30,7 +32,8 @@ pub struct Chunk<'alloc> {
 
     /// Params
     ///
-    /// Number of input parameters (initial stack values without the callee at 0)
+    /// Number of input parameters (initial stack values without the callee at
+    /// 0)
     params: u8,
 
     /// Upvalues
@@ -101,8 +104,7 @@ impl<'alloc> Debug for Chunk<'alloc> {
 
         writeln!(f, "    code:")?;
         let opcodes = Iter::new(&self.code);
-        let spans = self.spans.iter()
-            .map(|fs| fs.anchor(&self.source));
+        let spans = self.spans.iter().map(|fs| fs.anchor(&self.source));
         let mut prev_line = 0;
         for (opcode, span) in opcodes.zip(spans) {
             let (line, _) = span.lines();
@@ -126,8 +128,8 @@ impl<'alloc> Debug for Chunk<'alloc> {
 }
 
 
-/// Wrapper around `Value` which allows to deduplicate `Value`s implementing `Hash + Eq` using a
-/// `HashMap`.
+/// Wrapper around `Value` which allows to deduplicate `Value`s implementing
+/// `Hash + Eq` using a `HashMap`.
 struct DedupValue<'alloc>(Value<'alloc>);
 
 impl<'alloc> PartialEq for DedupValue<'alloc> {
@@ -219,9 +221,9 @@ impl<'alloc> ChunkBuf<'alloc> {
 
         PatchPlace {
             position: match opcode {
-                OpCode::Jump { offset } |
-                OpCode::JumpIfTrue { offset } |
-                OpCode::JumpIfFalse { offset } => {
+                OpCode::Jump { offset }
+                | OpCode::JumpIfTrue { offset }
+                | OpCode::JumpIfFalse { offset } => {
                     assert!(offset == u16::MAX, "invalid placeholder instruction");
                     Some(position)
                 },
@@ -241,7 +243,11 @@ impl<'alloc> ChunkBuf<'alloc> {
         // Check that the position really points to a placeholder JUMP* instruction
         assert_matches!(
             self.code[position..][..3],
-            [OpCode::JUMP | OpCode::JUMP_IF_TRUE | OpCode::JUMP_IF_FALSE, 0xFF, 0xFF],
+            [
+                OpCode::JUMP | OpCode::JUMP_IF_TRUE | OpCode::JUMP_IF_FALSE,
+                0xff,
+                0xff
+            ],
             "invalid PatchPlace",
         );
 
@@ -254,18 +260,17 @@ impl<'alloc> ChunkBuf<'alloc> {
         let new_ip = self.code.len();
 
         // We want `new_ip = old_ip + offset`.
-        let offset = (new_ip - old_ip).try_into()
+        let offset = (new_ip - old_ip)
+            .try_into()
             .expect("max jump length exceeded");
 
         let [x, y] = u16::to_le_bytes(offset);
-        self.code[position+1] = x;
-        self.code[position+2] = y;
+        self.code[position + 1] = x;
+        self.code[position + 2] = y;
     }
 
     pub fn loop_point(&self) -> LoopPoint {
-        LoopPoint {
-            position: self.code.len(),
-        }
+        LoopPoint { position: self.code.len() }
     }
 
     pub fn emit_loop(&mut self, loop_point: LoopPoint, span: FreeSpan) {
@@ -279,8 +284,7 @@ impl<'alloc> ChunkBuf<'alloc> {
         let new_ip = position;
 
         // We want `new_ip = old_ip - offset`.
-        let offset = (old_ip - new_ip).try_into()
-            .expect("loop body too large");
+        let offset = (old_ip - new_ip).try_into().expect("loop body too large");
 
         self.emit(OpCode::Loop { offset }, span);
     }
@@ -301,10 +305,8 @@ impl<'alloc> ChunkBuf<'alloc> {
                 self.constants.push(value);
                 e.insert(key);
                 key
-            }
-            Entry::Occupied(e) => {
-                *e.get()
-            }
+            },
+            Entry::Occupied(e) => *e.get(),
         }
     }
 }
@@ -330,11 +332,17 @@ impl<'code> Iterator for Iter<'code> {
             Some((opcode, rest)) => {
                 self.code = rest;
                 Some(opcode)
-            }
+            },
             None => {
-                let sample = if self.code.len() > 8 { &self.code[..8] } else { self.code };
-                panic!("BUG: atempted to iterate invalid code. invalid code starts with {:?}", sample);
-            }
+                let sample = if self.code.len() > 8 {
+                    &self.code[..8]
+                } else {
+                    self.code
+                };
+                panic!(
+                    "BUG: atempted to iterate invalid code. invalid code starts with {sample:?}"
+                );
+            },
         }
     }
 }
@@ -349,10 +357,7 @@ pub struct OffsetIter<'code> {
 
 impl<'code> OffsetIter<'code> {
     fn new(code: &'code [u8]) -> OffsetIter<'code> {
-        OffsetIter {
-            decode: Iter::new(code),
-            offset: 0,
-        }
+        OffsetIter { decode: Iter::new(code), offset: 0 }
     }
 }
 
@@ -364,7 +369,7 @@ impl<'code> Iterator for OffsetIter<'code> {
                 let offset = self.offset;
                 self.offset += opcode.len();
                 Some((opcode, offset))
-            }
+            },
             None => None,
         }
     }

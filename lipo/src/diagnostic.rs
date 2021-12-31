@@ -1,8 +1,10 @@
-use crate::span::FreeSpan;
-use codespan_reporting::diagnostic;
 use std::any::Any;
 use std::fmt::{Debug, Display};
 use std::io::Write;
+
+use codespan_reporting::diagnostic;
+
+use crate::span::FreeSpan;
 
 
 /// User-facing reporting for Diagnostics
@@ -22,7 +24,8 @@ pub trait Diagnostic: Any + Debug {
 
     /// Optional labeled snippets of code with further details
     ///
-    /// Usually there will be one primary Label and zero or more secondary Labels.
+    /// Usually there will be one primary Label and zero or more secondary
+    /// Labels.
     fn labels(&self) -> Vec<Label> {
         Vec::new()
     }
@@ -44,7 +47,7 @@ where
         use codespan_reporting::files::SimpleFile;
         use codespan_reporting::term;
         use diagnostic::Diagnostic;
-        use termcolor::{StandardStream, ColorChoice};
+        use termcolor::{ColorChoice, StandardStream};
 
         let file = SimpleFile::new("<script>", source);
 
@@ -52,7 +55,11 @@ where
             severity: self.severity().into_codespan_severity(),
             code: None,
             message: self.message(),
-            labels: self.labels().into_iter().map(Label::into_codespan_label).collect(),
+            labels: self
+                .labels()
+                .into_iter()
+                .map(Label::into_codespan_label)
+                .collect(),
             notes: self.notes(),
         };
 
@@ -83,7 +90,8 @@ impl Severity {
 }
 
 impl Label {
-    /// Create a primary label for the diagnostic, there should be exactly one per Report
+    /// Create a primary label for the diagnostic, there should be exactly one
+    /// per Report
     pub fn primary(span: impl AsRef<FreeSpan>, message: impl Display) -> Label {
         Label {
             span: *span.as_ref(),
@@ -92,7 +100,8 @@ impl Label {
         }
     }
 
-    /// Create a secondary label for the diagnostic, there can be any number per Report
+    /// Create a secondary label for the diagnostic, there can be any number per
+    /// Report
     pub fn secondary(span: impl AsRef<FreeSpan>, message: impl Display) -> Label {
         Label {
             span: *span.as_ref(),

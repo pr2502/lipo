@@ -1,6 +1,7 @@
+use std::fmt::{self, Debug};
+
 use crate::builtins::Name;
 use crate::{Alloc, Object, ObjectRef, Trace, Value};
-use std::fmt::{self, Debug};
 
 
 #[derive(Object, Trace)]
@@ -12,7 +13,10 @@ pub struct Record<'alloc> {
 }
 
 impl<'alloc> Record<'alloc> {
-    pub fn new(items: Vec<(Name<'alloc>, Value<'alloc>)>, alloc: &'alloc Alloc) -> ObjectRef<'alloc, Record<'alloc>> {
+    pub fn new(
+        items: Vec<(Name<'alloc>, Value<'alloc>)>,
+        alloc: &'alloc Alloc,
+    ) -> ObjectRef<'alloc, Record<'alloc>> {
         let mut items = items;
         items.sort_unstable_by_key(|(k, _v)| *k);
 
@@ -32,8 +36,8 @@ impl<'alloc> Record<'alloc> {
 
     /// Constructs a Record from a pre-sorted slice of items and keys.
     ///
-    /// This is used by the `OpCode::Record` instruction to make constructing Records as cheap as
-    /// possible.
+    /// This is used by the `OpCode::Record` instruction to make constructing
+    /// Records as cheap as possible.
     ///
     /// - the slice length must be a multiple of 2,
     /// - the first half must only contain `Name` keys
@@ -41,13 +45,16 @@ impl<'alloc> Record<'alloc> {
     /// - for key at index `i` its value is at index `i + len/2`
     /// - the number of keys must not exceed [`u8::MAX`]
     ///
-    /// These invariants are only checked with `debug_assertions`, they should be enforced by
-    /// [`ChunkBuf::check`].
+    /// These invariants are only checked with `debug_assertions`, they should
+    /// be enforced by [`ChunkBuf::check`].
     ///
     /// # Safety
-    /// First half of the slice must be all `Name`s, the cast is unchecked without
-    /// `debug_assertions`.
-    pub(crate) unsafe fn new_from_sorted(keys_vals: &[Value<'alloc>], alloc: &'alloc Alloc) -> ObjectRef<'alloc, Record<'alloc>> {
+    /// First half of the slice must be all `Name`s, the cast is unchecked
+    /// without `debug_assertions`.
+    pub(crate) unsafe fn new_from_sorted(
+        keys_vals: &[Value<'alloc>],
+        alloc: &'alloc Alloc,
+    ) -> ObjectRef<'alloc, Record<'alloc>> {
         let n = keys_vals.len() / 2;
 
         debug_assert!(keys_vals.len() % 2 == 0);
@@ -62,7 +69,7 @@ impl<'alloc> Record<'alloc> {
                     // SAFETY the caller ensures first half of `keys_vals` slice only contains
                     // `Name`s
                     unsafe { std::hint::unreachable_unchecked() }
-                }
+                },
             })
             .collect();
         let vals = Box::from(&keys_vals[n..]);

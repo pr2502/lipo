@@ -1,10 +1,12 @@
+use std::mem;
+
+use logos::Logos;
+
 use crate::builtins::String;
 use crate::diagnostic::{Diagnostic, Label, Severity};
 use crate::lexer::{Lexer, Token, TokenKind, T};
 use crate::span::FreeSpan;
 use crate::ObjectRef;
-use logos::Logos;
-use std::mem;
 
 
 pub mod ast;
@@ -14,8 +16,9 @@ use ast::*;
 
 // Parsing implementation
 //
-// This parsing algorithm is **not** resilient, it will bail on the first error encountered.
-// Precedence on infix expressions is handled using the Pratt binding power algorithm.
+// This parsing algorithm is **not** resilient, it will bail on the first error
+// encountered. Precedence on infix expressions is handled using the Pratt
+// binding power algorithm.
 
 #[derive(Debug)]
 pub enum ParserError {
@@ -48,10 +51,10 @@ impl Diagnostic for ParserError {
 
     fn message(&self) -> std::string::String {
         match self {
-            ParserError::UnexpectedToken { .. } |
-            ParserError::UnexpectedToken2 { .. } |
-            ParserError::ExpectedExpressionStart { .. } |
-            ParserError::ExpectedInfixOrPostfixOperator { .. } => "unexpected token".to_string(),
+            ParserError::UnexpectedToken { .. }
+            | ParserError::UnexpectedToken2 { .. }
+            | ParserError::ExpectedExpressionStart { .. }
+            | ParserError::ExpectedInfixOrPostfixOperator { .. } => "unexpected token".to_string(),
             ParserError::UnterminatedStringExpression { .. } => "unterminated string".to_string(),
             ParserError::InvalidEscape { .. } => "invalid escape or interpolation".to_string(),
         }
@@ -59,48 +62,46 @@ impl Diagnostic for ParserError {
 
     fn labels(&self) -> Vec<Label> {
         match self {
-            ParserError::UnexpectedToken { found, .. } |
-            ParserError::UnexpectedToken2 { found, .. } |
-            ParserError::ExpectedExpressionStart { found } |
-            ParserError::ExpectedInfixOrPostfixOperator { found } => vec![
-                Label::primary(found.span, format!("unexpected {}", found.kind)),
-            ],
+            ParserError::UnexpectedToken { found, .. }
+            | ParserError::UnexpectedToken2 { found, .. }
+            | ParserError::ExpectedExpressionStart { found }
+            | ParserError::ExpectedInfixOrPostfixOperator { found } => vec![Label::primary(
+                found.span,
+                format!("unexpected {}", found.kind),
+            )],
             ParserError::UnterminatedStringExpression { span } => vec![
                 Label::primary(span.shrink_to_hi(), "unterminated string"),
                 Label::secondary(span.shrink_to_lo(), "file ends here"),
             ],
-            ParserError::InvalidEscape { span } => vec![
-                Label::primary(span, "unrecognized escape or invalid interpolation"),
-            ],
+            ParserError::InvalidEscape { span } => vec![Label::primary(
+                span,
+                "unrecognized escape or invalid interpolation",
+            )],
         }
     }
 
     fn notes(&self) -> Vec<std::string::String> {
         match self {
-            ParserError::UnexpectedToken { expected, .. } => vec![
-                format!("expected {}", expected)
-            ],
-            ParserError::UnexpectedToken2 { expected, .. } => vec![
-                match expected {
-                    [] => unreachable!(),
-                    [t] => format!("expected {}", t),
-                    [t1, t2] => format!("expected {} or {}", t1, t2),
-                    [first, mid @ .., last] => {
-                        let mut acc = format!("expected one of {}", first);
-                        for t in mid {
-                            acc.push_str(&format!(", {}", t));
-                        }
-                        acc.push_str(&format!(" or {}", last));
-                        acc
-                    },
-                }
-            ],
-            ParserError::ExpectedExpressionStart { .. } => vec![
-                "expected expression to start or continue".to_string()
-            ],
-            ParserError::ExpectedInfixOrPostfixOperator { .. } => vec![
-                "expected expression to continue or end".to_string()
-            ],
+            ParserError::UnexpectedToken { expected, .. } => vec![format!("expected {}", expected)],
+            ParserError::UnexpectedToken2 { expected, .. } => vec![match expected {
+                [] => unreachable!(),
+                [t] => format!("expected {}", t),
+                [t1, t2] => format!("expected {} or {}", t1, t2),
+                [first, mid @ .., last] => {
+                    let mut acc = format!("expected one of {}", first);
+                    for t in mid {
+                        acc.push_str(&format!(", {}", t));
+                    }
+                    acc.push_str(&format!(" or {}", last));
+                    acc
+                },
+            }],
+            ParserError::ExpectedExpressionStart { .. } => {
+                vec!["expected expression to start or continue".to_string()]
+            },
+            ParserError::ExpectedInfixOrPostfixOperator { .. } => {
+                vec!["expected expression to continue or end".to_string()]
+            },
             ParserError::UnterminatedStringExpression { .. } => vec![],
             ParserError::InvalidEscape { .. } => vec![],
         }
@@ -114,22 +115,17 @@ struct Parser<'src> {
 type Result<T> = std::result::Result<T, ParserError>;
 
 pub fn parse<'alloc>(source: ObjectRef<'alloc, String>) -> Result<AST> {
-    let mut parser = Parser {
-        lexer: Lexer::new(&source),
-    };
+    let mut parser = Parser { lexer: Lexer::new(&source) };
     let items = parser.block_inner()?;
     let eof = parser.expect_next(T::Eof)?.into();
-    Ok(AST {
-        source,
-        items,
-        eof,
-    })
+    Ok(AST { source, items, eof })
 }
 
 // Utility functions for parsing
 impl<'src> Parser<'src> {
     fn error(&mut self, e: ParserError) -> Result<!> {
-        #[cfg(feature = "parser-error-panic")] {
+        #[cfg(feature = "parser-error-panic")]
+        {
             use crate::diagnostic::Report;
             e.report(self.lexer.source());
             panic!("parser error");
@@ -142,10 +138,7 @@ impl<'src> Parser<'src> {
         if token.kind == kind {
             Ok(token)
         } else {
-            self.error(ParserError::UnexpectedToken {
-                found: token,
-                expected: kind,
-            })?;
+            self.error(ParserError::UnexpectedToken { found: token, expected: kind })?;
         }
     }
 
@@ -189,7 +182,7 @@ impl<'src> Parser<'src> {
                 let expr = self.expression()?;
                 let semicolon_tok = self.match_next(T::Semicolon).map(<_>::into);
                 Item::Expr(Expr { expr, semicolon_tok })
-            }
+            },
         })
     }
 
@@ -217,13 +210,11 @@ impl<'src> Parser<'src> {
                     let comma_tok = self.expect_next(T::Comma).unwrap();
                     let comma = Comma { span: comma_tok.span };
                     parameters.delim.push(comma);
-                }
-                _ => {
-                    self.error(ParserError::UnexpectedToken2 {
-                        found: self.lexer.peek(),
-                        expected: &[T::Comma, T::RightParen],
-                    })?
-                }
+                },
+                _ => self.error(ParserError::UnexpectedToken2 {
+                    found: self.lexer.peek(),
+                    expected: &[T::Comma, T::RightParen],
+                })?,
             }
         }
         Ok(parameters)
@@ -235,7 +226,13 @@ impl<'src> Parser<'src> {
         let equal_tok = self.expect_next(T::Equal)?.into();
         let expr = self.expression()?;
         let semicolon_tok = self.expect_next(T::Semicolon)?.into();
-        Ok(ConstItem { const_tok, name, equal_tok, expr, semicolon_tok })
+        Ok(ConstItem {
+            const_tok,
+            name,
+            equal_tok,
+            expr,
+            semicolon_tok,
+        })
     }
 
     fn let_item(&mut self) -> Result<LetItem> {
@@ -250,7 +247,13 @@ impl<'src> Parser<'src> {
             None
         };
         let semicolon_tok = self.expect_next(T::Semicolon)?.into();
-        Ok(LetItem { let_tok, mut_tok, name, init, semicolon_tok })
+        Ok(LetItem {
+            let_tok,
+            mut_tok,
+            name,
+            init,
+            semicolon_tok,
+        })
     }
 
     fn for_stmt(&mut self) -> Result<ForStmt> {
@@ -328,11 +331,8 @@ impl<'src> Parser<'src> {
 
         match self.peek_kind() {
             // expression list end
-            T::Semicolon |
-            T::RightParen |
-            T::RightBrace |
-            T::Eof => return Ok(entries),
-            _ => {}
+            T::Semicolon | T::RightParen | T::RightBrace | T::Eof => return Ok(entries),
+            _ => {},
         }
 
         loop {
@@ -354,11 +354,8 @@ impl<'src> Parser<'src> {
 
             match self.peek_kind() {
                 // expression list end
-                T::Semicolon |
-                T::RightParen |
-                T::RightBrace |
-                T::Eof => return Ok(entries),
-                _ => {}
+                T::Semicolon | T::RightParen | T::RightBrace | T::Eof => return Ok(entries),
+                _ => {},
             }
         }
     }
@@ -377,7 +374,10 @@ impl<'src> Parser<'src> {
         while !matches!(self.peek_kind(), T::RightBrace | T::Eof) {
             let item = self.item()?;
 
-            assert!(terminated, "BUG: previous item was not terminated yet we parsed another one");
+            assert!(
+                terminated,
+                "BUG: previous item was not terminated yet we parsed another one"
+            );
             terminated = match &item {
                 Item::Expr(Expr { semicolon_tok: None, .. }) => false,
                 // All other items are self-terminating
@@ -447,26 +447,22 @@ impl<'src> Parser<'src> {
                 T::LeftBrace => self.block_or_record()?,
                 T::FnKw => Expression::Fn(self.fn_expr()?),
                 T::If => Expression::If(self.if_expr()?),
-                T::Minus |
-                T::Not => {
+                T::Minus | T::Not => {
                     let operator = self.lexer.next();
                     let ((), r_bp) = prefix_binding_power(operator.kind);
                     let expr = self.expr_bp(r_bp)?;
-                    Expression::Unary(UnaryExpr {
-                        operator,
-                        expr: Box::new(expr),
-                    })
+                    Expression::Unary(UnaryExpr { operator, expr: Box::new(expr) })
                 },
                 T::StringExpr => Expression::String(self.string_expr()?),
-                T::True |
-                T::False |
-                T::BinaryNumber |
-                T::OctalNumber |
-                T::HexadecimalNumber |
-                T::DecimalNumber |
-                T::DecimalPointNumber |
-                T::ExponentialNumber |
-                T::Name => Expression::Primary(self.primary()),
+                T::True
+                | T::False
+                | T::BinaryNumber
+                | T::OctalNumber
+                | T::HexadecimalNumber
+                | T::DecimalNumber
+                | T::DecimalPointNumber
+                | T::ExponentialNumber
+                | T::Name => Expression::Primary(self.primary()),
                 _ => {
                     let found = self.lexer.next();
                     self.error(ParserError::ExpectedExpressionStart { found })?;
@@ -478,36 +474,29 @@ impl<'src> Parser<'src> {
             let operator = self.lexer.peek();
             match operator.kind {
                 // infix operators
-                T::Equal |
-                T::Or |
-                T::And |
-                T::NotEqual |
-                T::EqualEqual |
-                T::Greater |
-                T::GreaterEqual |
-                T::Less |
-                T::LessEqual |
-                T::Minus |
-                T::Plus |
-                T::Div |
-                T::Mul |
-                T::Dot => {}
+                T::Equal
+                | T::Or
+                | T::And
+                | T::NotEqual
+                | T::EqualEqual
+                | T::Greater
+                | T::GreaterEqual
+                | T::Less
+                | T::LessEqual
+                | T::Minus
+                | T::Plus
+                | T::Div
+                | T::Mul
+                | T::Dot => {},
                 // postfix operators
-                T::LeftParen => {}
+                T::LeftParen => {},
                 // expression end
-                T::Semicolon |
-                T::Comma |
-                T::RightParen |
-                T::LeftBrace |
-                T::RightBrace |
-                T::Eof => {
+                T::Semicolon | T::Comma | T::RightParen | T::LeftBrace | T::RightBrace | T::Eof => {
                     break;
-                }
+                },
                 _ => {
-                    self.error(ParserError::ExpectedInfixOrPostfixOperator {
-                        found: operator,
-                    })?;
-                }
+                    self.error(ParserError::ExpectedInfixOrPostfixOperator { found: operator })?;
+                },
             }
 
             if let Some((l_bp, ())) = postfix_binding_power(operator.kind) {
@@ -519,7 +508,7 @@ impl<'src> Parser<'src> {
                     T::LeftParen => {
                         lhs = Expression::Call(self.call_expr(Box::new(lhs))?);
                         continue;
-                    }
+                    },
                     _ => unreachable!(),
                 }
             }
@@ -560,11 +549,8 @@ impl<'src> Parser<'src> {
 
         match self.peek_kind() {
             // expression list end
-            T::Semicolon |
-            T::RightParen |
-            T::RightBrace |
-            T::Eof => return Ok(args),
-            _ => {}
+            T::Semicolon | T::RightParen | T::RightBrace | T::Eof => return Ok(args),
+            _ => {},
         }
 
         loop {
@@ -576,11 +562,8 @@ impl<'src> Parser<'src> {
 
             match self.peek_kind() {
                 // expression list end
-                T::Semicolon |
-                T::RightParen |
-                T::RightBrace |
-                T::Eof => return Ok(args),
-                _ => {}
+                T::Semicolon | T::RightParen | T::RightBrace | T::Eof => return Ok(args),
+                _ => {},
             }
         }
     }
@@ -621,16 +604,18 @@ impl<'src> Parser<'src> {
 // CALL         `.` `()`
 // PRIMARY
 
+#[rustfmt::skip]
 fn prefix_binding_power(kind: TokenKind) -> ((), u8) {
     match kind {
         // unary
-        T::Not |
-        T::Minus => ((), 15),
+        T::Not
+        | T::Minus => ((), 15),
 
         _ => unreachable!(),
     }
 }
 
+#[rustfmt::skip]
 fn postfix_binding_power(kind: TokenKind) -> Option<(u8, ())> {
     Some(match kind {
         // call
@@ -640,32 +625,33 @@ fn postfix_binding_power(kind: TokenKind) -> Option<(u8, ())> {
     })
 }
 
+#[rustfmt::skip]
 fn infix_binding_power(kind: TokenKind) -> Option<(u8, u8)> {
     // left associative:  l_bp < r_bp
     // right associative: l_bp > r_bp
     Some(match kind {
         // assignment
-        T::Equal        => (2, 1),
+        T::Equal            => (2, 1),
         // or
-        T::Or           => (3, 4),
+        T::Or               => (3, 4),
         // and
-        T::And          => (5, 6),
+        T::And              => (5, 6),
         // equality
-        T::EqualEqual |
-        T::NotEqual     => (7, 8),
+        T::EqualEqual
+        | T::NotEqual       => (7, 8),
         // comparison
-        T::Less |
-        T::LessEqual |
-        T::Greater |
-        T::GreaterEqual => (9, 10),
+        T::Less
+        | T::LessEqual
+        | T::Greater
+        | T::GreaterEqual   => (9, 10),
         // term
-        T::Minus |
-        T::Plus         => (11, 12),
+        T::Minus
+        | T::Plus           => (11, 12),
         // factor
-        T::Div |
-        T::Mul          => (13, 14),
+        T::Div
+        | T::Mul            => (13, 14),
         // call
-        T::Dot          => (16, 17),
+        T::Dot              => (16, 17),
 
         _ => return None,
     })
@@ -696,10 +682,7 @@ impl<'src> Parser<'src> {
         let modifier_len = modifier.is_some() as u32;
         let hashes = hashes as u32;
 
-        let modifier_span = modifier.map(|_| FreeSpan {
-            start: span.start,
-            end: span.start + 1,
-        });
+        let modifier_span = modifier.map(|_| FreeSpan { start: span.start, end: span.start + 1 });
         let open_delim_span = FreeSpan {
             start: span.start + modifier_len,
             end: span.start + modifier_len + hashes + 1,
@@ -708,10 +691,7 @@ impl<'src> Parser<'src> {
             start: open_delim_span.end,
             end: span.end - 1 - hashes,
         };
-        let close_delim_span = FreeSpan {
-            start: inner_span.end,
-            end: span.end,
-        };
+        let close_delim_span = FreeSpan { start: inner_span.end, end: span.end };
 
         let fragments = match modifier {
             Some(b'r') => raw_string_fragments(inner_slice, inner_span),
@@ -735,6 +715,7 @@ fn raw_string_fragments(slice: &str, span: FreeSpan) -> Vec<StringFragment> {
 
 
 #[derive(Logos, Debug, PartialEq, Eq, Clone, Copy)]
+#[rustfmt::skip]
 enum StringPieceToken {
     #[token(r"{{")] EscBraceOpen,
     #[token(r"}}")] EscBraceClose,
@@ -761,11 +742,11 @@ fn default_string_fragments(slice: &str, span: FreeSpan) -> Result<Vec<StringFra
             EscBraceOpen => {
                 unescaped.push('{');
                 span.end += 2;
-            }
+            },
             EscBraceClose => {
                 unescaped.push('}');
                 span.end += 2;
-            }
+            },
             Interpolation => {
                 if !unescaped.is_empty() {
                     let unescaped = mem::take(&mut unescaped);
@@ -784,11 +765,11 @@ fn default_string_fragments(slice: &str, span: FreeSpan) -> Result<Vec<StringFra
             Plain => {
                 unescaped.push_str(lex.slice());
                 span.end += 1;
-            }
+            },
             Error => {
                 span.end += lex.slice().len() as u32;
                 return Err(ParserError::InvalidEscape { span });
-            }
+            },
         }
     }
 
@@ -802,12 +783,10 @@ fn default_string_fragments(slice: &str, span: FreeSpan) -> Result<Vec<StringFra
 
 fn string_interpolation(slice: &str, span: FreeSpan) -> Result<StringFragment> {
     // Caller is responsible for the interpolation being wrapped in `{}`
-    let slice = slice
-        .strip_prefix('{').unwrap()
-        .strip_suffix('}').unwrap();
+    let slice = slice.strip_prefix('{').unwrap().strip_suffix('}').unwrap();
     let span = FreeSpan {
         start: span.start + 1, // skip '{'
-        end: span.end - 1, // skip '}'
+        end: span.end - 1,     // skip '}'
     };
 
     let name = |len| -> Result<_> {

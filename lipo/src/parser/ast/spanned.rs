@@ -182,7 +182,8 @@ impl Spanned for IfExpr {
         join(
             self.if_tok.span,
             self.else_branch
-                .as_ref().map(Spanned::span)
+                .as_ref()
+                .map(Spanned::span)
                 .unwrap_or_else(|| self.body.span()),
         )
     }
@@ -233,18 +234,12 @@ impl Spanned for StringExpr {
 
 impl Spanned for Parens {
     fn span(&self) -> FreeSpan {
-        join(
-            self.left.span,
-            self.right.span,
-        )
+        join(self.left.span, self.right.span)
     }
 }
 
 impl Spanned for Braces {
     fn span(&self) -> FreeSpan {
-        join(
-            self.left.span,
-            self.right.span,
-        )
+        join(self.left.span, self.right.span)
     }
 }

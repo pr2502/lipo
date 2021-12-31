@@ -1,10 +1,13 @@
-use crate::span::FreeSpan;
-use logos::{self, skip, Logos};
 use std::fmt::{self, Debug, Display};
 use std::iter;
 
+use logos::{self, skip, Logos};
+
+use crate::span::FreeSpan;
+
 
 #[derive(Logos, Debug, PartialEq, Eq, Clone, Copy)]
+#[rustfmt::skip]
 pub enum TokenKind {
     // Single-character tokens
     #[token("(")] LeftParen,
@@ -86,9 +89,10 @@ pub type T = TokenKind;
 
 /// Lex string expressions
 ///
-/// String expressions are not regular and so cannot be simply detected using a regex like the rest
-/// of the tokens. So the regex detects a start of a string literal and eats as much of the input
-/// as is unambiguously a string expression, this function then checks the opening delimeter and
+/// String expressions are not regular and so cannot be simply detected using a
+/// regex like the rest of the tokens. So the regex detects a start of a string
+/// literal and eats as much of the input as is unambiguously a string
+/// expression, this function then checks the opening delimeter and
 /// bumps the end until it finds a matching closing delimeter or Eof.
 fn string_expr(lex: &mut logos::Lexer<TokenKind>) {
     let matched = lex.slice();
@@ -116,11 +120,13 @@ fn string_expr(lex: &mut logos::Lexer<TokenKind>) {
     if let Some(position) = lex.remainder().find(&terminator) {
         lex.bump(position + prefix_hashes + 1); // +1 for the '"'
     } else {
-        // No string terminator found, eat the rest of the input, let the parser report an error.
+        // No string terminator found, eat the rest of the input, let the parser report
+        // an error.
         //
-        // Here we could tell logos that tha parsing was unsuccessful and return an Error token
-        // kind but we have to re-lex this in the parser anyway so emitting a StringExpr token even
-        // if we know it's bad lets us handle all the related errors in one place.
+        // Here we could tell logos that tha parsing was unsuccessful and return an
+        // Error token kind but we have to re-lex this in the parser anyway so
+        // emitting a StringExpr token even if we know it's bad lets us handle
+        // all the related errors in one place.
         lex.bump(lex.remainder().len());
     }
 }
@@ -154,12 +160,12 @@ impl Display for TokenKind {
             T::Name => "name",
 
             // Literals
-            T::BinaryNumber |
-            T::OctalNumber |
-            T::HexadecimalNumber |
-            T::DecimalNumber |
-            T::DecimalPointNumber |
-            T::ExponentialNumber => "number literal",
+            T::BinaryNumber
+            | T::OctalNumber
+            | T::HexadecimalNumber
+            | T::DecimalNumber
+            | T::DecimalPointNumber
+            | T::ExponentialNumber => "number literal",
 
             // Keywords
             T::And => "`and`",
@@ -201,13 +207,14 @@ pub struct Token {
 
 /// Lexer / scanner
 ///
-/// Wraps the [`logos`] lexer and acts as a "peekable" adapter and replaces the iterator
-/// `Option::None` with a [`TokenKind::Eof`]. Since the underlying lexer iterator is fused
-/// [`next`](Lexer::next) will yield EOF indefinitely after it yields it once.
+/// Wraps the [`logos`] lexer and acts as a "peekable" adapter and replaces the
+/// iterator `Option::None` with a [`TokenKind::Eof`]. Since the underlying
+/// lexer iterator is fused [`next`](Lexer::next) will yield EOF indefinitely
+/// after it yields it once.
 ///
 /// # Cloning
-/// Cloning the `Lexer` creates a new lexer over the remaining input, it starts at the same token
-/// as the old one and they both advance independently.
+/// Cloning the `Lexer` creates a new lexer over the remaining input, it starts
+/// at the same token as the old one and they both advance independently.
 /// ```rust
 /// # #![feature(assert_matches)]
 /// # use lipo::lexer::{Lexer, Token, TokenKind, T};

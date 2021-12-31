@@ -1,7 +1,8 @@
 //! AST Types
 //!
-//! It's more of a Concrete Syntax Tree than an Abstract one because we keep all the tokens in it,
-//! but AST is often used more generally and more people understand the initialism.
+//! It's more of a Concrete Syntax Tree than an Abstract one because we keep all
+//! the tokens in it, but AST is often used more generally and more people
+//! understand the initialism.
 //!
 //! Structure is based on [Appendix I] of CraftingInterpreters.
 //!
@@ -116,9 +117,10 @@ pub struct WhileStmt {
 
 // Expressions
 //
-// Here we deviate from the Lox grammar a bit, not in meaning but in encoding. Because encoding the
-// operator precedence in the concrete syntax tree would make it very unergonomic to consume.
-// Instead we make `Expression` contain all the binary and unary operations directly.
+// Here we deviate from the Lox grammar a bit, not in meaning but in encoding.
+// Because encoding the operator precedence in the concrete syntax tree would
+// make it very unergonomic to consume. Instead we make `Expression` contain all
+// the binary and unary operations directly.
 
 pub enum Expression {
     Unit(UnitExpr),
@@ -247,8 +249,8 @@ pub enum StringFragment {
 /// List of `Item`s separated by `Delim`eters.
 ///
 /// Parser ensures that `items.len() == delim.len() == 0` for an empty list,
-/// `items.len() == delim.len() + 1` or `item.len() == delim.len()` for a non empty list with an
-/// optional trailing `Delim`eter.
+/// `items.len() == delim.len() + 1` or `item.len() == delim.len()` for a non
+/// empty list with an optional trailing `Delim`eter.
 pub struct Delimited<Delim, Item> {
     pub items: Vec<Item>,
     pub delim: Vec<Delim>,
@@ -263,11 +265,12 @@ impl<D, I> Default for Delimited<D, I> {
     }
 }
 
-/// It's unnecessary to store the whole `Token` in the AST when we statically know what `TokenKind`
-/// it must be. So we have newtypes for specific `TokenKind`s which only hold their `span`.
-//
-// At some point we may want to optimize this further and only store the offset instead of the
-// whole span as for most of these their lenght is statically known.
+/// It's unnecessary to store the whole `Token` in the AST when we statically
+/// know what `TokenKind` it must be. So we have newtypes for specific
+/// `TokenKind`s which only hold their `span`.
+// At some point we may want to optimize this further and only store the offset
+// instead of the whole span as for most of these their lenght is statically
+// known.
 macro_rules! specialized_tokens {
     ( $($name:ident),* $(,)? ) => {
         $(

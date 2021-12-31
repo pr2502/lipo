@@ -1,8 +1,9 @@
-use crate::value::object::ObjectHashCode;
-use crate::{Alloc, Object, ObjectRef, Trace};
 use std::fmt::{self, Debug, Display};
 use std::hash::{Hash, Hasher};
 use std::ops::Deref;
+
+use crate::value::object::ObjectHashCode;
+use crate::{Alloc, Object, ObjectRef, Trace};
 
 
 #[derive(Object, Trace)]
@@ -64,7 +65,8 @@ impl Hash for String {
 
 impl ObjectHashCode for String {
     fn hash_code(&self) -> usize {
-        // PERF avoid rehashing the cached hash in the default ObjectHashCode implementation
+        // PERF avoid rehashing the cached hash in the default ObjectHashCode
+        // implementation
         self.hash
     }
 }

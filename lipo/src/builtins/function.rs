@@ -1,7 +1,8 @@
+use std::fmt::{self, Debug};
+
 use crate::chunk::Chunk;
 use crate::name::Name;
 use crate::{Alloc, Object, ObjectRef, Trace, Value};
-use std::fmt::{self, Debug};
 
 
 #[derive(Object, Trace)]
@@ -11,7 +12,11 @@ pub struct Function<'alloc> {
 }
 
 impl<'alloc> Function<'alloc> {
-    pub fn new(chunk: Chunk<'alloc>, name: Name<'alloc>, alloc: &'alloc Alloc) -> ObjectRef<'alloc, Function<'alloc>> {
+    pub fn new(
+        chunk: Chunk<'alloc>,
+        name: Name<'alloc>,
+        alloc: &'alloc Alloc,
+    ) -> ObjectRef<'alloc, Function<'alloc>> {
         alloc.alloc(Function { chunk, name })
     }
 }

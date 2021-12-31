@@ -4,14 +4,11 @@
 #![feature(let_else)]
 #![feature(never_type)]
 #![feature(once_cell)]
-
 // spooky scary specialization
 #![allow(incomplete_features)]
 #![feature(specialization)]
-
 // use RFC 2585 explicitly, don't wait for it to get enabled by default
 #![deny(unsafe_op_in_unsafe_fn)]
-
 // we like to give lifetimes meaningful names
 #![allow(clippy::needless_lifetimes)]
 
@@ -59,12 +56,11 @@ pub mod error {
 }
 
 // derive macros
+pub use compiler::compile;
+pub use lipo_macro::{Object, Trace};
+pub use parser::parse;
 #[doc(hidden)] pub use value::object::__derive_object;
 #[doc(hidden)] pub use value::object::__derive_trace;
-pub use lipo_macro::{Object, Trace};
-
-pub use compiler::compile;
-pub use parser::parse;
 pub use value::object::gc::{Alloc, Trace};
 pub use value::object::{Object, ObjectRef};
 pub use value::primitive::Primitive;
@@ -73,5 +69,4 @@ pub use vm::error::VmError;
 pub use vm::VM;
 
 
-#[cfg(test)]
-mod test;
+#[cfg(test)] mod test;

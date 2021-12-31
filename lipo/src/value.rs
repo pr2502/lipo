@@ -1,16 +1,16 @@
-use crate::name::Name;
-use crate::value::object::{Object, ObjectRef};
 use std::fmt::{self, Debug};
 
+use crate::name::Name;
+use crate::value::object::{Object, ObjectRef};
 
-pub mod primitive;
+
 pub mod object;
+pub mod primitive;
 mod repr;
 
-pub use repr::{TypeTag, Value};
-pub(crate) use repr::ValueKind;
-
 use primitive::Primitive;
+pub(crate) use repr::ValueKind;
+pub use repr::{TypeTag, Value};
 
 
 mod sealed {
@@ -46,7 +46,7 @@ impl<'alloc> Value<'alloc> {
     /// ```
     pub fn is<T>(&self) -> bool
     where
-        Self: Downcast<T>
+        Self: Downcast<T>,
     {
         self.__is()
     }
@@ -54,7 +54,8 @@ impl<'alloc> Value<'alloc> {
     /// Returns `Some` if the inner type of `Value` is the same as `T`.
     ///
     /// The `Output` type depends on the `T`
-    /// - if `T` [implements `Object`](Object#implementors) then `Output` is `ObjectRef<T>` with
+    /// - if `T` [implements `Object`](Object#implementors) then `Output` is
+    ///   `ObjectRef<T>` with
     /// the same lifetime as `Value`
     /// - If `T` [implements `Primitive`](Primitive#implementors) then `Output`
     /// is `T`
@@ -69,23 +70,20 @@ impl<'alloc> Value<'alloc> {
     /// ```
     pub fn downcast<T>(self) -> Option<<Self as Downcast<T>>::Output>
     where
-        Self: Downcast<T>
+        Self: Downcast<T>,
     {
         self.__downcast()
     }
 
     /// Compares to `Value`s for equality
     ///
-    /// Returns `None` if either `lhs` and `rhs` types don't match or if the concrete types (in
-    /// case of `Object`s) don't support comparing for equality.
+    /// Returns `None` if either `lhs` and `rhs` types don't match or if the
+    /// concrete types (in case of `Object`s) don't support comparing for
+    /// equality.
     pub fn partial_eq(&self, other: &Self) -> Option<bool> {
         match (self.kind(), other.kind()) {
-            (ValueKind::Object(lhs), ValueKind::Object(rhs)) => {
-                lhs.partial_eq(&rhs)
-            }
-            (ValueKind::Primitive(lhs), ValueKind::Primitive(rhs)) => {
-                lhs.partial_eq(rhs)
-            }
+            (ValueKind::Object(lhs), ValueKind::Object(rhs)) => lhs.partial_eq(&rhs),
+            (ValueKind::Primitive(lhs), ValueKind::Primitive(rhs)) => lhs.partial_eq(rhs),
             _ => None,
         }
     }
@@ -121,11 +119,12 @@ impl<'alloc, O: Object> From<ObjectRef<'alloc, O>> for Value<'alloc> {
     }
 }
 
-// Rust can't yet express that two traits are mutually exclusive like `Object` and `Primitive`.
+// Rust can't yet express that two traits are mutually exclusive like `Object`
+// and `Primitive`.
 //
-// Since `Object` is open to be implemented outside of this crate we have to use a blanket impl for
-// it and because `Primitive` is implemented for a known set of types we're going to implement
-// `Downcast` for those.
+// Since `Object` is open to be implemented outside of this crate we have to use
+// a blanket impl for it and because `Primitive` is implemented for a known set
+// of types we're going to implement `Downcast` for those.
 macro_rules! impl_downcast_primitive {
     ( $($P:ty),* $(,)? ) => { $(
 

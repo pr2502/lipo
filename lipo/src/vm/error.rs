@@ -1,7 +1,8 @@
-use crate::diagnostic::{Diagnostic, Label, Severity};
-use crate::span::FreeSpan;
 use std::any::{Any, TypeId};
 use std::fmt::{self, Debug};
+
+use crate::diagnostic::{Diagnostic, Label, Severity};
+use crate::span::FreeSpan;
 
 
 pub trait Error: Debug + Any {

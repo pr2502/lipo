@@ -1,6 +1,7 @@
-use crate::{Alloc, Object, ObjectRef, Trace, Value};
 use std::fmt::{self, Debug};
 use std::ops::Deref;
+
+use crate::{Alloc, Object, ObjectRef, Trace, Value};
 
 
 #[derive(Object, Trace)]
@@ -9,7 +10,10 @@ pub struct Tuple<'alloc> {
 }
 
 impl<'alloc> Tuple<'alloc> {
-    pub fn new(items: Box<[Value<'alloc>]>, alloc: &'alloc Alloc) -> ObjectRef<'alloc, Tuple<'alloc>> {
+    pub fn new(
+        items: Box<[Value<'alloc>]>,
+        alloc: &'alloc Alloc,
+    ) -> ObjectRef<'alloc, Tuple<'alloc>> {
         alloc.alloc(Tuple { items })
     }
 }

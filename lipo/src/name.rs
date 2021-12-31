@@ -1,9 +1,11 @@
-use crate::util::Invariant;
-use fxhash::FxHashMap as HashMap;
 use std::fmt::{self, Debug, Display};
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 use std::{cmp, mem, ptr};
+
+use fxhash::FxHashMap as HashMap;
+
+use crate::util::Invariant;
 
 
 #[derive(Clone, Copy)]
@@ -40,7 +42,8 @@ impl<'interner> Name<'interner> {
     /// Only use for Primitive conversions
     ///
     /// # Safety
-    /// The `'interner` lifetime must match the originally destroyed lifetime precisely.
+    /// The `'interner` lifetime must match the originally destroyed lifetime
+    /// precisely.
     pub(crate) unsafe fn from_u64(bits: u64) -> Name<'interner> {
         // SAFETY only restoring from a previous call to `Name::to_u64`
         Name {
@@ -97,10 +100,11 @@ pub(crate) struct NameInterner {
 impl Drop for NameInterner {
     fn drop(&mut self) {
         for Name { string: outer_ref, .. } in mem::take(&mut self.dedup).into_values() {
-            // SAFETY since NameInterner has been dropped all Names are gone, this is upheld by the
-            // caller of `NameInterner::intern`
+            // SAFETY since NameInterner has been dropped all Names are gone, this is upheld
+            // by the caller of `NameInterner::intern`
             unsafe {
-                let outer_box = Box::from_raw(outer_ref as *const &'static str as *mut &'static str);
+                let outer_box =
+                    Box::from_raw(outer_ref as *const &'static str as *mut &'static str);
                 let inner_ref = *outer_box;
                 let inner_box = Box::from_raw(inner_ref as *const str as *mut str);
                 drop(inner_box);
@@ -111,11 +115,13 @@ impl Drop for NameInterner {
 
 impl NameInterner {
     /// # Safety
-    /// The caller has to ensure that no returned Name outlives the NameInterner.
+    /// The caller has to ensure that no returned Name outlives the
+    /// NameInterner.
     pub(crate) unsafe fn intern<'interner>(&mut self, string: &str) -> Name<'interner> {
-        // Caller ensures that `&mut self` lives for the `'interner` lifetime, Rust however doesn't
-        // allow any kind of `'self` lifetime so we store Names with a `'static` lifetime and
-        // manually change it to whatever the caller gives us.
+        // Caller ensures that `&mut self` lives for the `'interner` lifetime, Rust
+        // however doesn't allow any kind of `'self` lifetime so we store Names
+        // with a `'static` lifetime and manually change it to whatever the
+        // caller gives us.
         fn change_lifetime<'interner>(name: Name<'static>) -> Name<'interner> {
             Name {
                 _interner: PhantomData,

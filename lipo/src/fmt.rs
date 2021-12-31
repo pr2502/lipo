@@ -9,10 +9,7 @@ pub trait SourceDebug {
     where
         Self: Sized,
     {
-        SourceWrap {
-            source,
-            inner: self,
-        }
+        SourceWrap { source, inner: self }
     }
 }
 

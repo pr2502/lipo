@@ -1,13 +1,16 @@
 use crate::builtins::String;
-use crate::compiler::{compile, error::*};
+use crate::compiler::compile;
+use crate::compiler::error::*;
 use crate::diagnostic::Report;
-use crate::Alloc;
 use crate::parser::parse;
-use crate::vm::{error::*, VM};
+use crate::vm::error::*;
+use crate::vm::VM;
+use crate::Alloc;
 
 
 fn init() {
     use std::sync::Once;
+
     use tracing::Level;
     use tracing_subscriber::{EnvFilter, FmtSubscriber};
 

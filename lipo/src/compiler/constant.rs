@@ -1,9 +1,10 @@
-use crate::util::Invariant;
-use crate::{Alloc, Object, ObjectRef, Trace, Value};
 use std::fmt::{self, Debug};
 use std::marker::PhantomData;
 use std::mem;
 use std::sync::atomic::{AtomicU64, Ordering};
+
+use crate::util::Invariant;
+use crate::{Alloc, Object, ObjectRef, Trace, Value};
 
 
 #[derive(Object)]
@@ -29,7 +30,8 @@ impl<'alloc> ConstCell<'alloc> {
 
     pub fn set(&self, value: Value<'alloc>) -> Result<(), Value<'alloc>> {
         let repr = unsafe { mem::transmute(value) };
-        self.cell.compare_exchange(NONE, repr, Ordering::AcqRel, Ordering::Acquire)
+        self.cell
+            .compare_exchange(NONE, repr, Ordering::AcqRel, Ordering::Acquire)
             .map(|_| ())
             .map_err(|prev| unsafe { mem::transmute(prev) })
     }

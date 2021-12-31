@@ -1,15 +1,16 @@
+use tracing::{debug, trace};
+
 use crate::builtins::{Closure, Float, Function, Name, NativeFunction, Record, String, Tuple};
 use crate::chunk::Chunk;
 use crate::compiler::constant::ConstCell;
 use crate::opcode::OpCode;
 use crate::{Alloc, ObjectRef, Trace, Value};
-use tracing::{debug, trace};
 
 
 pub mod error;
 
-use error::*;
 pub use error::VmError;
+use error::*;
 
 
 pub struct VM<'alloc> {
@@ -57,7 +58,7 @@ impl<'alloc> VM<'alloc> {
                 // SAFETY Chunk is checked when the VM is constructed, all stack access must be
                 // valid.
                 debug_unreachable!("BUG: VM tried to access stack below 0")
-            }
+            },
         }
     }
 
@@ -68,14 +69,15 @@ impl<'alloc> VM<'alloc> {
                 // SAFETY Chunk is checked when the VM is constructed, all stack access must be
                 // valid.
                 debug_unreachable!("BUG: VM tried to access stack below 0")
-            }
+            },
         }
     }
 
     fn push(&mut self, value: Value<'alloc>) {
         if self.stack.len() >= self.stack.capacity() {
-            // SAFETY Chunk is checked when the VM is constructed, maximum temporary stack size is
-            // statically known per function and VM::op_call reserves space accordingly.
+            // SAFETY Chunk is checked when the VM is constructed, maximum temporary stack
+            // size is statically known per function and VM::op_call reserves
+            // space accordingly.
             debug_unreachable!("BUG: VM tried to push past stack capacity");
         }
         self.stack.push(value);
@@ -85,10 +87,10 @@ impl<'alloc> VM<'alloc> {
         match self.call_stack.last() {
             Some(frame) => frame,
             None => {
-                // SAFETY VM breaks the interpreter loop when `op_return` pops the last frame from
-                // the call_stack.
+                // SAFETY VM breaks the interpreter loop when `op_return` pops the last frame
+                // from the call_stack.
                 debug_unreachable!("BUG: VM tried to continue with empty call stack")
-            }
+            },
         }
     }
 
@@ -101,12 +103,14 @@ impl<'alloc> VM<'alloc> {
             Some(constant) => match constant.downcast::<ConstCell>() {
                 Some(cell) => cell.get().unwrap(),
                 None => constant,
-            }
+            },
             None => {
-                // SAFETY Chunk is checked when the VM is constructed, all constant references must
-                // be valid.
-                debug_unreachable!("BUG: VM encountered invalid constant key {:?}, Chunk::check is incorrect", key)
-            }
+                // SAFETY Chunk is checked when the VM is constructed, all constant references
+                // must be valid.
+                debug_unreachable!(
+                    "BUG: VM encountered invalid constant key {key:?}, Chunk::check is incorrect"
+                )
+            },
         }
     }
 
@@ -123,7 +127,9 @@ impl<'alloc> VM<'alloc> {
         });
 
         // SAFETY we've marked all the roots above
-        unsafe { self.alloc.sweep(); }
+        unsafe {
+            self.alloc.sweep();
+        }
     }
 
     fn offset(&self) -> usize {
@@ -158,7 +164,8 @@ impl<'alloc> VM<'alloc> {
             #[cfg(feature = "gc-stress")]
             self.gc();
 
-            #[cfg(debug_assertions)] {
+            #[cfg(debug_assertions)]
+            {
                 let code = &self.chunk().code()[self.offset()..];
                 let (opcode, _) = OpCode::decode(code).unwrap();
                 let stack = &self.stack[self.stack_offset..];
@@ -168,44 +175,51 @@ impl<'alloc> VM<'alloc> {
             let opcode = self.read_u8();
 
             match opcode {
-                OpCode::CONSTANT        => self.op_constant(),
-                OpCode::UNIT            => self.op_unit(),
-                OpCode::TRUE            => self.op_true(),
-                OpCode::FALSE           => self.op_false(),
-                OpCode::POP             => self.op_pop(),
-                OpCode::POP_BLOCK       => self.op_pop_block(),
-                OpCode::GET_LOCAL       => self.op_get_local(),
-                OpCode::SET_LOCAL       => self.op_set_local(),
-                OpCode::GET_UPVALUE     => self.op_get_upval(),
-                OpCode::GET_TUPLE       => self.op_get_tuple()?,
-                OpCode::GET_RECORD      => self.op_get_record()?,
-                OpCode::EQUAL           => self.op_equal()?,
-                OpCode::GREATER         => self.op_greater()?,
-                OpCode::LESS            => self.op_less()?,
-                OpCode::ADD             => self.op_add()?,
-                OpCode::CONCAT          => self.op_concat()?,
-                OpCode::SUBTRACT        => self.op_subtract()?,
-                OpCode::MULTIPLY        => self.op_multiply()?,
-                OpCode::DIVIDE          => self.op_divide()?,
-                OpCode::NOT             => self.op_not()?,
-                OpCode::NEGATE          => self.op_negate()?,
-                OpCode::MAKE_TUPLE      => self.op_make_tuple(),
-                OpCode::MAKE_RECORD     => self.op_make_record(),
-                OpCode::ASSERT          => self.op_assert()?,
-                OpCode::PRINT           => self.op_print(),
-                OpCode::JUMP            => self.op_jump(),
-                OpCode::JUMP_IF_TRUE    => self.op_jump_if_true()?,
-                OpCode::JUMP_IF_FALSE   => self.op_jump_if_false()?,
-                OpCode::LOOP            => self.op_loop(),
-                OpCode::CALL            => self.op_call()?,
-                OpCode::CLOSURE         => self.op_closure(),
-                OpCode::RETURN          => if self.op_return() { break Ok(()) },
+                OpCode::CONSTANT => self.op_constant(),
+                OpCode::UNIT => self.op_unit(),
+                OpCode::TRUE => self.op_true(),
+                OpCode::FALSE => self.op_false(),
+                OpCode::POP => self.op_pop(),
+                OpCode::POP_BLOCK => self.op_pop_block(),
+                OpCode::GET_LOCAL => self.op_get_local(),
+                OpCode::SET_LOCAL => self.op_set_local(),
+                OpCode::GET_UPVALUE => self.op_get_upval(),
+                OpCode::GET_TUPLE => self.op_get_tuple()?,
+                OpCode::GET_RECORD => self.op_get_record()?,
+                OpCode::EQUAL => self.op_equal()?,
+                OpCode::GREATER => self.op_greater()?,
+                OpCode::LESS => self.op_less()?,
+                OpCode::ADD => self.op_add()?,
+                OpCode::CONCAT => self.op_concat()?,
+                OpCode::SUBTRACT => self.op_subtract()?,
+                OpCode::MULTIPLY => self.op_multiply()?,
+                OpCode::DIVIDE => self.op_divide()?,
+                OpCode::NOT => self.op_not()?,
+                OpCode::NEGATE => self.op_negate()?,
+                OpCode::MAKE_TUPLE => self.op_make_tuple(),
+                OpCode::MAKE_RECORD => self.op_make_record(),
+                OpCode::ASSERT => self.op_assert()?,
+                OpCode::PRINT => self.op_print(),
+                OpCode::JUMP => self.op_jump(),
+                OpCode::JUMP_IF_TRUE => self.op_jump_if_true()?,
+                OpCode::JUMP_IF_FALSE => self.op_jump_if_false()?,
+                OpCode::LOOP => self.op_loop(),
+                OpCode::CALL => self.op_call()?,
+                OpCode::CLOSURE => self.op_closure(),
+                OpCode::RETURN => {
+                    if self.op_return() {
+                        break Ok(());
+                    }
+                },
                 _ => {
-                    // SAFETY Chunk is checked when the VM is constructed, all OpCodes must be valid.
-                    // IP can only be at the start of an OpCode if every instruction consumes all of
-                    // it's argument bytes.
-                    debug_unreachable!("BUG: VM encountered invalid opcode {:#02X}, Chunk::check is incorrect", opcode);
-                }
+                    // SAFETY Chunk is checked when the VM is constructed, all OpCodes must be
+                    // valid. IP can only be at the start of an OpCode if every
+                    // instruction consumes all of it's argument bytes.
+                    debug_unreachable!(
+                        "BUG: VM encountered invalid opcode {opcode:#02X}, Chunk::check is \
+                         incorrect"
+                    );
+                },
             }
         }
     }
@@ -249,7 +263,7 @@ impl<'alloc> VM<'alloc> {
 
         let offset = self.stack_offset;
         let Some(&value) = self.stack.get(offset + slot) else {
-            debug_unreachable!("BUG: VM tried to access uninitialized stack, slot={}", slot);
+            debug_unreachable!("BUG: VM tried to access uninitialized stack, slot={slot}");
         };
         self.push(value);
     }
@@ -260,7 +274,7 @@ impl<'alloc> VM<'alloc> {
         let value = self.pop();
         let offset = self.stack_offset;
         let Some(slot) = self.stack.get_mut(offset + slot) else {
-            debug_unreachable!("BUG: VM tried to access uninitialized stack, slot={}", slot);
+            debug_unreachable!("BUG: VM tried to access uninitialized stack, slot={slot}");
         };
         *slot = value;
     }
@@ -272,7 +286,7 @@ impl<'alloc> VM<'alloc> {
             debug_unreachable!("BUG: VM tried to access upvalue outside a closure");
         };
         let Some(&value) = closure.upvalues.get(slot) else {
-            debug_unreachable!("BUG: VM tried to access non-existent upvalue, slot={}", slot);
+            debug_unreachable!("BUG: VM tried to access non-existent upvalue, slot={slot}");
         };
         self.push(value);
     }
@@ -306,8 +320,7 @@ impl<'alloc> VM<'alloc> {
                 msg: "field access only supported on Records",
             }));
         };
-        let field_name = self.get_constant(field_key)
-            .downcast::<Name>().unwrap();
+        let field_name = self.get_constant(field_key).downcast::<Name>().unwrap();
         let Some(value) = record.get(field_name) else {
             return Err(VmError::new(TypeError {
                 span: self.chunk().span(self.offset() - OpCode::GetRecord { name_key: 0 }.len()),
@@ -331,7 +344,8 @@ impl<'alloc> VM<'alloc> {
     fn op_greater(&mut self) -> Result<(), VmError> {
         let rhs = self.pop();
         let lhs = self.pop();
-        let result = if let (Some(lhs), Some(rhs)) = (lhs.downcast::<i32>(), rhs.downcast::<i32>()) {
+        let result = if let (Some(lhs), Some(rhs)) = (lhs.downcast::<i32>(), rhs.downcast::<i32>())
+        {
             Value::from(lhs > rhs)
         } else if let (Some(lhs), Some(rhs)) = (lhs.downcast::<Float>(), rhs.downcast::<Float>()) {
             Value::from(*lhs > *rhs)
@@ -348,7 +362,8 @@ impl<'alloc> VM<'alloc> {
     fn op_less(&mut self) -> Result<(), VmError> {
         let rhs = self.pop();
         let lhs = self.pop();
-        let result = if let (Some(lhs), Some(rhs)) = (lhs.downcast::<i32>(), rhs.downcast::<i32>()) {
+        let result = if let (Some(lhs), Some(rhs)) = (lhs.downcast::<i32>(), rhs.downcast::<i32>())
+        {
             Value::from(lhs < rhs)
         } else if let (Some(lhs), Some(rhs)) = (lhs.downcast::<Float>(), rhs.downcast::<Float>()) {
             Value::from(*lhs < *rhs)
@@ -389,7 +404,10 @@ impl<'alloc> VM<'alloc> {
         let strings = usize::from(self.read_u8()) + 2;
 
         let mut buffer = std::string::String::new();
-        let from = self.stack.len().checked_sub(strings)
+        let from = self
+            .stack
+            .len()
+            .checked_sub(strings)
             .expect("peek past the start of stack");
         for value in self.stack.drain(from..) {
             if let Some(string) = value.downcast::<String>() {
@@ -572,14 +590,16 @@ impl<'alloc> VM<'alloc> {
                 // SAFETY Chunk is checked when VM is constructed.
                 // - every jump must be at the start of a valid instruction
                 self.ip = unsafe { self.ip.add(offset) };
-            }
-            Some(false) => {}
+            },
+            Some(false) => {},
             None => {
                 return Err(VmError::new(TypeError {
-                    span: self.chunk().span(self.offset() - OpCode::JumpIfFalse { offset: 0 }.len()),
+                    span: self
+                        .chunk()
+                        .span(self.offset() - OpCode::JumpIfFalse { offset: 0 }.len()),
                     msg: "if predicate must be a Bool",
                 }));
-            }
+            },
         }
         Ok(())
     }
@@ -589,18 +609,20 @@ impl<'alloc> VM<'alloc> {
 
         let value = self.peek();
         match value.downcast::<bool>() {
-            Some(true) => {}
+            Some(true) => {},
             Some(false) => {
                 // SAFETY Chunk is checked when VM is constructed.
                 // - every jump must be at the start of a valid instruction
                 self.ip = unsafe { self.ip.add(offset) };
-            }
+            },
             None => {
                 return Err(VmError::new(TypeError {
-                    span: self.chunk().span(self.offset() - OpCode::JumpIfFalse { offset: 0 }.len()),
+                    span: self
+                        .chunk()
+                        .span(self.offset() - OpCode::JumpIfFalse { offset: 0 }.len()),
                     msg: "if predicate must be a Bool",
                 }));
-            }
+            },
         }
         Ok(())
     }
@@ -616,6 +638,7 @@ impl<'alloc> VM<'alloc> {
     fn op_call(&mut self) -> Result<(), VmError> {
         let args = usize::from(self.read_u8());
 
+        #[rustfmt::skip]
         // The stack layout before call:
         //
         //         caller stack_offset (or stack top)                stack.len() offset puts us
@@ -646,16 +669,16 @@ impl<'alloc> VM<'alloc> {
                     self.stack.truncate(arg_start);
                     self.push(val);
                     Ok(())
-                }
-                Err(err) => {
-                    Err(VmError::new(NativeError { msg: err.msg }))
-                }
+                },
+                Err(err) => Err(VmError::new(NativeError { msg: err.msg })),
             }
         } else if let Some(function) = callee.downcast::<Function>() {
             let arity = usize::from(function.chunk.params());
             if arity != args {
                 return Err(VmError::new(WrongArity {
-                    span: self.chunk().span(self.offset() - OpCode::Call { args: 0 }.len()),
+                    span: self
+                        .chunk()
+                        .span(self.offset() - OpCode::Call { args: 0 }.len()),
                     arity,
                     args,
                 }));
@@ -693,7 +716,9 @@ impl<'alloc> VM<'alloc> {
             let arity = usize::from(closure.function.chunk.params());
             if arity != args {
                 return Err(VmError::new(WrongArity {
-                    span: self.chunk().span(self.offset() - OpCode::Call { args: 0 }.len()),
+                    span: self
+                        .chunk()
+                        .span(self.offset() - OpCode::Call { args: 0 }.len()),
                     arity,
                     args,
                 }));
@@ -703,7 +728,10 @@ impl<'alloc> VM<'alloc> {
             let stack_start = callee_idx;
 
             debug!("stack {:#?}", &self.stack[stack_start..]);
-            debug!("closure {} = {:?}", closure.function.name, &closure.function.chunk);
+            debug!(
+                "closure {} = {:?}",
+                closure.function.name, &closure.function.chunk
+            );
 
             let required_cap = stack_start + closure.function.chunk.max_stack();
             self.stack.reserve(required_cap - self.stack.len());
@@ -729,7 +757,9 @@ impl<'alloc> VM<'alloc> {
             Ok(())
         } else {
             Err(VmError::new(ValueNotCallable {
-                span: self.chunk().span(self.offset() - OpCode::Call { args: 0 }.len()),
+                span: self
+                    .chunk()
+                    .span(self.offset() - OpCode::Call { args: 0 }.len()),
                 dbg: format!("{:?}", callee),
             }))
         }
@@ -758,7 +788,8 @@ impl<'alloc> VM<'alloc> {
         self.call_stack.pop();
 
         if let Some(frame) = self.call_stack.last() {
-            // Function stack has the callee in slot 0 so truncating here removes callee too.
+            // Function stack has the callee in slot 0 so truncating here removes callee
+            // too.
             self.stack.truncate(stack_top);
             self.stack.push(result);
 

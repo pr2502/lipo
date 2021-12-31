@@ -18,7 +18,8 @@ use std::marker::PhantomData;
 #[derive(Clone, Copy)]
 pub struct Invariant<'lifetime>(PhantomData<Cell<&'lifetime ()>>);
 
-// SAFETY Invariant is a marker type and should only affect the lifetime variance not Send&Sync but
-// Cell which is used to enforce the invariance does, so we undo that
+// SAFETY Invariant is a marker type and should only affect the lifetime
+// variance not Send&Sync but Cell which is used to enforce the invariance does,
+// so we undo that
 unsafe impl<'lifetime> Send for Invariant<'lifetime> {}
 unsafe impl<'lifetime> Sync for Invariant<'lifetime> {}

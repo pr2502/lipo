@@ -1,6 +1,7 @@
-use crate::{Alloc, Object, ObjectRef, Trace};
 use std::fmt::{self, Debug};
 use std::hash::{Hash, Hasher};
+
+use crate::{Alloc, Object, ObjectRef, Trace};
 
 
 /// Float
@@ -27,17 +28,9 @@ impl Float {
         use std::num::FpCategory;
 
         match float.classify() {
-            FpCategory::Normal |
-            FpCategory::Infinite => {
-                Some(alloc.alloc(Float { inner: float }))
-            }
-            FpCategory::Zero |
-            FpCategory::Subnormal => {
-                Some(alloc.alloc(Float { inner: 0.0_f64 }))
-            }
-            FpCategory::Nan => {
-                None
-            }
+            FpCategory::Normal | FpCategory::Infinite => Some(alloc.alloc(Float { inner: float })),
+            FpCategory::Zero | FpCategory::Subnormal => Some(alloc.alloc(Float { inner: 0.0_f64 })),
+            FpCategory::Nan => None,
         }
     }
 
@@ -76,8 +69,10 @@ impl PartialOrd for Float {
 
                 // SAFETY the `Float::new` function ensures `Float` is always not-NaN
                 #[cfg(not(debug_assertions))]
-                unsafe { std::hint::unreachable_unchecked(); }
-            }
+                unsafe {
+                    std::hint::unreachable_unchecked();
+                }
+            },
         }
     }
 }

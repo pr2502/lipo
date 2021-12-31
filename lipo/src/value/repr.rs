@@ -1,10 +1,11 @@
+use std::marker::PhantomData;
+use std::num::NonZeroU64;
+use std::ptr::NonNull;
+
 use super::object::gc::ObjectHeader;
 use super::object::ObjectRefAny;
 use super::primitive::{Primitive, PrimitiveAny};
 use crate::util::Invariant;
-use std::marker::PhantomData;
-use std::num::NonZeroU64;
-use std::ptr::NonNull;
 
 
 #[derive(Clone, Copy)]
@@ -22,7 +23,8 @@ pub struct Value<'alloc> {
     /// }
     /// ```
     ///
-    /// This ensures we can't accidentally mix Values from different Allocators / VMs.
+    /// This ensures we can't accidentally mix Values from different Allocators
+    /// / VMs.
     ///
     /// ```rust,compile_fail
     /// # use lipo::Value;
@@ -47,25 +49,34 @@ fn value_size() {
 }
 
 
-const TYPE_MASK: u64 = 0xFFFF_0000_0000_0000;
-const PAYLOAD_MASK: u64  = !TYPE_MASK;
+const TYPE_MASK: u64 = 0xffff_0000_0000_0000;
+const PAYLOAD_MASK: u64 = !TYPE_MASK;
 const TYPE_OFFSET: u8 = 48;
 
 
 unsafe fn new_object(ptr: NonNull<ObjectHeader>) -> NonZeroU64 {
     let ptr = ptr.as_ptr() as u64;
-    debug_assert!((ptr & PAYLOAD_MASK) == ptr, "platform ptr uses TYPE_MASK bits");
+    debug_assert!(
+        (ptr & PAYLOAD_MASK) == ptr,
+        "platform ptr uses TYPE_MASK bits"
+    );
     // SAFETY `ptr` is NonNull therefore it's NonZero
     unsafe { NonZeroU64::new_unchecked(ptr) }
 }
 
 const unsafe fn new_primitive(tag: TypeTag, payload: u64) -> NonZeroU64 {
-    debug_assert!((payload & PAYLOAD_MASK) == payload, "Primitive payload doesn't fit PAYLOAD_MASK");
-    debug_assert!(tag.0 != TypeTag::OBJECT.0, "tried to create primitive with TypeTag::OBJECT");
+    debug_assert!(
+        (payload & PAYLOAD_MASK) == payload,
+        "Primitive payload doesn't fit PAYLOAD_MASK"
+    );
+    debug_assert!(
+        tag.0 != TypeTag::OBJECT.0,
+        "tried to create primitive with TypeTag::OBJECT"
+    );
 
     let tag = (tag.0 as u64) << TYPE_OFFSET;
-    // SAFETY TypeTag 0 is used for Object, Primitives use TypeTag >= 1, we can safely assume
-    // `tag | anything` is NonZero
+    // SAFETY TypeTag 0 is used for Object, Primitives use TypeTag >= 1, we can
+    // safely assume `tag | anything` is NonZero
     unsafe { NonZeroU64::new_unchecked(tag | payload) }
 }
 
@@ -82,6 +93,7 @@ pub(super) const fn payload(repr: NonZeroU64) -> u64 {
 #[repr(transparent)]
 pub struct TypeTag(u16);
 
+#[rustfmt::skip]
 impl TypeTag {
     pub(super) const OBJECT: TypeTag    = TypeTag(0x0000);
     pub(super) const UNIT: TypeTag      = TypeTag(0x0001);
@@ -124,7 +136,9 @@ impl<'alloc> Value<'alloc> {
 
     pub(crate) fn kind(self) -> ValueKind<'alloc> {
         match type_tag(self.repr) {
-            TypeTag::OBJECT => ValueKind::Object(unsafe { ObjectRefAny::from_ptr(NonNull::new_unchecked(self.repr.get() as _)) }),
+            TypeTag::OBJECT => ValueKind::Object(unsafe {
+                ObjectRefAny::from_ptr(NonNull::new_unchecked(self.repr.get() as _))
+            }),
             _ => ValueKind::Primitive(unsafe { PrimitiveAny::from_repr(self.repr) }),
         }
     }

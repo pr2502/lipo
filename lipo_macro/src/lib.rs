@@ -1,6 +1,7 @@
+use std::env;
+
 use proc_macro::TokenStream;
 use quote::{quote, quote_spanned};
-use std::env;
 use syn::spanned::Spanned;
 use syn::{parse_macro_input, Data, DeriveInput, Error, Fields, Index};
 
@@ -124,29 +125,27 @@ fn mark_children(data: &Data) -> proc_macro2::TokenStream {
     let lipo = lipo_crate();
 
     match data {
-        Data::Struct(data) => {
-            match &data.fields {
-                Fields::Named(fields) => {
-                    let children = fields.named.iter().map(|f| {
-                        let name = &f.ident;
-                        quote_spanned! {f.span()=>
-                            #lipo::__derive_trace::MaybeTrace::maybe_mark(&self.#name);
-                        }
-                    });
-                    quote! { #(#children)* }
-                }
-                Fields::Unnamed(fields) => {
-                    let children = fields.unnamed.iter().enumerate().map(|(i, f)| {
-                        let index = Index::from(i);
-                        quote_spanned! {f.span()=>
-                            #lipo::__derive_trace::MaybeTrace::maybe_mark(&self.#index);
-                        }
-                    });
-                    quote! { #(#children)* }
-                }
-                Fields::Unit => quote! {},
-            }
-        }
+        Data::Struct(data) => match &data.fields {
+            Fields::Named(fields) => {
+                let children = fields.named.iter().map(|f| {
+                    let name = &f.ident;
+                    quote_spanned! {f.span()=>
+                        #lipo::__derive_trace::MaybeTrace::maybe_mark(&self.#name);
+                    }
+                });
+                quote! { #(#children)* }
+            },
+            Fields::Unnamed(fields) => {
+                let children = fields.unnamed.iter().enumerate().map(|(i, f)| {
+                    let index = Index::from(i);
+                    quote_spanned! {f.span()=>
+                        #lipo::__derive_trace::MaybeTrace::maybe_mark(&self.#index);
+                    }
+                });
+                quote! { #(#children)* }
+            },
+            Fields::Unit => quote! {},
+        },
         Data::Enum(_) | Data::Union(_) => unimplemented!(),
     }
 }

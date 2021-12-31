@@ -29,10 +29,7 @@ impl From<Range<usize>> for FreeSpan {
 
 impl FreeSpan {
     pub fn zero() -> FreeSpan {
-        FreeSpan {
-            start: 0,
-            end: 0,
-        }
+        FreeSpan { start: 0, end: 0 }
     }
 
     pub fn range(self) -> Range<usize> {
@@ -43,16 +40,11 @@ impl FreeSpan {
         let FreeSpan { start, end } = self;
 
         assert!(
-            source.is_char_boundary(start as usize) &&
-            source.is_char_boundary(end as usize),
+            source.is_char_boundary(start as usize) && source.is_char_boundary(end as usize),
             "span boundaries are not valid char boundaries",
         );
 
-        Span {
-            source,
-            start,
-            end,
-        }
+        Span { source, start, end }
     }
 
     pub fn join(a: FreeSpan, b: FreeSpan) -> FreeSpan {
@@ -75,9 +67,7 @@ impl FreeSpan {
 
 impl Debug for FreeSpan {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("Span")
-            .field(&self.range())
-            .finish()
+        f.debug_tuple("Span").field(&self.range()).finish()
     }
 }
 
@@ -94,7 +84,7 @@ impl<'src> Debug for Span<'src> {
         let (l1, l2) = self.lines();
         let (c1, c2) = self.columns();
         f.debug_tuple("Span")
-            .field(&((l1, c1) .. (l2, c2)))
+            .field(&((l1, c1)..(l2, c2)))
             .field(&self.as_str())
             .finish()
     }
@@ -126,14 +116,9 @@ impl<'src> Span<'src> {
             // we get the previous line instead
             ""
         } else {
-            before.lines()
-                .next_back()
-                .unwrap_or("")
+            before.lines().next_back().unwrap_or("")
         };
-        let after = self.source[end..]
-            .lines()
-            .next()
-            .unwrap_or("");
+        let after = self.source[end..].lines().next().unwrap_or("");
         let this = self.as_str();
 
         Some((before, this, after))
@@ -141,7 +126,8 @@ impl<'src> Span<'src> {
 
     /// Returns on which line does the span start and on which it ends
     ///
-    /// Lines are numbered starting from 1. Lines are delimited by a single `\n` (`0x0a`) byte.
+    /// Lines are numbered starting from 1. Lines are delimited by a single `\n`
+    /// (`0x0a`) byte.
     pub fn lines(&self) -> (u32, u32) {
         fn lines(src: &str, count_trailing: bool) -> usize {
             if src.is_empty() {
@@ -166,14 +152,15 @@ impl<'src> Span<'src> {
     /// Columns are numbered starting from 1.
     pub fn columns(&self) -> (u32, u32) {
         fn column(src: &str) -> usize {
-            let last_line = src.lines()
-                .next_back().unwrap_or("");
+            let last_line = src.lines().next_back().unwrap_or("");
 
-            #[cfg(feature = "full-unicode")] {
+            #[cfg(feature = "full-unicode")]
+            {
                 unicode_width::UnicodeWidthStr::width(last_line)
             }
 
-            #[cfg(not(feature = "full-unicode"))] {
+            #[cfg(not(feature = "full-unicode"))]
+            {
                 last_line.as_bytes().len()
             }
         }
@@ -188,15 +175,13 @@ impl<'src> Span<'src> {
 
 #[cfg(test)]
 mod test {
-    use super::{FreeSpan, Span};
     use std::ops::Range;
+
+    use super::{FreeSpan, Span};
 
     /// Creates a Span from `source` between marker characters in the text.
     /// Resulting span does not include the markers.
-    fn span<'src>(
-        source: &'src str,
-        range: Range<usize>,
-    ) -> Span<'src> {
+    fn span<'src>(source: &'src str, range: Range<usize>) -> Span<'src> {
         FreeSpan::from(range).anchor(source)
     }
 
@@ -204,10 +189,7 @@ mod test {
     fn test_single_line() {
         let sp = span("hi", 0..2);
         //             ^^
-        assert_eq!(
-            sp.as_str(),
-            "hi",
-        );
+        assert_eq!(sp.as_str(), "hi",);
         assert!(!sp.is_multiline());
     }
 
@@ -285,16 +267,17 @@ dolor sit",
         //             ^^
         assert_eq!(sp.columns(), (1, 2));
 
-        // Compound emoji get counted as N separate emoji, the zero-width separator(s) don't get
-        // counted in the width.
+        // Compound emoji get counted as N separate emoji, the zero-width separator(s)
+        // don't get counted in the width.
         //
-        // This should theoretically get rendered as one double-width glyph so the result of 4 is
-        // incorrect, however not every terminal and every configuration is going to be capable of
-        // that anyway so we're just going to go with what unicode_width says and accept the
+        // This should theoretically get rendered as one double-width glyph so the
+        // result of 4 is incorrect, however not every terminal and every
+        // configuration is going to be capable of that anyway so we're just
+        // going to go with what unicode_width says and accept the
         // slightly broken underlines when compound emoji are involved.
         let sp = span("👩‍🔬", 0..11);
-        //             ^^ (supposed to underline the single "woman scientist" emoji, your text
-        //                 editor rendering might not reflect that)
+        //             ^^ (supposed to underline the single "woman scientist" emoji,
+        //                 your text editor rendering might not reflect that)
         assert_eq!(sp.columns(), (1, 4));
     }
 }

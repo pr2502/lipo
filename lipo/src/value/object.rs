@@ -1,9 +1,10 @@
-use crate::util::Invariant;
 use std::fmt::{self, Debug};
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 use std::ops::Deref;
 use std::ptr::{self, NonNull};
+
+use crate::util::Invariant;
 
 
 #[doc(hidden)] pub mod __derive_object;
@@ -12,7 +13,7 @@ use std::ptr::{self, NonNull};
 
 pub mod gc;
 
-use gc::{Trace, ObjectHeader};
+use gc::{ObjectHeader, Trace};
 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -24,7 +25,8 @@ pub trait Object: DynObject {}
 
 /// Custom dynamic dispatch implementation for the [`Object`] trait.
 ///
-/// **This trait should not be implemented manually**, use the [`derive_Object`] macro instead.
+/// **This trait should not be implemented manually**, use the [`derive_Object`]
+/// macro instead.
 #[doc(hidden)]
 pub unsafe trait DynObject: Trace + Debug + Sized + Send + Sync {
     /// # Safety
@@ -75,7 +77,8 @@ pub trait ObjectHashCode: Object {
     /// Returns whether hashing is supported for type
     fn supported() -> bool;
 
-    /// Returns the object `fxhash::hash`, panics if type doesn't support hashing
+    /// Returns the object `fxhash::hash`, panics if type doesn't support
+    /// hashing
     fn hash_code(&self) -> usize;
 }
 
@@ -112,8 +115,8 @@ where
 
 /// Internal wrapper for object header and user data.
 ///
-/// `#[repr(C)]` ensures that casting between `*mut ObjectHeader` and `*mut ObjectWrap<O>` is safe
-/// as long as the type `O` matches.
+/// `#[repr(C)]` ensures that casting between `*mut ObjectHeader` and `*mut
+/// ObjectWrap<O>` is safe as long as the type `O` matches.
 #[repr(C)]
 struct ObjectWrap<O: Object> {
     header: ObjectHeader,
@@ -148,18 +151,23 @@ pub struct ObjectRef<'alloc, O: Object> {
 #[test]
 fn object_refs_size() {
     use std::mem::size_of;
+
     use crate::builtins::String;
 
     assert_eq!(size_of::<ObjectRefAny>(), size_of::<u64>());
     assert_eq!(size_of::<ObjectRefAny>(), size_of::<Option<ObjectRefAny>>());
 
     assert_eq!(size_of::<ObjectRef<String>>(), size_of::<u64>());
-    assert_eq!(size_of::<ObjectRef<String>>(), size_of::<Option<ObjectRef<String>>>());
+    assert_eq!(
+        size_of::<ObjectRef<String>>(),
+        size_of::<Option<ObjectRef<String>>>()
+    );
 }
 
-// Implement `Clone` and `Copy` manually, because deriving them inherits the `Clone+Copy`
-// properties of the concrete `O` but `ObjectRef` is meant to be `Clone+Copy` for any `O: Object`
-// regardless of whether `O` is `Clone` or `Copy`.
+// Implement `Clone` and `Copy` manually, because deriving them inherits the
+// `Clone+Copy` properties of the concrete `O` but `ObjectRef` is meant to be
+// `Clone+Copy` for any `O: Object` regardless of whether `O` is `Clone` or
+// `Copy`.
 impl<'alloc, O: Object> Clone for ObjectRef<'alloc, O> {
     fn clone(&self) -> Self {
         *self
@@ -168,9 +176,9 @@ impl<'alloc, O: Object> Clone for ObjectRef<'alloc, O> {
 impl<'alloc, O: Object> Copy for ObjectRef<'alloc, O> {}
 
 
-// SAFETY ObjectRef doesn't allow its contents to be mutated and all `Object`s are required to be
-// Send and Sync themselves by the `DynObject` trait so allowing immutable access to them is safe
-// from any thread.
+// SAFETY ObjectRef doesn't allow its contents to be mutated and all `Object`s
+// are required to be Send and Sync themselves by the `DynObject` trait so
+// allowing immutable access to them is safe from any thread.
 //
 // For the purposes of synchronization `ObjectRef<O>` behaves like `Arc<O>`.
 unsafe impl<'alloc, O: Object> Send for ObjectRef<'alloc, O> {}
@@ -180,9 +188,10 @@ unsafe impl<'alloc, O: Object> Sync for ObjectRef<'alloc, O> {}
 /// Custom [virtual method table](https://en.wikipedia.org/wiki/Virtual_method_table) for the
 /// [`DynObject`] trait.
 ///
-/// For every method the first argument (usually marked as `this`) is expected to be the receiver
-/// and when called will receive upcast `ObjectRef<'_, Self>`, therefore for that argument it is
-/// safe to downcast it without checking the type tag first.
+/// For every method the first argument (usually marked as `this`) must be the
+/// receiver and when called will receive upcast `ObjectRef<'_, Self>`,
+/// therefore for that argument it is safe to downcast it without checking
+/// the type tag first.
 #[doc(hidden)]
 pub struct ObjectVtable {
     /// String representation for the type, used for debugging
@@ -191,10 +200,11 @@ pub struct ObjectVtable {
     /// Deallocate Object, dispatch for [`Alloc::dealloc`]
     ///
     /// # Safety
-    /// After calling `drop` the object behind `this` gets freed and cannot be used via this or any
-    /// other reference. Caller must ensure that the Object is unreachable.
+    /// After calling `drop` the object behind `this` gets freed and cannot be
+    /// used via this or any other reference. Caller must ensure that the
+    /// Object is unreachable.
     ///
-    /// The receiver (first argument) must be of upcast ObjectRef<'static, Self>.
+    /// The receiver must be of upcast ObjectRef<'static, Self>.
     pub drop: unsafe fn(
         // this: Self
         ObjectRefAny<'static>,
@@ -203,7 +213,7 @@ pub struct ObjectVtable {
     /// Mark Object as reachable, dispatch for [`Trace::mark`]
     ///
     /// # Safety
-    /// The receiver (first argument) must be of upcast ObjectRef<'static, Self>.
+    /// The receiver must be of upcast ObjectRef<'static, Self>.
     pub mark: for<'alloc> unsafe fn(
         // this: Self
         ObjectRefAny<'alloc>,
@@ -212,20 +222,21 @@ pub struct ObjectVtable {
     /// Format Object using the [`std::fmt::Debug`] formatter.
     ///
     /// # Safety
-    /// The receiver (first argument) must be of upcast ObjectRef<'static, Self>.
+    /// The receiver must be of upcast ObjectRef<'static, Self>.
     pub debug_fmt: for<'alloc> unsafe fn(
         // this: Self
         ObjectRefAny<'alloc>,
         // f: debug formatter from std
-        &mut fmt::Formatter<'_>
+        &mut fmt::Formatter<'_>,
     ) -> fmt::Result,
 
     /// Compare Objects for equality, dispatch for [`ObjectPartialEq::eq`]
     ///
-    /// Returns `None` when `this` doesn't support equality or when `rhs` type doesn't match.
+    /// Returns `None` when `this` doesn't support equality or when `rhs` type
+    /// doesn't match.
     ///
     /// # Safety
-    /// The receiver (first argument) must be of upcast ObjectRef<'static, Self>.
+    /// The receiver must be of upcast ObjectRef<'static, Self>.
     pub partial_eq: for<'alloc> unsafe fn(
         // this: Self
         ObjectRefAny<'alloc>,
@@ -238,7 +249,7 @@ pub struct ObjectVtable {
     /// Returns `None` when `this` doesn't support hashing.
     ///
     /// # Safety
-    /// The receiver (first argument) must be of upcast ObjectRef<'static, Self>.
+    /// The receiver must be of upcast ObjectRef<'static, Self>.
     pub hash_code: for<'alloc> unsafe fn(
         // this: Self
         ObjectRefAny<'alloc>,
@@ -248,9 +259,7 @@ pub struct ObjectVtable {
 impl<'alloc, O: Object> ObjectRef<'alloc, O> {
     pub(crate) fn upcast(self) -> ObjectRefAny<'alloc> {
         // SAFETY upcasting an ObjectRef is always safe, lifetime is maintained
-        unsafe {
-            ObjectRefAny::from_ptr(self.ptr.cast())
-        }
+        unsafe { ObjectRefAny::from_ptr(self.ptr.cast()) }
     }
 }
 
@@ -275,14 +284,11 @@ impl<'alloc> ObjectRefAny<'alloc> {
     }
 
     pub(crate) fn is<O: Object>(&self) -> bool {
-        // PERF Each Rust type implementing Object must have its own vtable. Therefore TypeIds are
-        // equal if and only if the vtable pointers are equal.
+        // PERF Each Rust type implementing Object must have its own vtable. Therefore
+        // TypeIds are equal if and only if the vtable pointers are equal.
         //
         // So here we compare the vtable pointers directly to save two dereferences.
-        ptr::eq(
-            self.vtable(),
-            O::__vtable(),
-        )
+        ptr::eq(self.vtable(), O::__vtable())
     }
 
     pub(crate) fn downcast<O: Object>(self) -> Option<ObjectRef<'alloc, O>> {

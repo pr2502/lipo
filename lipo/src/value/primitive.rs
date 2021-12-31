@@ -1,10 +1,11 @@
-use super::{repr, TypeTag};
-use crate::name::Name;
-use crate::util::Invariant;
 use std::fmt::{self, Debug};
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::num::NonZeroU64;
+
+use super::{repr, TypeTag};
+use crate::name::Name;
+use crate::util::Invariant;
 
 
 mod sealed {
@@ -45,7 +46,10 @@ fn primitive_size() {
 
 impl<'alloc> PrimitiveAny<'alloc> {
     pub(super) unsafe fn from_repr(repr: NonZeroU64) -> PrimitiveAny<'alloc> {
-        debug_assert!(repr::type_tag(repr) != TypeTag::OBJECT, "invalid repr for PrimitiveAny");
+        debug_assert!(
+            repr::type_tag(repr) != TypeTag::OBJECT,
+            "invalid repr for PrimitiveAny"
+        );
         PrimitiveAny {
             _alloc: PhantomData, // 'alloc in return type
             repr,
@@ -96,7 +100,9 @@ unsafe impl<'alloc> Primitive<'alloc> for bool {
         match payload {
             0 => false,
             1 => true,
-            _ => debug_unreachable!("BUG: atempted to create primitive bool from bits {:#b}", payload),
+            _ => {
+                debug_unreachable!("BUG: atempted to create primitive bool from bits {payload:#b}")
+            },
         }
     }
 }
@@ -112,9 +118,7 @@ unsafe impl<'alloc> Primitive<'alloc> for Name<'alloc> {
     }
 
     fn from_payload(payload: u64) -> Self {
-        unsafe {
-            Self::from_u64(payload)
-        }
+        unsafe { Self::from_u64(payload) }
     }
 }
 
@@ -132,7 +136,7 @@ unsafe impl<'alloc> Primitive<'alloc> for i32 {
 
     fn from_payload(payload: u64) -> Self {
         if payload & (u32::MAX as u64) != payload {
-            debug_unreachable!("BUG: atempted to create primitive i32 from bits {:#b}", payload);
+            debug_unreachable!("BUG: atempted to create primitive i32 from bits {payload:#b}");
         }
         // truncate (and we asserted there are no 1s in the top 32 bits)
         // and noop cast to signed
@@ -141,7 +145,8 @@ unsafe impl<'alloc> Primitive<'alloc> for i32 {
 }
 
 
-// Primitive type virtual dispatch tables. Indexed using `TypeTag` only if it's not `OBJECT` (`0x0000`).
+// Primitive type virtual dispatch tables. Indexed using `TypeTag` only if it's
+// not `OBJECT` (`0x0000`).
 
 struct Vtable<F, const N: usize>([F; N]);
 
@@ -171,12 +176,13 @@ impl<const N: usize> PrimitiveVtables<N> {
 }
 
 static VTABLES: PrimitiveVtables<5> = {
-    // NOTE The order of the arrays here is very important, the offset into the array must match
-    // the constants in `TypeTag`
+    // NOTE The order of the arrays here is very important, the offset into the
+    // array must match the constants in `TypeTag`
     const _TYPE_TAG_SANITY_CHECK: () = {
-        // Here we do a basic sanity check of the type tags being the correct position, it doesn't
-        // catch the different fields not being in the same order but it does at least catch the
-        // `_tags` field getting out of sync with the `TypeTag` associated constants.
+        // Here we do a basic sanity check of the type tags being the correct position,
+        // it doesn't catch the different fields not being in the same order but
+        // it does at least catch the `_tags` field getting out of sync with the
+        // `TypeTag` associated constants.
         let mut i = 0usize;
         while i < VTABLES.size() {
             assert!(VTABLES._tags.0[i].as_usize() == i);
@@ -193,7 +199,7 @@ static VTABLES: PrimitiveVtables<5> = {
         ]),
 
         _name: Vtable([
-            "",
+            "[Object]",
             <()>::NAME,
             <bool>::NAME,
             <Name>::NAME,
@@ -201,7 +207,6 @@ static VTABLES: PrimitiveVtables<5> = {
         ]),
 
         // `drop` and `mark` are not implemented for primitive types
-
         debug_fmt: Vtable([
             |_, _| unreachable!(),
             debug_fmt::<()>,
@@ -229,7 +234,10 @@ static VTABLES: PrimitiveVtables<5> = {
     VTABLES
 };
 
-fn debug_fmt<'alloc, P: Primitive<'alloc>>(this: PrimitiveAny, f: &mut fmt::Formatter) -> fmt::Result {
+fn debug_fmt<'alloc, P: Primitive<'alloc>>(
+    this: PrimitiveAny,
+    f: &mut fmt::Formatter,
+) -> fmt::Result {
     <P as Debug>::fmt(&P::from_payload(repr::payload(this.repr)), f)
 }
 

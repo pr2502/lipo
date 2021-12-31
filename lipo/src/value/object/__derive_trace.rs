@@ -1,7 +1,7 @@
 //! Helpers for deriving the Trace trait
 //!
-//! These are used by the derive macro so they must be public but are hidden from the documentation
-//! and should not be used outside of the generated code.
+//! These are used by the derive macro so they must be public but are hidden
+//! from the documentation and should not be used outside of the generated code.
 
 pub use crate::value::object::gc::Trace;
 

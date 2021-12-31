@@ -1,9 +1,10 @@
 //! Implement [`SourceDebug`] for AST.
 
+use std::fmt::{self, Debug};
+
 use super::*;
 use crate::fmt::SourceDebug;
 use crate::span::Spanned;
-use std::fmt::{self, Debug};
 
 
 impl<'alloc> Debug for AST<'alloc> {
@@ -90,10 +91,12 @@ impl SourceDebug for Statement {
 
 impl SourceDebug for Expr {
     fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let kind = if self.semicolon_tok.is_some() { "ExprStmt" } else { "Expr" };
-            f.debug_tuple(kind)
-                .field(&self.expr.wrap(source))
-                .finish()
+        let kind = if self.semicolon_tok.is_some() {
+            "ExprStmt"
+        } else {
+            "Expr"
+        };
+        f.debug_tuple(kind).field(&self.expr.wrap(source)).finish()
     }
 }
 
@@ -258,9 +261,14 @@ impl SourceDebug for CallExpr {
     fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Call")
             .field("callee", &self.callee.wrap(source))
-            .field("args", &self.arguments.items.iter()
-                .map(|arg| arg.wrap(source))
-                .collect::<Vec<_>>(),
+            .field(
+                "args",
+                &self
+                    .arguments
+                    .items
+                    .iter()
+                    .map(|arg| arg.wrap(source))
+                    .collect::<Vec<_>>(),
             )
             .finish()
     }
@@ -273,17 +281,17 @@ impl SourceDebug for StringExpr {
             match frag {
                 StringFragment::Literal { span, .. } => {
                     w.field(&span.anchor(source).as_str());
-                }
+                },
                 StringFragment::Interpolation { name, fmt: None } => {
                     w.field(&name.wrap(source));
-                }
+                },
                 StringFragment::Interpolation { name, fmt: Some(fmt) } => {
                     w.field(&format_args!(
                         "{}:{:?}",
                         name.span.anchor(source).as_str(),
                         fmt.anchor(source).as_str(),
                     ));
-                }
+                },
             }
         }
         w.finish()

@@ -1,6 +1,7 @@
-use crate::{Alloc, Object, ObjectRef, Trace, Value};
 use std::fmt::{self, Debug};
 use std::marker::PhantomData;
+
+use crate::{Alloc, Object, ObjectRef, Trace, Value};
 
 
 // Native function arguments
