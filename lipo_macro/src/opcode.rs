@@ -1,22 +1,19 @@
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use syn::parse::Parse;
-use syn::punctuated::Punctuated;
-use syn::token::{Brace, Bracket, Comma};
-use syn::{Expr, Field, FieldsNamed, Ident, Type, bracketed};
+use syn::token::{Brace, Comma};
+use syn::{bracketed, Expr, Field, FieldsNamed, Ident, Type};
 
 
 pub struct Args {
-    opcodes: Punctuated<Opcode, Comma>,
+    opcodes: Vec<Opcode>,
 }
 
-#[derive(Clone)]
 struct Opcode {
-    _bracket_token: Bracket,
     name: Ident,
-    args: Option<FieldsNamed>,
-    pops: (Comma, Expr),
-    pushes: Option<(Comma, Expr)>,
+    args: Vec<Field>,
+    pops: Expr,
+    pushes: Option<Expr>,
 }
 
 enum ArgTy {
@@ -26,36 +23,34 @@ enum ArgTy {
 
 impl Parse for Args {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        Ok(Args {
-            opcodes: input.parse_terminated(Opcode::parse)?,
-        })
+        let opcodes = input
+            .parse_terminated::<_, Comma>(Opcode::parse)?
+            .into_iter()
+            .collect();
+        Ok(Args { opcodes })
     }
 }
 
 impl Parse for Opcode {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
         let content;
-        Ok(Opcode {
-            _bracket_token: bracketed!(content in input),
-            name: content.parse()?,
-            args: if content.peek(Brace) {
-                Some(content.parse()?)
-            } else {
-                None
-            },
-            pops: (content.parse()?, content.parse()?),
-            pushes: if content.peek(Comma) {
-                Some((content.parse()?, content.parse()?))
-            } else {
-                None
-            },
-        })
-    }
-}
-
-impl Opcode {
-    fn args(&self) -> impl Iterator<Item = &Field> + '_ {
-        self.args.iter().flat_map(|fields| fields.named.iter())
+        let _ = bracketed!(content in input);
+        let name = content.parse()?;
+        let args = if content.peek(Brace) {
+            let fields = content.parse::<FieldsNamed>()?;
+            fields.named.into_iter().collect()
+        } else {
+            Vec::new()
+        };
+        let _ = content.parse::<Comma>()?;
+        let pops = content.parse()?;
+        let pushes = if content.peek(Comma) {
+            let _ = content.parse::<Comma>()?;
+            Some(content.parse()?)
+        } else {
+            None
+        };
+        Ok(Opcode { name, args, pops, pushes })
     }
 }
 
@@ -79,7 +74,7 @@ fn arg_ty(ty: &Type) -> ArgTy {
                 Some(ident) => {
                     if ident == "u8" { ArgTy::U8 }
                     else if ident == "u16" { ArgTy::U16 }
-                    else { panic!("unhandled argument type {}", ident) }
+                    else { panic!("unhandled argument type {ident}") }
                 },
                 _ => panic!("type not an Ident"),
             }
@@ -88,28 +83,27 @@ fn arg_ty(ty: &Type) -> ArgTy {
     }
 }
 
-fn unique_idents() -> impl Iterator<Item = Ident> {
-    (0..).map(|i| Ident::new(&format!("i{}", i), Span::call_site()))
+fn numbered_idents() -> impl Iterator<Item = Ident> {
+    (0..).map(|i| Ident::new(&format!("i{i}"), Span::call_site()))
 }
 
 pub fn define_opcodes(args: Args) -> TokenStream {
-    let opcodes = args.opcodes
-        .iter()
-        .cloned()
-        .collect::<Vec<_>>();
-
-    let variants = opcodes.iter()
+    let variants = args.opcodes.iter()
         .map(|opcode| {
             let name = &opcode.name;
             let fields = &opcode.args;
-            quote! { #name #fields }
+            if fields.is_empty() {
+                quote! { #name }
+            } else {
+                quote! { #name { #(#fields),* } }
+            }
         });
 
-    let impl_constants = impl_constants(&opcodes);
-    let impl_decode = impl_decode(&opcodes);
-    let impl_encode = impl_encode(&opcodes);
-    let impl_len = impl_len(&opcodes);
-    let impl_stack_effect = impl_stack_effect(&opcodes);
+    let impl_constants = impl_constants(&args.opcodes);
+    let impl_decode = impl_decode(&args.opcodes);
+    let impl_encode = impl_encode(&args.opcodes);
+    let impl_len = impl_len(&args.opcodes);
+    let impl_stack_effect = impl_stack_effect(&args.opcodes);
 
     quote! {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -149,8 +143,8 @@ fn impl_decode(opcodes: &[Opcode]) -> TokenStream {
             let name = &opcode.name;
             let const_name = to_upper_snake_case(name);
 
-            let mut match_idents = unique_idents();
-            let match_args = opcode.args()
+            let mut match_idents = numbered_idents();
+            let match_args = opcode.args.iter()
                 .map(|field| {
                     match arg_ty(&field.ty) {
                         ArgTy::U8 => {
@@ -165,8 +159,8 @@ fn impl_decode(opcodes: &[Opcode]) -> TokenStream {
                     }
                 });
 
-            let mut decode_idents = unique_idents();
-            let decode_args = opcode.args()
+            let mut decode_idents = numbered_idents();
+            let decode_args = opcode.args.iter()
                 .map(|field| {
                     let name = field.ident.as_ref().unwrap();
 
@@ -205,13 +199,13 @@ fn impl_encode(opcodes: &[Opcode]) -> TokenStream {
             let name = &opcode.name;
             let const_name = to_upper_snake_case(name);
 
-            let match_args = opcode.args()
+            let match_args = opcode.args.iter()
                 .map(|field| {
                     let name = field.ident.as_ref().unwrap();
                     quote! { #name }
                 });
 
-            let encode_args = opcode.args()
+            let encode_args = opcode.args.iter()
                 .map(|field| {
                     let name = field.ident.as_ref().unwrap();
 
@@ -245,7 +239,7 @@ fn impl_len(opcodes: &[Opcode]) -> TokenStream {
     let len_arms = opcodes.iter()
         .map(|opcode| {
             let name = &opcode.name;
-            let len = opcode.args()
+            let len = opcode.args.iter()
                 .map(|field| {
                     match arg_ty(&field.ty) {
                         ArgTy::U8 => 1,
@@ -271,15 +265,15 @@ fn impl_stack_effect(opcodes: &[Opcode]) -> TokenStream {
         .map(|opcode| {
             let name = &opcode.name;
 
-            let match_args = opcode.args()
+            let match_args = opcode.args.iter()
                 .map(|field| {
                     let name = field.ident.as_ref().unwrap();
                     quote! { #name }
                 });
 
-            let pops_pushes = if let Some((_, pushes)) = &opcode.pushes {
-                let (_, pops) = &opcode.pops;
-                let map_args = opcode.args()
+            let pops_pushes = if let Some(pushes) = &opcode.pushes {
+                let pops = &opcode.pops;
+                let map_args = opcode.args.iter()
                     .map(|field| {
                         let name = field.ident.as_ref().unwrap();
                         quote! { let #name = usize::from(#name); }
@@ -298,7 +292,7 @@ fn impl_stack_effect(opcodes: &[Opcode]) -> TokenStream {
                     },
                 )}
             } else {
-                let (_, expr) = &opcode.pops;
+                let expr = &opcode.pops;
                 quote! {
                     #expr
                 }
