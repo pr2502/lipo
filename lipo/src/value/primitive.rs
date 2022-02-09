@@ -15,6 +15,12 @@ mod sealed {
 
 
 /// Marker trait for primitive types [`Value`](crate::Value) can represent
+///
+/// # Safety
+/// - it has to be safe and lossless for `Primitive` types to do a roundtrip
+///   through the masked bits of `u64` marked by `value::repr::PAYLOAD_MASK`
+/// - the associated const `TYPE_TAG` has to be unique for every `Primitive`
+///   type and different from `TypeTag::OBJECT`
 pub unsafe trait Primitive<'alloc>: sealed::Sealed + Debug + Hash + PartialEq + Eq {
     #[doc(hidden)]
     const TYPE_TAG: TypeTag;

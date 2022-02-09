@@ -3,8 +3,6 @@ macro_rules! debug_unreachable {
         #[cfg(debug_assertions)]
         ::std::unreachable!($($args)*);
 
-        // SAFETY Chunk is checked when the VM is constructed, all constant references
-        // from OpCode::Closure must be valid and reference a Function object.
         #[cfg(not(debug_assertions))]
         unsafe { ::std::hint::unreachable_unchecked(); }
     }};

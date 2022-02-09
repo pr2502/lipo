@@ -82,7 +82,7 @@ enum UpvalueRef {
 }
 
 pub fn compile<'alloc>(
-    ast: AST<'alloc>,
+    ast: Ast<'alloc>,
     alloc: &'alloc Alloc,
 ) -> Result<ObjectRef<'alloc, Function<'alloc>>, Vec<CompilerError>> {
     let mut emitter = Emitter {
@@ -125,11 +125,11 @@ impl<'alloc> Emitter<'alloc> {
     }
 
     fn fn_scope(&self) -> &FnScope<'alloc> {
-        self.fn_stack.last().expect("missing FnScope")
+        self.fn_stack.last().expect("BUG: missing FnScope")
     }
 
     fn fn_scope_mut(&mut self) -> &mut FnScope<'alloc> {
-        self.fn_stack.last_mut().expect("missing FnScope")
+        self.fn_stack.last_mut().expect("BUG: missing FnScope")
     }
 
     fn emit(&mut self, opcode: OpCode, span: FreeSpan) -> PatchPlace {

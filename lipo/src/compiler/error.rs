@@ -24,7 +24,7 @@ impl CompilerError {
 
     pub fn is<E: Error>(&self) -> bool {
         // Propagate the type_id() method call down to the `dyn Error`
-        (&*self.0).type_id() == TypeId::of::<E>()
+        (*self.0).type_id() == TypeId::of::<E>()
     }
 }
 

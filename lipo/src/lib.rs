@@ -9,8 +9,11 @@
 #![feature(specialization)]
 // use RFC 2585 explicitly, don't wait for it to get enabled by default
 #![deny(unsafe_op_in_unsafe_fn)]
+// silence some clippy lints
 // we like to give lifetimes meaningful names
 #![allow(clippy::needless_lifetimes)]
+#![allow(clippy::match_like_matches_macro)]
+#![allow(clippy::single_match)]
 
 
 #[macro_use]

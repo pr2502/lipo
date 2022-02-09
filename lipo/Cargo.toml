@@ -10,15 +10,13 @@ fxhash = "0.2.1"
 logos = "0.12.0"
 termcolor = "1.1.2"
 tracing = { version = "0.1.29", features = ["max_level_trace", "release_max_level_info"] }
-unicode-width = { version = "0.1.8", optional = true }
+unicode-width = "0.1.8"
 
 lipo_macro = { path = "../lipo_macro" }
 
 
 [features]
-default = ["full-unicode"]
-
-full-unicode = ["unicode-width"]
+default = []
 
 # GC stress testing
 #

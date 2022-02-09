@@ -237,6 +237,14 @@ impl Drop for Alloc {
 }
 
 
+/// Marks any contained GCd Values
+///
+/// Usually derived using the [`lipo::Trace`] derive macro.
+///
+/// # Safety
+/// Manual implementations of `Trace` must mark every GCd `Value<'a>`,
+/// `ObjectRefAny<'a>` and `ObjectRef<'a, T>` contained within it. (Note that if
+/// the lifetime is `'static` they're _not_ GCd.)
 pub unsafe trait Trace {
     fn mark(&self);
 }

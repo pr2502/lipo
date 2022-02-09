@@ -114,11 +114,11 @@ struct Parser<'src> {
 
 type Result<T> = std::result::Result<T, ParserError>;
 
-pub fn parse<'alloc>(source: ObjectRef<'alloc, String>) -> Result<AST> {
+pub fn parse<'alloc>(source: ObjectRef<'alloc, String>) -> Result<Ast> {
     let mut parser = Parser { lexer: Lexer::new(&source) };
     let items = parser.block_inner()?;
     let eof = parser.expect_next(T::Eof)?.into();
-    Ok(AST { source, items, eof })
+    Ok(Ast { source, items, eof })
 }
 
 // Utility functions for parsing

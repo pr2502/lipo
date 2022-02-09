@@ -153,16 +153,7 @@ impl<'src> Span<'src> {
     pub fn columns(&self) -> (u32, u32) {
         fn column(src: &str) -> usize {
             let last_line = src.lines().next_back().unwrap_or("");
-
-            #[cfg(feature = "full-unicode")]
-            {
-                unicode_width::UnicodeWidthStr::width(last_line)
-            }
-
-            #[cfg(not(feature = "full-unicode"))]
-            {
-                last_line.as_bytes().len()
-            }
+            unicode_width::UnicodeWidthStr::width(last_line)
         }
 
         let Range { start, end } = self.range();
@@ -259,7 +250,6 @@ dolor sit",
         assert_eq!(sp.columns(), (1, 1));
     }
 
-    #[cfg_attr(not(feature = "full-unicode"), ignore)]
     #[test]
     fn test_columns_unicode() {
         // Single emoji is a double-width character and gets properly counted as such.

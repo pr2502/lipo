@@ -65,7 +65,7 @@ where
 
         let stdout = StandardStream::stdout(ColorChoice::Auto);
         let mut stdout = stdout.lock();
-        writeln!(&mut stdout).unwrap();
+        writeln!(stdout).unwrap();
         term::emit(&mut stdout, &term::Config::default(), &file, &diagnostic).unwrap();
     }
 }

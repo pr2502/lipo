@@ -7,7 +7,7 @@ use crate::fmt::SourceDebug;
 use crate::span::Spanned;
 
 
-impl<'alloc> Debug for AST<'alloc> {
+impl<'alloc> Debug for Ast<'alloc> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.items.as_slice().wrap(&self.source).fmt(f)
     }
