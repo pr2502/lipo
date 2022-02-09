@@ -567,3 +567,66 @@ run! {
     ",
     Ok(_),
 }
+
+run! {
+    self_recursive_function,
+    r"
+        fn recur(n) {
+            if n > 0 {
+                recur(n - 1)
+            } else {
+                0
+            }
+        }
+
+        assert recur(5) == 0;
+    ",
+    Ok(_),
+}
+
+run! {
+    mutually_recursive_functions,
+    r"
+        fn a(n) {
+            if n > 0 {
+                b(n - 1)
+            } else {
+                0
+            }
+        }
+
+        fn b(n) {
+            if n > 0 {
+                a(n - 1)
+            } else {
+                0
+            }
+        }
+
+        assert a(5) == 0;
+        assert b(5) == 0;
+    ",
+    Ok(_),
+}
+
+run! {
+    capture_fn_item_in_closure,
+    r"
+        let f = fn() fun();
+
+        fn fun() { 2 }
+
+        assert f() == 2;
+    ",
+    Ok(_),
+}
+
+run! {
+    capture_outer_fn_item,
+    r#"
+        fn a() { 1 }
+        fn b() { fn() a }
+        assert b()()() == 1;
+    "#,
+    Ok(_),
+}

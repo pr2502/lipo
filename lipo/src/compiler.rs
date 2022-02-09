@@ -23,9 +23,9 @@ use error::{CompilerError, Error, *};
 /// Maximum number of function arguments and parameters
 const MAX_ARGS: usize = u8::MAX as usize;
 const MAX_LOCALS: usize = u16::MAX as usize;
+const MAX_CONSTS: usize = u16::MAX as usize;
 const MAX_TUPLE_ITEMS: usize = u8::MAX as usize;
 const MAX_RECORD_ENTRIES: usize = u8::MAX as usize;
-
 
 struct Emitter<'alloc> {
     alloc: &'alloc Alloc,
@@ -38,12 +38,15 @@ struct FnScope<'alloc> {
     name: Name<'alloc>,
     fndef_span: FreeSpan,
     chunk: ChunkBuf<'alloc>,
-    // Outer Vec represents nested blocks
-    locals: Vec<Vec<Local<'alloc>>>,
-    consts: Vec<Vec<Const<'alloc>>>,
+    blocks: Vec<BlockScope<'alloc>>,
     upvalues: Vec<Upvalue<'alloc>>,
-    // Can capture upvalues
+    // Can capture upvalues other than consts
     closure: bool,
+}
+
+struct BlockScope<'alloc> {
+    locals: Vec<Local<'alloc>>,
+    consts: Vec<Const<'alloc>>,
 }
 
 #[derive(Clone, Copy)]
@@ -97,8 +100,7 @@ pub fn compile<'alloc>(
         name: script_name,
         fndef_span: FreeSpan::zero(),
         chunk: ChunkBuf::new(emitter.source, 0),
-        locals: Vec::default(),
-        consts: Vec::default(),
+        blocks: Vec::default(),
         upvalues: Vec::default(),
         closure: false,
     });
@@ -162,9 +164,18 @@ impl<'alloc> Emitter<'alloc> {
 }
 
 impl<'alloc> FnScope<'alloc> {
+    fn block(&self) -> &BlockScope<'alloc> {
+        self.blocks.last().expect("BUG: missing block scope")
+    }
+
+    fn block_mut(&mut self) -> &mut BlockScope<'alloc> {
+        self.blocks.last_mut().expect("BUG: missing block scope")
+    }
+
     fn find_local(&self, name: Name<'alloc>) -> Option<(u16, Local<'alloc>)> {
-        self.locals
+        self.blocks
             .iter()
+            .map(|BlockScope { locals, .. }| locals)
             .flatten()
             .enumerate()
             .find(|(_, loc)| loc.name == name)
@@ -172,8 +183,9 @@ impl<'alloc> FnScope<'alloc> {
     }
 
     fn find_const(&self, name: Name<'alloc>) -> Option<Const<'alloc>> {
-        self.consts
+        self.blocks
             .iter()
+            .map(|BlockScope { consts, .. }| consts)
             .flatten()
             .find(|cnst| cnst.name == name)
             .copied()
@@ -190,12 +202,19 @@ impl<'alloc> FnScope<'alloc> {
 
 impl<'alloc> Emitter<'alloc> {
     fn add_const(&mut self, name: Name<'alloc>, span: FreeSpan) {
-        // TODO limit max consts
+        let n_consts = self
+            .fn_scope()
+            .blocks
+            .iter()
+            .map(|BlockScope { consts, .. }| consts.len())
+            .sum::<usize>();
+        if n_consts >= MAX_CONSTS {
+            todo!() // error: too many consts
+        }
         let conflict = self
             .fn_scope()
+            .block()
             .consts
-            .last()
-            .unwrap()
             .iter()
             .rev()
             .find(|cnst| cnst.name == name);
@@ -212,7 +231,7 @@ impl<'alloc> Emitter<'alloc> {
             .fn_scope_mut()
             .chunk
             .insert_constant(Value::from(const_cell));
-        self.fn_scope_mut().consts.last_mut().unwrap().push(Const {
+        self.fn_scope_mut().block_mut().consts.push(Const {
             name,
             bind_span: span,
             const_cell,
@@ -221,17 +240,20 @@ impl<'alloc> Emitter<'alloc> {
     }
 
     fn add_local(&mut self, name: Name<'alloc>, mutable: bool, span: FreeSpan) {
-        // FIXME limit max locals correctly, this just limits maximum number of local
-        // block scopes
-        if self.fn_scope().locals.len() >= MAX_LOCALS {
+        let n_locals = self
+            .fn_scope()
+            .blocks
+            .iter()
+            .map(|BlockScope { locals, .. }| locals.len())
+            .sum::<usize>();
+        if n_locals >= MAX_LOCALS {
             self.error(TooManyLocals { span, limit: MAX_LOCALS });
             return;
         }
         let shadowing = self
             .fn_scope()
+            .block()
             .locals
-            .last()
-            .unwrap()
             .iter()
             .rev()
             .find(|loc| loc.name == name);
@@ -242,11 +264,10 @@ impl<'alloc> Emitter<'alloc> {
             });
             return;
         }
-        self.fn_scope_mut().locals.last_mut().unwrap().push(Local {
-            name,
-            bind_span: span,
-            mutable,
-        });
+        self.fn_scope_mut()
+            .block_mut()
+            .locals
+            .push(Local { name, bind_span: span, mutable });
     }
 
     fn resolve_local(&self, name: Name<'alloc>) -> Option<(u16, Local<'alloc>)> {
@@ -269,7 +290,7 @@ impl<'alloc> Emitter<'alloc> {
             .chunk
             .insert_constant(Value::from(outer_const.const_cell));
         let local_const = Const { const_key, ..outer_const };
-        self.fn_scope_mut().consts[0].push(local_const);
+        self.fn_scope_mut().blocks[0].consts.push(local_const);
         Some(local_const)
     }
 
@@ -347,14 +368,15 @@ impl<'alloc> Emitter<'alloc> {
 
     fn begin_scope(&mut self) {
         let fn_scope = self.fn_scope_mut();
-        fn_scope.locals.push(Vec::new());
-        fn_scope.consts.push(Vec::new());
+        fn_scope
+            .blocks
+            .push(BlockScope { locals: Vec::new(), consts: Vec::new() });
     }
 
     fn end_scope(&mut self, span: FreeSpan) {
-        let scope_locals = self.fn_scope_mut().locals.pop().unwrap();
+        let scope = self.fn_scope_mut().blocks.pop().unwrap();
 
-        let mut left = scope_locals.len();
+        let mut left = scope.locals.len();
         while left > 0 {
             let pop1 = Ord::min((u8::MAX as usize) + 1, left);
             left -= pop1;
@@ -383,8 +405,7 @@ impl<'alloc> Emitter<'alloc> {
             name,
             fndef_span: fn_item.span(),
             chunk: ChunkBuf::new(self.source, params),
-            locals: vec![vec![recur]],
-            consts: vec![Vec::default()],
+            blocks: vec![BlockScope { locals: vec![recur], consts: Vec::new() }],
             upvalues: Vec::default(),
             // No upvalues in fn_item
             closure: false,
@@ -887,8 +908,7 @@ impl<'alloc> Emitter<'alloc> {
             name,
             fndef_span: fn_expr.span(),
             chunk: ChunkBuf::new(self.source, params),
-            locals: Vec::from([Vec::from([dummy])]),
-            consts: Vec::from([Vec::default()]),
+            blocks: vec![BlockScope { locals: vec![dummy], consts: Vec::new() }],
             upvalues: Vec::default(),
             closure: true,
         });
