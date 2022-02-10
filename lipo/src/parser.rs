@@ -302,16 +302,21 @@ impl<'src> Parser<'src> {
 
         match [t0, t1, t2] {
             // Start of a Record literal
-            [T::LeftBrace, T::Name, T::Colon ] |
+            [T::LeftBrace, T::Name, T::Colon] |
             // Start of a simplified Record literal
-            [T::LeftBrace, T::Name, T::Comma ] |
+            [T::LeftBrace, T::Name, T::Comma] |
             // Start and end of a simplified Record literal, this one could also be a Block with a
-            // single ident in it but we give Record a priority because it's more useful than a
-            // block with a single Primary expression.
-            [T::LeftBrace, T::Name, T::RightBrace ] |
+            // single ident in it but we give Record priority because it's more useful than a block
+            // with a single Primary expression.
+            //
+            // User can produce the value of a single primary in a block by omitting the block
+            // braces.
+            [T::LeftBrace, T::Name, T::RightBrace] |
             // Empty Record or Block, Record has again priority because it's more useful than empty
             // block.
-            [T::LeftBrace, T::RightBrace, _ ] => {
+            //
+            // User can produce the value of an empty block with empty parentheses.
+            [T::LeftBrace, T::RightBrace, _] => {
                 Ok(Expression::Record(self.record()?))
             },
             _ => Ok(Expression::Block(self.block()?)),

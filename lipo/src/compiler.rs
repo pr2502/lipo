@@ -91,8 +91,8 @@ pub fn compile<'alloc>(
     let mut emitter = Emitter {
         alloc,
         source: ast.source,
-        fn_stack: Vec::default(),
-        errors: Vec::default(),
+        fn_stack: Vec::new(),
+        errors: Vec::new(),
     };
     let script_name = emitter.intern_string("<script>");
 
@@ -100,8 +100,8 @@ pub fn compile<'alloc>(
         name: script_name,
         fndef_span: FreeSpan::zero(),
         chunk: ChunkBuf::new(emitter.source, 0),
-        blocks: Vec::default(),
-        upvalues: Vec::default(),
+        blocks: Vec::new(),
+        upvalues: Vec::new(),
         closure: false,
     });
 
@@ -175,8 +175,7 @@ impl<'alloc> FnScope<'alloc> {
     fn find_local(&self, name: Name<'alloc>) -> Option<(u16, Local<'alloc>)> {
         self.blocks
             .iter()
-            .map(|BlockScope { locals, .. }| locals)
-            .flatten()
+            .flat_map(|BlockScope { locals, .. }| locals)
             .enumerate()
             .find(|(_, loc)| loc.name == name)
             .map(|(slot, loc)| (slot.try_into().unwrap(), *loc))
@@ -185,8 +184,7 @@ impl<'alloc> FnScope<'alloc> {
     fn find_const(&self, name: Name<'alloc>) -> Option<Const<'alloc>> {
         self.blocks
             .iter()
-            .map(|BlockScope { consts, .. }| consts)
-            .flatten()
+            .flat_map(|BlockScope { consts, .. }| consts)
             .find(|cnst| cnst.name == name)
             .copied()
     }
@@ -405,8 +403,11 @@ impl<'alloc> Emitter<'alloc> {
             name,
             fndef_span: fn_item.span(),
             chunk: ChunkBuf::new(self.source, params),
-            blocks: vec![BlockScope { locals: vec![recur], consts: Vec::new() }],
-            upvalues: Vec::default(),
+            blocks: Vec::from([BlockScope {
+                locals: Vec::from([recur]),
+                consts: Vec::new(),
+            }]),
+            upvalues: Vec::new(),
             // No upvalues in fn_item
             closure: false,
         });
@@ -908,8 +909,11 @@ impl<'alloc> Emitter<'alloc> {
             name,
             fndef_span: fn_expr.span(),
             chunk: ChunkBuf::new(self.source, params),
-            blocks: vec![BlockScope { locals: vec![dummy], consts: Vec::new() }],
-            upvalues: Vec::default(),
+            blocks: Vec::from([BlockScope {
+                locals: Vec::from([dummy]),
+                consts: Vec::new(),
+            }]),
+            upvalues: Vec::new(),
             closure: true,
         });
 

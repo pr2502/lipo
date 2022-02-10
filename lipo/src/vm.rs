@@ -46,7 +46,7 @@ impl<'alloc> VM<'alloc> {
             stack_offset: frame.stack_offset,
 
             alloc,
-            call_stack: vec![frame],
+            call_stack: Vec::from([frame]),
             stack: Vec::with_capacity(function.chunk.max_stack()),
         }
     }
