@@ -5,7 +5,7 @@ lipo_macro::define_opcodes! {
     [   True,                                       0,          1       ],
     [   False,                                      0,          1       ],
     [   Pop,                                        1,          0       ],
-    [   PopBlock    { n: u8 },                      n + 1,      0       ],
+    [   PopBlock    { n: u8 },                      n + 2,      1       ],
     [   GetLocal    { slot: u16 },                  0,          1       ],
     [   SetLocal    { slot: u16 },                  1,          0       ],
     [   GetUpvalue  { slot: u8 },                   0,          1       ],
