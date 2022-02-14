@@ -1,9 +1,9 @@
 use crate::builtins::String;
 use crate::compiler::compile;
-use crate::compiler::error::*;
+use crate::compiler::error::kind::*;
 use crate::diagnostic::Report;
 use crate::parser::parse;
-use crate::vm::error::*;
+use crate::vm::error::kind::*;
 use crate::vm::VM;
 use crate::Alloc;
 
@@ -146,6 +146,23 @@ run! {
 run! {
     weird_expr,
     "assert not (5 - 4 > 3 * 2 == not false);",
+    Ok(_),
+}
+
+parse! {
+    type_expr,
+    "foo :: Foo(Bar, Baz) | Qux",
+    Ok(_),
+}
+
+compile! {
+    #[ignore = "const_eval is not yet implemented"]
+    type_declarations,
+    r"
+        type Foo = ();
+        type Bar = Foo | Int;
+        type List(Item) = Vec(Item);
+    ",
     Ok(_),
 }
 
@@ -627,6 +644,27 @@ run! {
         fn a() { 1 }
         fn b() { fn() a }
         assert b()()() == 1;
+    "#,
+    Ok(_),
+}
+
+run! {
+    #[ignore = "type check operator not yet implemented"]
+    cons_list,
+    r#"
+        fn cons(a, b) { fn(m) m(a, b) }
+        fn head(cell) { cell(fn(a, b) a) }
+        fn tail(cell) { cell(fn(a, b) b) }
+
+        fn for_each(list, cb) {
+            if not list :: () {
+                cb(head(list));
+                for_each(tail(list));
+            }
+        }
+
+        let list = cons(1, cons(2, cons(3, cons(4, cons(5, ())))));
+        for_each(list, fn(e) { print e; });
     "#,
     Ok(_),
 }

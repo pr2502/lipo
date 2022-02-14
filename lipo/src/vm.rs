@@ -9,8 +9,8 @@ use crate::{Alloc, ObjectRef, Trace, Value};
 
 pub mod error;
 
-pub use error::VmError;
-use error::*;
+use error::kind::*;
+use error::VmError;
 
 
 pub struct VM<'alloc> {

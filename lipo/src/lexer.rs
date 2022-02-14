@@ -19,9 +19,9 @@ pub enum TokenKind {
     #[token("-")] Minus,
     #[token("+")] Plus,
     #[token(";")] Semicolon,
-    #[token(":")] Colon,
     #[token("/")] Div,
     #[token("*")] Mul,
+    #[token("|")] TypeOr,
 
     // One or two character tokens
     #[token("/=")] NotEqual,
@@ -31,6 +31,8 @@ pub enum TokenKind {
     #[token(">=")] GreaterEqual,
     #[token("<")] Less,
     #[token("<=")] LessEqual,
+    #[token(":")] Colon,
+    #[token("::")] TypeEqual,
 
     // Names
     #[regex(r"[a-zA-Z_][a-zA-Z_0-9]*")]
@@ -84,7 +86,7 @@ pub enum TokenKind {
     Error,
 }
 
-pub type T = TokenKind;
+pub(crate) type T = TokenKind;
 
 
 /// Lex string expressions
@@ -143,9 +145,9 @@ impl Display for TokenKind {
             T::Minus => "`-`",
             T::Plus => "`+`",
             T::Semicolon => "`;`",
-            T::Colon => "`:`",
             T::Div => "`/`",
             T::Mul => "`*`",
+            T::TypeOr => "`|`",
 
             // One or two character tokens
             T::NotEqual => "`/=`",
@@ -155,6 +157,8 @@ impl Display for TokenKind {
             T::GreaterEqual => "`>=`",
             T::Less => "`<`",
             T::LessEqual => "`<=`",
+            T::Colon => "`:`",
+            T::TypeEqual => "`::`",
 
             // Names
             T::Name => "name",
@@ -217,7 +221,7 @@ pub struct Token {
 /// at the same token as the old one and they both advance independently.
 /// ```rust
 /// # #![feature(assert_matches)]
-/// # use lipo::lexer::{Lexer, Token, TokenKind, T};
+/// # use lipo::lexer::{Lexer, Token, TokenKind as T};
 /// # use std::assert_matches::assert_matches;
 /// #
 /// let src = "+ - * /";

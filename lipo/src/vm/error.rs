@@ -89,74 +89,78 @@ macro_rules! define_error {
 }
 
 
-define_error! {
-    AssertionError {
-        span: FreeSpan,
-    },
-    message: "runtime assertion failed",
-    labels: [
-        Label::primary(span, "asserted here"),
-    ],
-}
+pub mod kind {
+    use super::*;
 
-define_error! {
-    TypeError {
-        span: FreeSpan,
-        msg: &'static str,
-    },
-    message: "type error",
-    labels: [
-        Label::primary(span, msg),
-    ],
-}
+    define_error! {
+        AssertionError {
+            span: FreeSpan,
+        },
+        message: "runtime assertion failed",
+        labels: [
+            Label::primary(span, "asserted here"),
+        ],
+    }
 
-define_error! {
-    NativeError {
-        msg: std::string::String,
-    },
-    message: "native error",
-    labels: [],
-    notes: [
-        msg,
-    ],
-}
+    define_error! {
+        TypeError {
+            span: FreeSpan,
+            msg: &'static str,
+        },
+        message: "type error",
+        labels: [
+            Label::primary(span, msg),
+        ],
+    }
 
-define_error! {
-    WrongArity {
-        span: FreeSpan,
-        arity: usize,
-        args: usize,
-    },
-    message: "mismatched arity",
-    labels: [
-        Label::primary(span, format!("called with {} arguments", args)),
-    ],
-    notes: [
-        format!("note: callable arity is {}", arity),
-    ],
-}
+    define_error! {
+        NativeError {
+            msg: std::string::String,
+        },
+        message: "native error",
+        labels: [],
+        notes: [
+            msg,
+        ],
+    }
 
-define_error! {
-    ValueNotCallable {
-        span: FreeSpan,
-        dbg: std::string::String,
-    },
-    message: "value not callable",
-    labels: [
-        Label::primary(span, "not callable"),
-    ],
-    notes: [
-        format!("note: attempted to call {}", dbg),
-    ],
-}
+    define_error! {
+        WrongArity {
+            span: FreeSpan,
+            arity: usize,
+            args: usize,
+        },
+        message: "mismatched arity",
+        labels: [
+            Label::primary(span, format!("called with {} arguments", args)),
+        ],
+        notes: [
+            format!("note: callable arity is {}", arity),
+        ],
+    }
 
-define_error! {
-    MathError {
-        span: FreeSpan,
-        msg: &'static str,
-    },
-    message: "math error",
-    labels: [
-        Label::primary(span, msg),
-    ],
+    define_error! {
+        ValueNotCallable {
+            span: FreeSpan,
+            dbg: std::string::String,
+        },
+        message: "value not callable",
+        labels: [
+            Label::primary(span, "not callable"),
+        ],
+        notes: [
+            format!("note: attempted to call {}", dbg),
+        ],
+    }
+
+    define_error! {
+        MathError {
+            span: FreeSpan,
+            msg: &'static str,
+        },
+        message: "math error",
+        labels: [
+            Label::primary(span, msg),
+        ],
+    }
 }

@@ -16,7 +16,8 @@ use constant::ConstCell;
 
 pub mod error;
 
-use error::{CompilerError, Error, *};
+use error::kind::*;
+use error::{CompilerError, Error};
 
 
 // Limits
@@ -441,15 +442,28 @@ impl<'alloc> Emitter<'alloc> {
     fn const_item(&mut self, const_item: &ConstItem) {
         let name = self.intern_token(const_item.name);
         let Const { const_cell, .. } = self.resolve_const(name).unwrap();
+        if let Some(value) = self.const_expr(&const_item.expr) {
+            const_cell.set(value).unwrap();
+        }
+    }
 
-        match &const_item.expr {
+    fn type_item(&mut self, type_item: &TypeItem) {
+        if let Some(_parameters) = &type_item.parameters {
+            todo!("type function"); // impl similar to fn_item
+        } else {
+            let name = self.intern_token(type_item.name);
+            let Const { const_cell, .. } = self.resolve_const(name).unwrap();
+            if let Some(value) = self.const_expr(&type_item.expr) {
+                const_cell.set(value).unwrap();
+            }
+        }
+    }
+
+    fn const_expr(&mut self, expr: &Expression) -> Option<Value<'alloc>> {
+        match expr {
             Expression::Primary(primary_expr) => match primary_expr {
-                PrimaryExpr::True(_) => {
-                    const_cell.set(Value::from(true)).unwrap();
-                },
-                PrimaryExpr::False(_) => {
-                    const_cell.set(Value::from(false)).unwrap();
-                },
+                PrimaryExpr::True(_) => Some(Value::from(true)),
+                PrimaryExpr::False(_) => Some(Value::from(false)),
                 PrimaryExpr::BinaryNumber(_)
                 | PrimaryExpr::OctalNumber(_)
                 | PrimaryExpr::HexadecimalNumber(_) => {
@@ -458,11 +472,10 @@ impl<'alloc> Emitter<'alloc> {
                 PrimaryExpr::DecimalNumber(DecimalNumber { span }) => {
                     let slice = span.anchor(&self.source).as_str();
                     match slice.parse::<i32>() {
-                        Ok(int) => {
-                            const_cell.set(Value::from(int)).unwrap();
-                        },
+                        Ok(int) => Some(Value::from(int)),
                         Err(cause) => {
                             self.error(InvalidInt32Literal { cause, span: *span });
+                            None
                         },
                     }
                 },
@@ -473,10 +486,11 @@ impl<'alloc> Emitter<'alloc> {
                         Ok(float) => {
                             let float =
                                 Float::new(float, self.alloc).expect("impossible number literal");
-                            const_cell.set(Value::from(float)).unwrap();
+                            Some(Value::from(float))
                         },
                         Err(cause) => {
                             self.error(InvalidFloatLiteral { cause, span: *span });
+                            None
                         },
                     }
                 },
@@ -579,6 +593,13 @@ impl<'alloc> Emitter<'alloc> {
                         FreeSpan::join(const_item.const_tok.span, const_item.name.span),
                     );
                 },
+                Item::Type(type_item) => {
+                    let name = self.intern_token(type_item.name);
+                    self.add_const(
+                        name,
+                        FreeSpan::join(type_item.type_tok.span, type_item.name.span),
+                    );
+                },
                 Item::Let(_) | Item::Statement(_) | Item::Expr(_) => {},
             }
         }
@@ -589,6 +610,7 @@ impl<'alloc> Emitter<'alloc> {
             match item {
                 Item::Fn(fn_item) => self.fn_item(fn_item),
                 Item::Const(const_item) => self.const_item(const_item),
+                Item::Type(type_item) => self.type_item(type_item),
 
                 Item::Let(let_item) => self.let_item(let_item),
                 Item::Statement(stmt) => self.statement(stmt),
@@ -707,6 +729,9 @@ impl<'alloc> Emitter<'alloc> {
 
         let span = binary_expr.span();
         match op {
+            T::TypeEqual => {
+                self.emit(OpCode::Subtype, span);
+            },
             T::NotEqual => {
                 self.emit(OpCode::Equal, span);
                 self.emit(OpCode::Not, span);
@@ -727,6 +752,9 @@ impl<'alloc> Emitter<'alloc> {
             T::LessEqual => {
                 self.emit(OpCode::Greater, span);
                 self.emit(OpCode::Not, span);
+            },
+            T::TypeOr => {
+                self.emit(OpCode::TypeOr, span);
             },
             T::Plus => {
                 self.emit(OpCode::Add, span);
@@ -1033,11 +1061,9 @@ impl<'alloc> Emitter<'alloc> {
             PrimaryExpr::DecimalNumber(tok) => {
                 self.int32(tok.span);
             },
-            PrimaryExpr::DecimalPointNumber(decimal_point) => {
-                self.float(decimal_point.span);
-            },
-            PrimaryExpr::ExponentialNumber(exponential) => {
-                self.float(exponential.span);
+            PrimaryExpr::DecimalPointNumber(DecimalPointNumber { span })
+            | PrimaryExpr::ExponentialNumber(ExponentialNumber { span }) => {
+                self.float(*span);
             },
             PrimaryExpr::Name(name_tok) => {
                 let name = self.intern_token(*name_tok);

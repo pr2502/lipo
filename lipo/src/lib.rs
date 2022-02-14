@@ -52,6 +52,13 @@ pub mod builtins {
 }
 
 pub mod error {
+    pub mod compiler {
+        pub use crate::compiler::error::kind::*;
+    }
+    pub mod vm {
+        pub use crate::vm::error::kind::*;
+    }
+
     pub use crate::compiler::error::CompilerError;
     pub use crate::diagnostic::{Diagnostic, Label, Report, Severity};
     pub use crate::parser::ParserError;
@@ -65,10 +72,9 @@ pub use parser::parse;
 #[doc(hidden)] pub use value::object::__derive_object;
 #[doc(hidden)] pub use value::object::__derive_trace;
 pub use value::object::gc::{Alloc, Trace};
-pub use value::object::{Object, ObjectRef};
+pub use value::object::{Object, ObjectRef, ObjectRefAny};
 pub use value::primitive::Primitive;
 pub use value::Value;
-pub use vm::error::VmError;
 pub use vm::VM;
 
 

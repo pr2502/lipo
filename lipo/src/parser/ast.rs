@@ -30,6 +30,7 @@ pub enum Item {
     Fn(FnItem),
     Const(ConstItem),
     Let(LetItem),
+    Type(TypeItem),
     Statement(Statement),
     Expr(Expr),
 }
@@ -66,6 +67,20 @@ pub struct LetItem {
 pub struct LetInit {
     pub equal_tok: Equal,
     pub expr: Expression,
+}
+
+pub struct TypeItem {
+    pub type_tok: Type,
+    pub name: Name,
+    pub parameters: Option<TypeParams>,
+    pub equal_tok: Equal,
+    pub expr: Expression,
+    pub semicolon_tok: Semicolon,
+}
+
+pub struct TypeParams {
+    pub parens: Parens,
+    pub parameters: Delimited<Comma, Name>,
 }
 
 pub struct Expr {
@@ -159,8 +174,8 @@ pub struct UnaryExpr {
 }
 
 // BinaryExpr represents the following rules from the Lox grammar:
-// - assignment     : `=`
-// - logic_or       : `or`
+// - assignment     : `=`, `::`
+// - logic_or       : `or`, `|`
 // - logic_and      : `and`
 // - equality       : `/=`, `==`
 // - comparison     : `>`, `>=`, `<`, `<=`
@@ -313,6 +328,7 @@ specialized_tokens! {
     RightParen,
     Semicolon,
     True,
+    Type,
     While,
     BinaryNumber,
     OctalNumber,

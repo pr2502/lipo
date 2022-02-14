@@ -239,7 +239,7 @@ impl Drop for Alloc {
 
 /// Marks any contained GCd Values
 ///
-/// Usually derived using the [`lipo::Trace`] derive macro.
+/// Usually derived using the [`lipo::Trace`](crate::Trace) derive macro.
 ///
 /// # Safety
 /// Manual implementations of `Trace` must mark every GCd `Value<'a>`,

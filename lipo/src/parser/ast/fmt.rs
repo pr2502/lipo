@@ -27,6 +27,7 @@ impl SourceDebug for Item {
             Item::Fn(inner) => inner.fmt(source, f),
             Item::Const(inner) => inner.fmt(source, f),
             Item::Let(inner) => inner.fmt(source, f),
+            Item::Type(inner) => inner.fmt(source, f),
             Item::Statement(inner) => inner.fmt(source, f),
             Item::Expr(inner) => inner.fmt(source, f),
         }
@@ -74,6 +75,24 @@ impl SourceDebug for LetItem {
             w.field(&init.expr.wrap(source));
         }
         w.finish()
+    }
+}
+
+impl SourceDebug for TypeItem {
+    fn fmt(&self, source: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Type")
+            .field("name", &self.name.wrap(source))
+            .field(
+                "params",
+                &self
+                    .parameters
+                    .as_ref()
+                    .map(|params| params.parameters.items.as_slice())
+                    .unwrap_or(&[])
+                    .wrap(source),
+            )
+            .field("expr", &self.expr.wrap(source))
+            .finish()
     }
 }
 

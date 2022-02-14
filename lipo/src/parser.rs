@@ -168,6 +168,7 @@ impl<'src> Parser<'src> {
             // Items
             [T::FnKw, T::Name] => Item::Fn(self.fn_item()?),
             [T::Const, _] => Item::Const(self.const_item()?),
+            [T::Type, _] => Item::Type(self.type_item()?),
             [T::Let, _] => Item::Let(self.let_item()?),
 
             // Statements
@@ -233,6 +234,53 @@ impl<'src> Parser<'src> {
             expr,
             semicolon_tok,
         })
+    }
+
+    fn type_item(&mut self) -> Result<TypeItem> {
+        let type_tok = self.expect_next(T::Type).unwrap().into();
+        let name = self.name()?;
+        let parameters = if let Some(left_paren) = self.match_next(T::LeftParen) {
+            let left_paren = left_paren.into();
+            let parameters = self.type_params()?;
+            let right_paren = self.expect_next(T::RightParen)?.into();
+            Some(TypeParams {
+                parens: Parens { left: left_paren, right: right_paren },
+                parameters,
+            })
+        } else {
+            None
+        };
+        let equal_tok = self.expect_next(T::Equal)?.into();
+        let expr = self.expression()?;
+        let semicolon_tok = self.expect_next(T::Semicolon)?.into();
+        Ok(TypeItem {
+            type_tok,
+            name,
+            parameters,
+            equal_tok,
+            expr,
+            semicolon_tok,
+        })
+    }
+
+    fn type_params(&mut self) -> Result<Delimited<Comma, Name>> {
+        let mut parameters = Delimited::default();
+        while !matches!(self.peek_kind(), T::Eof | T::RightParen) {
+            parameters.items.push(self.name()?);
+
+            match self.peek_kind() {
+                T::RightParen => break,
+                T::Comma => {
+                    let comma = self.expect_next(T::Comma).unwrap().into();
+                    parameters.delim.push(comma);
+                },
+                _ => self.error(ParserError::UnexpectedToken2 {
+                    found: self.lexer.peek(),
+                    expected: &[T::Comma, T::RightParen],
+                })?,
+            }
+        }
+        Ok(parameters)
     }
 
     fn let_item(&mut self) -> Result<LetItem> {
@@ -480,7 +528,9 @@ impl<'src> Parser<'src> {
             match operator.kind {
                 // infix operators
                 T::Equal
+                | T::TypeEqual
                 | T::Or
+                | T::TypeOr
                 | T::And
                 | T::NotEqual
                 | T::EqualEqual
@@ -636,9 +686,11 @@ fn infix_binding_power(kind: TokenKind) -> Option<(u8, u8)> {
     // right associative: l_bp > r_bp
     Some(match kind {
         // assignment
-        T::Equal            => (2, 1),
+        T::Equal
+        | T::TypeEqual      => (2, 1),
         // or
-        T::Or               => (3, 4),
+        T::Or
+        | T::TypeOr         => (3, 4),
         // and
         T::And              => (5, 6),
         // equality
