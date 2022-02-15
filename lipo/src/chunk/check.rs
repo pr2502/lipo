@@ -12,8 +12,8 @@ impl<'alloc> ChunkBuf<'alloc> {
     /// Checks the [`ChunkBuf`] contains valid bytecode and if yes returns a
     /// [`Chunk`].
     ///
-    /// This ensures every instance of [`Chunk`] only contains only valid
-    /// bytecode that is safe to execute in an unsafe VM in
+    /// This ensures every instance of [`Chunk`] only contains valid bytecode
+    /// that is safe to execute in an unsafe VM in
     /// [`VM::run`](crate::vm::VM::run).
     ///
     /// Asserted invariants are:
@@ -29,6 +29,9 @@ impl<'alloc> ChunkBuf<'alloc> {
     /// at that point in execution.  9. All upvalue references are within
     /// the given bound. 10. All opcode::Closure number of upvalues matches
     /// the referenced Function.
+    ///
+    /// Invariants [4], [5], [9] and [10] are checked when
+    /// [`Chunk::resolve_constants`] is called on the top-level [`Chunk`].
     ///
     /// For now stack slot accesses must still be checked by the VM.
     ///
@@ -47,14 +50,15 @@ impl<'alloc> ChunkBuf<'alloc> {
 
         let decoded = check_decode(&code);
         check_jumps(&decoded);
-        check_constants(&decoded, &constants);
+        // check_constants(&decoded, &constants);
         let max_stack = check_stack(&decoded, params);
-        check_upvalues(&decoded, &constants, upvalues);
+        // check_upvalues(&decoded, &constants, upvalues);
 
         // Now that we know the ChunkBuf is correct we can construct a Chunk
         Chunk {
             code: code.into_boxed_slice(),
-            constants: constants.into_boxed_slice(),
+            constants: Default::default(),
+            constant_promises: constants.into_boxed_slice(),
             max_stack,
             upvalues,
             params,
@@ -70,7 +74,7 @@ impl<'alloc> ChunkBuf<'alloc> {
 /// All opcodes must decode successfully.
 ///
 /// Returns dedoced opcodes.
-fn check_decode(code: &[u8]) -> Vec<(OpCode, usize)> {
+pub(super) fn check_decode(code: &[u8]) -> Vec<(OpCode, usize)> {
     OffsetIter::new(code).collect::<Vec<_>>()
 }
 
@@ -115,7 +119,7 @@ fn check_jumps(decoded: &[(OpCode, usize)]) {
 /// just compare the length.
 ///
 /// All constants referenced by OpCode::Closure must be of type Function [5].
-fn check_constants(decoded: &[(OpCode, usize)], constants: &[Value]) {
+pub(super) fn check_constants(decoded: &[(OpCode, usize)], constants: &[Value]) {
     for (opcode, _) in decoded {
         match opcode {
             OpCode::Constant { key } | OpCode::Closure { fn_key: key, upvals: _ } => {
@@ -304,7 +308,7 @@ fn check_stack(decoded: &[(OpCode, usize)], params: u8) -> usize {
 ///
 /// All upvalue accesses are within the provided bound. And all closure
 /// constructions have matching number of upvalues to the referenced Function.
-fn check_upvalues(decoded: &[(OpCode, usize)], constants: &[Value], upvalues: u8) {
+pub(super) fn check_upvalues(decoded: &[(OpCode, usize)], constants: &[Value], upvalues: u8) {
     for (opcode, _) in decoded {
         match opcode {
             OpCode::GetUpvalue { slot } => {

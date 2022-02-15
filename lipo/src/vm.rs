@@ -2,7 +2,7 @@ use tracing::{debug, trace};
 
 use crate::builtins::{Closure, Float, Function, Name, NativeFunction, Record, String, Tuple};
 use crate::chunk::Chunk;
-use crate::compiler::constant::ConstCell;
+// use crate::compiler::constant::ConstCell;
 use crate::opcode::OpCode;
 use crate::{Alloc, ObjectRef, Trace, Value};
 
@@ -103,10 +103,7 @@ impl<'a, 'alloc> VM<'a, 'alloc> {
 
     fn get_constant(&self, key: u16) -> Value<'alloc> {
         match self.chunk().get_constant(key) {
-            Some(constant) => match constant.downcast::<ConstCell>() {
-                Some(cell) => cell.get().unwrap(),
-                None => constant,
-            },
+            Some(constant) => constant,
             None => {
                 // SAFETY Chunk is checked when the VM is constructed, all constant references
                 // must be valid.

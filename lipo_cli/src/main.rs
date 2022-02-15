@@ -42,7 +42,7 @@ fn pretty_print_bytecode<'alloc>(fun: ObjectRef<'alloc, builtins::Function<'allo
         printed: &mut HashSet<*const builtins::Function<'alloc>>,
     ) {
         eprintln!("{} = {:?}", fun.name, fun.chunk);
-        for constant in fun.chunk.constants() {
+        for constant in fun.chunk.constants().unwrap() {
             if let Some(fun) = constant.downcast::<builtins::Function>() {
                 if printed.insert(&*fun as *const _) {
                     recur(fun, printed);

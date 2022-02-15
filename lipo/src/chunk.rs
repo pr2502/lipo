@@ -1,21 +1,18 @@
 use std::assert_matches::assert_matches;
-use std::collections::hash_map::Entry;
 use std::convert::TryInto;
 use std::fmt::{self, Debug};
 use std::hash::Hash;
 use std::iter;
-
-use fxhash::FxHashMap as HashMap;
+use std::lazy::SyncOnceCell;
 
 use crate::builtins::String;
-use crate::compiler::constant::ConstCell;
+use crate::compiler::const_eval::ConstId;
 use crate::opcode::OpCode;
 use crate::span::FreeSpan;
 use crate::{ObjectRef, Trace, Value};
 
 
 /// Bytecode Chunk
-#[derive(Trace)]
 pub struct Chunk<'alloc> {
     /// Packed bytecode
     code: Box<[u8]>,
@@ -23,7 +20,10 @@ pub struct Chunk<'alloc> {
     /// Constant pool
     ///
     /// Chunk may contain up to `u16::MAX` unique constants.
-    constants: Box<[Value<'alloc>]>,
+    constants: SyncOnceCell<Box<[Value<'alloc>]>>,
+
+    /// Unresolved constant promises
+    constant_promises: Box<[ConstId]>,
 
     /// Maximum required stack size for temporaries
     ///
@@ -46,6 +46,16 @@ pub struct Chunk<'alloc> {
 
     /// Origin span for each opcode
     spans: Box<[FreeSpan]>,
+}
+
+// SAFETY we have marked all 'alloc fields
+unsafe impl<'alloc> Trace for Chunk<'alloc> {
+    fn mark(&self) {
+        if let Some(constants) = self.constants.get() {
+            constants.iter().for_each(Trace::mark);
+        }
+        self.source.mark();
+    }
 }
 
 impl<'alloc> Chunk<'alloc> {
@@ -74,11 +84,17 @@ impl<'alloc> Chunk<'alloc> {
     }
 
     pub fn get_constant(&self, key: u16) -> Option<Value<'alloc>> {
-        self.constants.get(usize::from(key)).copied()
+        // TODO move the logic to VM and cache the pointer so we don't have to go
+        // through the atomic every time
+        let constants = self.constants()?;
+        constants.get(usize::from(key)).copied()
     }
 
-    pub fn constants(&self) -> &[Value<'alloc>] {
-        &self.constants
+    pub fn constants(&self) -> Option<&[Value<'alloc>]> {
+        match self.constants.get() {
+            Some(constants) => Some(&*constants),
+            None => None,
+        }
     }
 }
 
@@ -94,9 +110,10 @@ impl<'alloc> Debug for Chunk<'alloc> {
         writeln!(f, "    params: {}", self.params)?;
         writeln!(f, "    upvalues: {}", self.upvalues)?;
 
-        if !self.constants.is_empty() {
+        let constants = self.constants().unwrap_or(&[]);
+        if !constants.is_empty() {
             writeln!(f, "    constants:")?;
-            for (index, val) in self.constants.iter().enumerate() {
+            for (index, val) in constants.iter().enumerate() {
                 writeln!(f, "    {:>4}  {:?}", index, val)?;
             }
             writeln!(f)?;
@@ -155,10 +172,7 @@ pub struct ChunkBuf<'alloc> {
     code: Vec<u8>,
 
     /// Constant pool
-    constants: Vec<Value<'alloc>>,
-
-    /// Deduplicating map for constant pool
-    constant_hash: HashMap<DedupValue<'alloc>, u16>,
+    constants: Vec<ConstId>,
 
     /// Function parameters (initial stack size without callee)
     params: u8,
@@ -178,7 +192,7 @@ impl<'alloc> ChunkBuf<'alloc> {
         ChunkBuf {
             code: Vec::default(),
             constants: Vec::default(),
-            constant_hash: HashMap::default(),
+            // constant_hash: HashMap::default(),
             params,
             upvalues: 0,
             source,
@@ -188,6 +202,7 @@ impl<'alloc> ChunkBuf<'alloc> {
 }
 
 mod check;
+mod constants;
 
 
 #[derive(Debug)]
@@ -289,25 +304,11 @@ impl<'alloc> ChunkBuf<'alloc> {
         self.emit(OpCode::Loop { offset }, span);
     }
 
-    pub fn insert_constant(&mut self, value: Value<'alloc>) -> u16 {
-        // Don't try to deduplicate ConstCell, we don't have the Value yet
-        if value.is::<ConstCell>() {
-            let key = self.constants.len();
-            let key = key.try_into().expect("constant pool size limit reached");
-            self.constants.push(value);
-            return key;
-        }
-
-        match self.constant_hash.entry(DedupValue(value)) {
-            Entry::Vacant(e) => {
-                let key = self.constants.len();
-                let key = key.try_into().expect("constant pool size limit reached");
-                self.constants.push(value);
-                e.insert(key);
-                key
-            },
-            Entry::Occupied(e) => *e.get(),
-        }
+    pub fn insert_constant(&mut self, promise: ConstId) -> u16 {
+        let key = self.constants.len();
+        let key = key.try_into().expect("constant pool size limit reached");
+        self.constants.push(promise);
+        return key;
     }
 }
 

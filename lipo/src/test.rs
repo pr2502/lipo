@@ -649,6 +649,17 @@ run! {
 }
 
 run! {
+    fn_capture_const,
+    "
+        const a = 1;
+        fn b() { a }
+
+        assert b() == 1;
+    ",
+    Ok(_)
+}
+
+run! {
     #[ignore = "type check operator not yet implemented"]
     cons_list,
     r#"

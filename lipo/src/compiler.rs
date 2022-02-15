@@ -1,5 +1,6 @@
 use crate::builtins::{Float, Function, String};
 use crate::chunk::{ChunkBuf, LoopPoint, PatchPlace};
+use crate::fmt::SourceDebug;
 use crate::lexer::T;
 use crate::name::Name;
 use crate::opcode::OpCode;
@@ -8,14 +9,10 @@ use crate::span::{FreeSpan, Spanned};
 use crate::value::Value;
 use crate::{Alloc, ObjectRef};
 
-
-pub mod constant;
-
-use constant::ConstCell;
-
+pub mod const_eval;
+use const_eval::{ConstEval, ConstId};
 
 pub mod error;
-
 use error::kind::*;
 use error::{CompilerError, Error};
 
@@ -30,12 +27,14 @@ const MAX_RECORD_ENTRIES: usize = u8::MAX as usize;
 
 struct Emitter<'a, 'alloc> {
     alloc: &'a Alloc<'a, 'alloc>,
+    const_eval: ConstEval<'alloc>,
     source: ObjectRef<'alloc, String>,
     fn_stack: Vec<FnScope<'alloc>>,
     errors: Vec<CompilerError>,
 }
 
 struct FnScope<'alloc> {
+    id: ConstId,
     name: Name<'alloc>,
     fndef_span: FreeSpan,
     chunk: ChunkBuf<'alloc>,
@@ -64,7 +63,7 @@ struct Local<'alloc> {
 struct Const<'alloc> {
     name: Name<'alloc>,
     bind_span: FreeSpan,
-    const_cell: ObjectRef<'alloc, ConstCell<'alloc>>,
+    id: ConstId,
     const_key: u16,
 }
 
@@ -91,13 +90,16 @@ pub fn compile<'alloc>(
 ) -> Result<ObjectRef<'alloc, Function<'alloc>>, Vec<CompilerError>> {
     let mut emitter = Emitter {
         alloc,
+        const_eval: ConstEval::new(),
         source: ast.source,
         fn_stack: Vec::new(),
         errors: Vec::new(),
     };
     let script_name = emitter.intern_string("<script>");
+    let id = emitter.const_eval.add_const(script_name);
 
     emitter.fn_stack.push(FnScope {
+        id,
         name: script_name,
         fndef_span: FreeSpan::zero(),
         chunk: ChunkBuf::new(emitter.source, 0),
@@ -119,7 +121,14 @@ pub fn compile<'alloc>(
         return Err(emitter.errors);
     }
 
-    Ok(Function::new(script.chunk.check(), script_name, alloc))
+    emitter.const_eval.print();
+    // TODO error handling
+    emitter.const_eval.resolve_all();
+
+    let chunk = script.chunk.check();
+    chunk.resolve_constants(&emitter.const_eval);
+
+    Ok(Function::new(chunk, script_name, alloc))
 }
 
 impl<'alloc> Emitter<'_, 'alloc> {
@@ -151,8 +160,8 @@ impl<'alloc> Emitter<'_, 'alloc> {
         self.fn_scope_mut().chunk.emit_loop(loop_point, span);
     }
 
-    fn insert_constant(&mut self, value: Value<'alloc>) -> u16 {
-        self.fn_scope_mut().chunk.insert_constant(value)
+    fn insert_constant(&mut self, promise: ConstId) -> u16 {
+        self.fn_scope_mut().chunk.insert_constant(promise)
     }
 
     fn intern_token(&self, name_tok: ast::Name) -> Name<'alloc> {
@@ -225,15 +234,13 @@ impl<'alloc> Emitter<'_, 'alloc> {
             });
         }
         // Insert placeholder constant to obtain a stable key
-        let const_cell = ConstCell::new(self.alloc);
-        let const_key = self
-            .fn_scope_mut()
-            .chunk
-            .insert_constant(Value::from(const_cell));
+        let id = self.const_eval.add_const(name);
+        let const_key = self.fn_scope_mut().chunk.insert_constant(id);
         self.fn_scope_mut().block_mut().consts.push(Const {
             name,
             bind_span: span,
-            const_cell,
+            id,
+            // const_cell,
             const_key,
         });
     }
@@ -284,12 +291,14 @@ impl<'alloc> Emitter<'_, 'alloc> {
             .rev()
             .skip(1)
             .find_map(|fn_scope| fn_scope.find_const(name))?;
-        let const_key = self
-            .fn_scope_mut()
-            .chunk
-            .insert_constant(Value::from(outer_const.const_cell));
+        let const_key = self.fn_scope_mut().chunk.insert_constant(outer_const.id);
         let local_const = Const { const_key, ..outer_const };
         self.fn_scope_mut().blocks[0].consts.push(local_const);
+
+        // we've looked up a const outside a fn_item function body
+        self.const_eval
+            .dependency(self.fn_scope().id, outer_const.id);
+
         Some(local_const)
     }
 
@@ -389,10 +398,13 @@ impl<'alloc> Emitter<'_, 'alloc> {
 
 impl<'alloc> Emitter<'_, 'alloc> {
     fn fn_item(&mut self, fn_item: &FnItem) {
+        dbg!(fn_item.wrap(&self.source));
         let name = self.intern_token(fn_item.name);
         // If the function has too many parameters we'll emit a specific error, the `0`
         // is a dummy value which will get discarded with the chunk.
         let params = fn_item.parameters.items.len().try_into().unwrap_or(0);
+
+        let Const { id, .. } = self.resolve_const(name).unwrap();
 
         // Reference to callee in the 0th stack slot
         let recur = Local {
@@ -401,6 +413,7 @@ impl<'alloc> Emitter<'_, 'alloc> {
             mutable: false,
         };
         self.fn_stack.push(FnScope {
+            id,
             name,
             fndef_span: fn_item.span(),
             chunk: ChunkBuf::new(self.source, params),
@@ -435,16 +448,16 @@ impl<'alloc> Emitter<'_, 'alloc> {
             fn_scope.name,
             self.alloc,
         ));
-        let Const { const_cell, .. } = self.resolve_const(name).unwrap();
-        const_cell.set(function).unwrap();
+        self.const_eval.set_const_value(id, function);
     }
 
     fn const_item(&mut self, const_item: &ConstItem) {
         let name = self.intern_token(const_item.name);
-        let Const { const_cell, .. } = self.resolve_const(name).unwrap();
-        if let Some(value) = self.const_expr(&const_item.expr) {
-            const_cell.set(value).unwrap();
-        }
+        let Const { id: _, .. } = self.resolve_const(name).unwrap();
+        // TODO we need to provide the value (code in this case?) to ConstEval
+        // if let Some(value) = self.const_expr(&const_item.expr) {
+        //     const_cell.set(value).unwrap();
+        // }
     }
 
     fn type_item(&mut self, type_item: &TypeItem) {
@@ -452,10 +465,13 @@ impl<'alloc> Emitter<'_, 'alloc> {
             todo!("type function"); // impl similar to fn_item
         } else {
             let name = self.intern_token(type_item.name);
-            let Const { const_cell, .. } = self.resolve_const(name).unwrap();
-            if let Some(value) = self.const_expr(&type_item.expr) {
-                const_cell.set(value).unwrap();
-            }
+            let Const { id: _, .. } = self.resolve_const(name).unwrap();
+            // TODO we need to provide the value (code in this case?) to
+            // ConstEval
+            //
+            // if let Some(value) = self.const_expr(&type_item.expr) {
+            //     const_cell.set(value).unwrap();
+            // }
         }
     }
 
@@ -692,7 +708,9 @@ impl<'alloc> Emitter<'_, 'alloc> {
                 Expression::Primary(PrimaryExpr::Name(name_tok)) => {
                     let name = self.intern_token(*name_tok);
                     let value = Value::from(name);
-                    let name_key = self.insert_constant(value);
+
+                    let id = self.const_eval.add_const_value(name, value);
+                    let name_key = self.insert_constant(id);
 
                     let span = FreeSpan::join(binary_expr.operator.span, binary_expr.rhs.span());
                     self.emit(OpCode::GetRecord { name_key }, span);
@@ -874,7 +892,14 @@ impl<'alloc> Emitter<'_, 'alloc> {
 
         // Emit record keys
         for (name, entry) in entries.iter() {
-            let key = self.insert_constant(Value::from(*name));
+            let id = self
+                .const_eval
+                .add_const_value(self.intern_string(""), Value::from(*name));
+            // NOTE maybe worth splitting consts into "trivial consts" for which values are
+            // known immediately and are only used by the code that's being
+            // emitted currently and "user consts" which are generated with
+            // const_item, type_item, fn_item, fn_expr, ...
+            let key = self.insert_constant(id);
             self.emit(OpCode::Constant { key }, entry.name.span);
         }
 
@@ -933,7 +958,10 @@ impl<'alloc> Emitter<'_, 'alloc> {
             bind_span: FreeSpan::zero(),
             mutable: false,
         };
+        let id = self.const_eval.add_const(name);
+        self.const_eval.dependency(self.fn_scope().id, id);
         self.fn_stack.push(FnScope {
+            id,
             name,
             fndef_span: fn_expr.span(),
             chunk: ChunkBuf::new(self.source, params),
@@ -976,7 +1004,8 @@ impl<'alloc> Emitter<'_, 'alloc> {
         let mut chunk = function.chunk;
         chunk.upvalues = upvals;
         let function = Value::from(Function::new(chunk.check(), function.name, self.alloc));
-        let fn_key = self.insert_constant(function);
+        let id = self.const_eval.add_const_value(name, function);
+        let fn_key = self.insert_constant(id);
         self.emit(OpCode::Closure { fn_key, upvals }, fn_expr.span());
     }
 
@@ -1041,7 +1070,10 @@ impl<'alloc> Emitter<'_, 'alloc> {
     fn string_frag_literal(&mut self, unescaped: &str, span: FreeSpan) {
         let string = String::new(unescaped, self.alloc);
         let value = Value::from(string);
-        let key = self.insert_constant(value);
+        let id = self
+            .const_eval
+            .add_const_value(self.intern_string(""), value);
+        let key = self.insert_constant(id);
         self.emit(OpCode::Constant { key }, span);
     }
 
@@ -1077,7 +1109,10 @@ impl<'alloc> Emitter<'_, 'alloc> {
         match slice.parse::<i32>() {
             Ok(int) => {
                 let value = Value::from(int);
-                let key = self.insert_constant(value);
+                let id = self
+                    .const_eval
+                    .add_const_value(self.intern_string(""), value);
+                let key = self.insert_constant(id);
                 self.emit(OpCode::Constant { key }, span);
             },
             Err(cause) => {
@@ -1091,8 +1126,9 @@ impl<'alloc> Emitter<'_, 'alloc> {
         match slice.parse::<f64>() {
             Ok(float) => {
                 let float = Float::new(float, self.alloc).expect("impossible number literal");
-                let value = Value::from(float);
-                let key = self.insert_constant(value);
+                let _value = Value::from(float);
+                let id = self.const_eval.add_const(self.intern_string(""));
+                let key = self.insert_constant(id);
                 self.emit(OpCode::Constant { key }, span);
             },
             Err(cause) => {
