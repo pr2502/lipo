@@ -16,7 +16,7 @@ pub struct ConstCell<'alloc> {
 const NONE: u64 = 0;
 
 impl<'alloc> ConstCell<'alloc> {
-    pub fn new(alloc: &'alloc Alloc) -> ObjectRef<'alloc, ConstCell<'alloc>> {
+    pub fn new(alloc: &Alloc<'_, 'alloc>) -> ObjectRef<'alloc, ConstCell<'alloc>> {
         alloc.alloc(ConstCell {
             _alloc: PhantomData,
             cell: AtomicU64::new(NONE),

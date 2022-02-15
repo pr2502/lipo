@@ -16,11 +16,14 @@ pub struct String {
 }
 
 impl String {
-    pub fn new<'alloc>(string: &str, alloc: &'alloc Alloc) -> ObjectRef<'alloc, String> {
+    pub fn new<'alloc>(string: &str, alloc: &Alloc<'_, 'alloc>) -> ObjectRef<'alloc, String> {
         String::new_owned(string.into(), alloc)
     }
 
-    pub fn new_owned<'alloc>(chars: Box<str>, alloc: &'alloc Alloc) -> ObjectRef<'alloc, String> {
+    pub fn new_owned<'alloc>(
+        chars: Box<str>,
+        alloc: &Alloc<'_, 'alloc>,
+    ) -> ObjectRef<'alloc, String> {
         let hash = fxhash::hash(chars.as_bytes());
         alloc.alloc(String { hash, chars })
     }

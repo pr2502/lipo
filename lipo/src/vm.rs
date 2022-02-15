@@ -13,8 +13,8 @@ use error::kind::*;
 use error::VmError;
 
 
-pub struct VM<'alloc> {
-    alloc: &'alloc Alloc,
+pub struct VM<'a, 'alloc> {
+    alloc: Alloc<'a, 'alloc>,
     call_stack: Vec<Frame<'alloc>>,
     stack: Vec<Value<'alloc>>,
 
@@ -32,8 +32,11 @@ struct Frame<'alloc> {
     stack_offset: usize,
 }
 
-impl<'alloc> VM<'alloc> {
-    pub fn new(function: ObjectRef<'alloc, Function<'alloc>>, alloc: &'alloc Alloc) -> VM<'alloc> {
+impl<'a, 'alloc> VM<'a, 'alloc> {
+    pub fn new(
+        function: ObjectRef<'alloc, Function<'alloc>>,
+        alloc: &'a Alloc<'a, 'alloc>,
+    ) -> VM<'a, 'alloc> {
         let frame = Frame {
             function,
             closure: None,
@@ -45,7 +48,7 @@ impl<'alloc> VM<'alloc> {
             ip: frame.ip,
             stack_offset: frame.stack_offset,
 
-            alloc,
+            alloc: alloc.nested(),
             call_stack: Vec::from([frame]),
             stack: Vec::with_capacity(function.chunk.max_stack()),
         }
@@ -384,7 +387,7 @@ impl<'alloc> VM<'alloc> {
             self.push(Value::from(lhs + rhs));
             Ok(())
         } else if let (Some(lhs), Some(rhs)) = (lhs.downcast::<Float>(), rhs.downcast::<Float>()) {
-            let Some(result) = Float::new(lhs.inner() + rhs.inner(), self.alloc) else {
+            let Some(result) = Float::new(lhs.inner() + rhs.inner(), &self.alloc) else {
                 return Err(VmError::new(MathError {
                     span: self.chunk().span(self.offset() - OpCode::Add.len()),
                     msg: "addition resulted in a NaN",
@@ -419,7 +422,7 @@ impl<'alloc> VM<'alloc> {
             }
         }
 
-        let value = Value::from(String::new_owned(buffer.into_boxed_str(), self.alloc));
+        let value = Value::from(String::new_owned(buffer.into_boxed_str(), &self.alloc));
         self.push(value);
         Ok(())
     }
@@ -431,7 +434,7 @@ impl<'alloc> VM<'alloc> {
             self.push(Value::from(lhs - rhs));
             Ok(())
         } else if let (Some(lhs), Some(rhs)) = (lhs.downcast::<Float>(), rhs.downcast::<Float>()) {
-            let Some(result) = Float::new(lhs.inner() - rhs.inner(), self.alloc) else {
+            let Some(result) = Float::new(lhs.inner() - rhs.inner(), &self.alloc) else {
                 return Err(VmError::new(MathError {
                     span: self.chunk().span(self.offset() - OpCode::Subtract.len()),
                     msg: "subtraction resulted in a NaN",
@@ -454,7 +457,7 @@ impl<'alloc> VM<'alloc> {
             self.push(Value::from(lhs * rhs));
             Ok(())
         } else if let (Some(lhs), Some(rhs)) = (lhs.downcast::<Float>(), rhs.downcast::<Float>()) {
-            let Some(result) = Float::new(lhs.inner() * rhs.inner(), self.alloc) else {
+            let Some(result) = Float::new(lhs.inner() * rhs.inner(), &self.alloc) else {
                 return Err(VmError::new(MathError {
                     span: self.chunk().span(self.offset() - OpCode::Multiply.len()),
                     msg: "multiplication resulted in a NaN",
@@ -477,7 +480,7 @@ impl<'alloc> VM<'alloc> {
             self.push(Value::from(lhs / rhs));
             Ok(())
         } else if let (Some(lhs), Some(rhs)) = (lhs.downcast::<Float>(), rhs.downcast::<Float>()) {
-            let Some(result) = Float::new(lhs.inner() / rhs.inner(), self.alloc) else {
+            let Some(result) = Float::new(lhs.inner() / rhs.inner(), &self.alloc) else {
                 return Err(VmError::new(MathError {
                     span: self.chunk().span(self.offset() - OpCode::Divide.len()),
                     msg: "division resulted in a NaN",
@@ -513,7 +516,7 @@ impl<'alloc> VM<'alloc> {
             self.push(value);
             Ok(())
         } else if let Some(f) = value.downcast::<Float>() {
-            let value = Value::from(Float::new(-f.inner(), self.alloc).unwrap());
+            let value = Value::from(Float::new(-f.inner(), &self.alloc).unwrap());
             self.push(value);
             Ok(())
         } else {
@@ -532,7 +535,7 @@ impl<'alloc> VM<'alloc> {
             debug_unreachable!("BUG: VM tried to access stack below 0")
         };
         let items = self.stack.drain(from..).collect();
-        let value = Value::from(Tuple::new(items, self.alloc));
+        let value = Value::from(Tuple::new(items, &self.alloc));
         self.push(value);
     }
 
@@ -545,7 +548,7 @@ impl<'alloc> VM<'alloc> {
         };
         // SAFETY Chunk is checked when VM is constructed.
         // - TODO this check is not yet implemented, but we panic in debug mode
-        let record = unsafe { Record::new_from_sorted(&self.stack[from..], self.alloc) };
+        let record = unsafe { Record::new_from_sorted(&self.stack[from..], &self.alloc) };
         let value = Value::from(record);
         self.stack.truncate(from);
         self.push(value);
@@ -776,7 +779,7 @@ impl<'alloc> VM<'alloc> {
             debug_unreachable!("BUG: OpCode::Closure referenced a constant that was not a Function");
         };
         let upvalues = self.stack.drain((self.stack.len() - upvals)..).collect();
-        let closure = Value::from(Closure::new(function, upvalues, self.alloc));
+        let closure = Value::from(Closure::new(function, upvalues, &self.alloc));
         self.push(closure);
     }
 

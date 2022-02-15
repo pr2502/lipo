@@ -15,7 +15,7 @@ pub struct Record<'alloc> {
 impl<'alloc> Record<'alloc> {
     pub fn new(
         items: Vec<(Name<'alloc>, Value<'alloc>)>,
-        alloc: &'alloc Alloc,
+        alloc: &Alloc<'_, 'alloc>,
     ) -> ObjectRef<'alloc, Record<'alloc>> {
         let mut items = items;
         items.sort_unstable_by_key(|(k, _v)| *k);
@@ -53,7 +53,7 @@ impl<'alloc> Record<'alloc> {
     /// without `debug_assertions`.
     pub(crate) unsafe fn new_from_sorted(
         keys_vals: &[Value<'alloc>],
-        alloc: &'alloc Alloc,
+        alloc: &Alloc<'_, 'alloc>,
     ) -> ObjectRef<'alloc, Record<'alloc>> {
         let n = keys_vals.len() / 2;
 

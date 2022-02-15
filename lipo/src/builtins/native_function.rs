@@ -20,7 +20,7 @@ impl NativeFunction {
     pub fn new<'alloc>(
         name: &'static str,
         fn_impl: for<'call_alloc> fn(Args<'_, 'call_alloc>) -> Result<'call_alloc>,
-        alloc: &'alloc Alloc,
+        alloc: &Alloc<'_, 'alloc>,
     ) -> ObjectRef<'alloc, NativeFunction> {
         alloc.alloc(NativeFunction { name, fn_impl })
     }
@@ -42,7 +42,7 @@ impl NativeFunction {
 #[derive(Object, Trace)]
 pub struct NativeError<'alloc> {
     pub(crate) msg: String,
-    _todo: PhantomData<&'alloc ()>, // some objects in the future maybe
+    _todo: PhantomData<Value<'alloc>>, // some objects in the future maybe
 }
 
 impl<'alloc> Debug for NativeError<'alloc> {

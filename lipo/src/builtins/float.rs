@@ -24,7 +24,7 @@ pub struct Float {
 
 impl Float {
     /// `-0` and subnormals will be coerced into `+0`, NaN returns `None`
-    pub fn new<'alloc>(float: f64, alloc: &'alloc Alloc) -> Option<ObjectRef<'alloc, Float>> {
+    pub fn new<'alloc>(float: f64, alloc: &Alloc<'_, 'alloc>) -> Option<ObjectRef<'alloc, Float>> {
         use std::num::FpCategory;
 
         match float.classify() {

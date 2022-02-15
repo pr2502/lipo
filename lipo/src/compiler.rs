@@ -28,8 +28,8 @@ const MAX_CONSTS: usize = u16::MAX as usize;
 const MAX_TUPLE_ITEMS: usize = u8::MAX as usize;
 const MAX_RECORD_ENTRIES: usize = u8::MAX as usize;
 
-struct Emitter<'alloc> {
-    alloc: &'alloc Alloc,
+struct Emitter<'a, 'alloc> {
+    alloc: &'a Alloc<'a, 'alloc>,
     source: ObjectRef<'alloc, String>,
     fn_stack: Vec<FnScope<'alloc>>,
     errors: Vec<CompilerError>,
@@ -87,7 +87,7 @@ enum UpvalueRef {
 
 pub fn compile<'alloc>(
     ast: Ast<'alloc>,
-    alloc: &'alloc Alloc,
+    alloc: &Alloc<'_, 'alloc>,
 ) -> Result<ObjectRef<'alloc, Function<'alloc>>, Vec<CompilerError>> {
     let mut emitter = Emitter {
         alloc,
@@ -122,7 +122,7 @@ pub fn compile<'alloc>(
     Ok(Function::new(script.chunk.check(), script_name, alloc))
 }
 
-impl<'alloc> Emitter<'alloc> {
+impl<'alloc> Emitter<'_, 'alloc> {
     fn error(&mut self, err: impl Error) {
         self.errors.push(CompilerError::new(err));
     }
@@ -199,7 +199,7 @@ impl<'alloc> FnScope<'alloc> {
     }
 }
 
-impl<'alloc> Emitter<'alloc> {
+impl<'alloc> Emitter<'_, 'alloc> {
     fn add_const(&mut self, name: Name<'alloc>, span: FreeSpan) {
         let n_consts = self
             .fn_scope()
@@ -387,7 +387,7 @@ impl<'alloc> Emitter<'alloc> {
     }
 }
 
-impl<'alloc> Emitter<'alloc> {
+impl<'alloc> Emitter<'_, 'alloc> {
     fn fn_item(&mut self, fn_item: &FnItem) {
         let name = self.intern_token(fn_item.name);
         // If the function has too many parameters we'll emit a specific error, the `0`

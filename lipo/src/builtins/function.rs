@@ -15,7 +15,7 @@ impl<'alloc> Function<'alloc> {
     pub fn new(
         chunk: Chunk<'alloc>,
         name: Name<'alloc>,
-        alloc: &'alloc Alloc,
+        alloc: &Alloc<'_, 'alloc>,
     ) -> ObjectRef<'alloc, Function<'alloc>> {
         alloc.alloc(Function { chunk, name })
     }
@@ -38,7 +38,7 @@ impl<'alloc> Closure<'alloc> {
     pub fn new(
         function: ObjectRef<'alloc, Function<'alloc>>,
         upvalues: Box<[Value<'alloc>]>,
-        alloc: &'alloc Alloc,
+        alloc: &Alloc<'_, 'alloc>,
     ) -> ObjectRef<'alloc, Closure<'alloc>> {
         alloc.alloc(Closure { function, upvalues })
     }

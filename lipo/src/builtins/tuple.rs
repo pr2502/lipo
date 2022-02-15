@@ -12,7 +12,7 @@ pub struct Tuple<'alloc> {
 impl<'alloc> Tuple<'alloc> {
     pub fn new(
         items: Box<[Value<'alloc>]>,
-        alloc: &'alloc Alloc,
+        alloc: &Alloc<'_, 'alloc>,
     ) -> ObjectRef<'alloc, Tuple<'alloc>> {
         alloc.alloc(Tuple { items })
     }

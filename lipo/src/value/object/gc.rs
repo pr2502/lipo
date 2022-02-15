@@ -8,6 +8,7 @@ use tracing::info;
 
 use super::{Object, ObjectRef, ObjectRefAny, ObjectVtable, ObjectWrap};
 use crate::name::{Name, NameInterner};
+use crate::util::Invariant;
 use crate::value::{Value, ValueKind};
 use crate::Primitive;
 
@@ -34,15 +35,52 @@ impl ObjectHeader {
 }
 
 
-pub struct Alloc {
+/// Alloc keeps two lifetimes.
+///
+/// One is the `'root` allocator lifetime. This is the lifetimes all allocated
+/// `Object`s will live for.
+///
+/// The second is `'parent` and it refers to the lifetime of the parent `Alloc`
+/// for nested `Alloc`s.
+///
+/// ## Allocator nesting
+/// Because garbage collection requries knowledge of all root objects this would
+/// prevent anyone except for the owner of the root allocator from calling
+/// `sweep` safely. For this purposes systems like the [`VM`](crate::VM) will
+/// create their own local allocator that will be used for all objects allocated
+/// within the VM and only call sweep on this subset of objects that were
+/// allocated within it.
+///
+/// Because `sweep` requires `&mut self` it's only possible to call it on the
+/// leaf Allocator preventing issues with objects allocated in child allocators
+/// pointing back to a parent allocator which is getting sweeped. This can
+/// however become a problem with interior mutability but all (for now) builtin
+/// lipo types are immutable. Further workaround (like migrating objects to
+/// parent allocators on insert) might be required to make even interior
+/// mutability safe.
+pub struct Alloc<'parent, 'root> {
+    root: PhantomData<Invariant<'root>>,
+    parent: Option<&'parent Alloc<'parent, 'root>>,
     alloc_list: AtomicPtr<ObjectHeader>,
     name_interner: SyncOnceCell<Mutex<NameInterner>>,
 }
 
-impl Alloc {
-    /// Create a new empty `Alloc`.
-    pub const fn new() -> Alloc {
+impl<'parent, 'root> Alloc<'parent, 'root> {
+    /// Create a new root `Alloc`.
+    pub const fn new() -> Alloc<'static, 'root> {
         Alloc {
+            root: PhantomData,
+            parent: None,
+            alloc_list: AtomicPtr::new(ptr::null_mut()),
+            name_interner: SyncOnceCell::new(),
+        }
+    }
+
+    /// Create a new nested `Alloc`.
+    pub const fn nested(&'parent self) -> Alloc<'parent, 'root> {
+        Alloc {
+            root: self.root,
+            parent: Some(self),
             alloc_list: AtomicPtr::new(ptr::null_mut()),
             name_interner: SyncOnceCell::new(),
         }
@@ -112,9 +150,9 @@ impl Alloc {
     }
 }
 
-impl Alloc {
+impl<'parent, 'root> Alloc<'parent, 'root> {
     /// Allocate new object and track it
-    pub fn alloc<'alloc, O: Object>(&'alloc self, inner: O) -> ObjectRef<'alloc, O> {
+    pub fn alloc<O: Object>(&self, inner: O) -> ObjectRef<'root, O> {
         let wrap = Box::new(ObjectWrap {
             header: ObjectHeader {
                 vtable: O::__vtable(),
@@ -152,7 +190,7 @@ impl Alloc {
     /// Every reachable object must have been marked prior to calling this
     /// function. This function will unmark objects as it traverses the heap
     /// so objects have to be re-marked before every call to `sweep`.
-    pub unsafe fn sweep(&self) {
+    pub unsafe fn sweep(&mut self) {
         // Extracts the next field from a `*mut ObjectHeader`
         let header = |ptr: NonNull<ObjectHeader>| {
             // SAFETY must audit uses of the lambda
@@ -218,20 +256,32 @@ impl Alloc {
     }
 }
 
-impl Drop for Alloc {
-    /// Deallocates all objects registered to this `Alloc`
+impl<'parent, 'root> Drop for Alloc<'parent, 'root> {
+    /// Deallocates all objects registered to this `Alloc` if it is the root
+    /// `Alloc`, or moves it's objects into the parent.
     fn drop(&mut self) {
-        for object in self.take_iter() {
-            // SAFETY `Alloc::alloc` maintains a linked list, ptr either points to a valid
-            // object or is null and we checked for null.
-            //
-            // We use 'static lifetime here because we don't have any name for 'self or
-            // similar, this object reference is valid until we drop it here.
-            let object: ObjectRefAny<'static> = unsafe { ObjectRefAny::from_ptr(object) };
+        if let Some(parent) = self.parent {
+            let mut iter = self.take_iter();
+            if let Some(first) = iter.next() {
+                let last = iter.last().unwrap_or(first);
 
-            let ObjectVtable { drop, .. } = object.vtable();
-            // SAFETY Object behind `current` will can never be used again
-            unsafe { drop(object) }
+                // SAFETY reinserting all items from current list into the parent list
+                unsafe { parent.insert_atomic(first.as_ptr(), &last.as_ref().next) }
+            }
+        } else {
+            // root Alloc, we can drop all objects
+            for object in self.take_iter() {
+                // SAFETY `Alloc::alloc` maintains a linked list, ptr either points to a valid
+                // object or is null and we checked for null.
+                //
+                // We use 'static lifetime here because we don't have any name for 'self or
+                // similar, this object reference is valid until we drop it here.
+                let object: ObjectRefAny<'static> = unsafe { ObjectRefAny::from_ptr(object) };
+
+                let ObjectVtable { drop, .. } = object.vtable();
+                // SAFETY Object behind `current` will can never be used again
+                unsafe { drop(object) }
+            }
         }
     }
 }
@@ -281,6 +331,8 @@ unsafe impl<'alloc> Trace for Value<'alloc> {
     }
 }
 
+// SAFETY Primitives don't own any memory and cannot contain any other
+// Values because of memory constraints alone.
 unsafe impl<'alloc, P: Primitive<'alloc>> Trace for P {
     fn mark(&self) {
         // nop
@@ -288,13 +340,18 @@ unsafe impl<'alloc, P: Primitive<'alloc>> Trace for P {
 }
 
 
-impl Alloc {
-    pub(crate) fn intern_name<'alloc>(&'alloc self, string: &str) -> Name<'alloc> {
-        let interner = self.name_interner.get_or_init(Default::default);
-        let mut interner = interner.lock().unwrap();
-        // SAFETY we're shortening the lifetime to the 'alloc lifetime and with that
-        // ensuring that the returned Name won't outlive the Alloc which owns
-        // the NameInterner
-        unsafe { interner.intern(string) }
+impl<'parent, 'root> Alloc<'parent, 'root> {
+    pub(crate) fn intern_name(&self, string: &str) -> Name<'root> {
+        if let Some(parent) = self.parent {
+            // we're not root, request the parent allocator to intern
+            parent.intern_name(string)
+        } else {
+            let interner = self.name_interner.get_or_init(Default::default);
+            let mut interner = interner.lock().unwrap();
+            // SAFETY we're the root Allocator and we're shortening the lifetime to the
+            // 'root lifetime and with that ensuring that the returned Name
+            // won't outlive the Alloc which owns the NameInterner
+            unsafe { interner.intern(string) }
+        }
     }
 }
