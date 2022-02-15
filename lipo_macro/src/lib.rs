@@ -5,7 +5,6 @@ use quote::{quote, quote_spanned};
 use syn::spanned::Spanned;
 use syn::{parse_macro_input, Data, DeriveInput, Error, Fields, Index};
 
-
 fn lipo_crate() -> impl quote::ToTokens {
     if env::var("CARGO_PKG_NAME").unwrap() == "lipo" {
         quote! { crate }
@@ -15,7 +14,6 @@ fn lipo_crate() -> impl quote::ToTokens {
         quote! { ::lipo }
     }
 }
-
 
 /// Derive macro generating an impl of the trait `Object`.
 ///
@@ -83,7 +81,6 @@ pub fn derive_object(input: TokenStream) -> TokenStream {
     TokenStream::from(expanded)
 }
 
-
 /// Derive macro generating an impl of the trait `Object`.
 #[proc_macro_derive(Trace)]
 pub fn derive_trace(input: TokenStream) -> TokenStream {
@@ -130,7 +127,7 @@ fn mark_children(data: &Data) -> proc_macro2::TokenStream {
                 let children = fields.named.iter().map(|f| {
                     let name = &f.ident;
                     quote_spanned! {f.span()=>
-                        #lipo::__derive_trace::MaybeTrace::maybe_mark(&self.#name);
+                        #lipo::__derive_trace::ProxyTrace::proxy_mark(&self.#name);
                     }
                 });
                 quote! { #(#children)* }
@@ -139,7 +136,7 @@ fn mark_children(data: &Data) -> proc_macro2::TokenStream {
                 let children = fields.unnamed.iter().enumerate().map(|(i, f)| {
                     let index = Index::from(i);
                     quote_spanned! {f.span()=>
-                        #lipo::__derive_trace::MaybeTrace::maybe_mark(&self.#index);
+                        #lipo::__derive_trace::ProxyTrace::proxy_mark(&self.#index);
                     }
                 });
                 quote! { #(#children)* }
@@ -149,7 +146,6 @@ fn mark_children(data: &Data) -> proc_macro2::TokenStream {
         Data::Enum(_) | Data::Union(_) => unimplemented!(),
     }
 }
-
 
 mod opcode;
 
