@@ -58,6 +58,44 @@ impl ObjectHeader {
 /// lipo types are immutable. Further workaround (like migrating objects to
 /// parent allocators on insert) might be required to make even interior
 /// mutability safe.
+///
+/// ```rust
+/// # use lipo::{Trace, Alloc, builtins::Float};
+///
+/// let mut root = Alloc::new();
+/// let root_obj = Float::new(1.0, &root).unwrap();
+///
+/// // mark and sweep the root allocator
+/// root_obj.mark();
+/// unsafe { root.sweep() }
+/// assert_eq!(root_obj.inner(), 1.0);
+///
+/// let mut nested = root.nested();
+/// let nested_obj = Float::new(2.0, &nested).unwrap();
+///
+/// // mark and sweep only the nested allocator,
+/// // both objects have to stay alive even though only the object from the
+/// // nested allocator was marked
+/// nested_obj.mark();
+/// unsafe { nested.sweep() }
+/// assert_eq!(root_obj.inner(), 1.0);
+/// assert_eq!(nested_obj.inner(), 2.0);
+///
+/// // when we drop the nested allocator its remaining objects get migrated to
+/// // the parent
+/// drop(nested);
+/// assert_eq!(root_obj.inner(), 1.0);
+/// assert_eq!(nested_obj.inner(), 2.0);
+///
+/// // we can now sweep the parent again (because it's not borrowed by the
+/// // child allocator anymore) but we have to mark both objects for them to
+/// // stay alive
+/// root_obj.mark();
+/// nested_obj.mark();
+/// unsafe { root.sweep() }
+/// assert_eq!(root_obj.inner(), 1.0);
+/// assert_eq!(nested_obj.inner(), 2.0);
+/// ```
 pub struct Alloc<'parent, 'root> {
     root: PhantomData<Invariant<'root>>,
     parent: Option<&'parent Alloc<'parent, 'root>>,
