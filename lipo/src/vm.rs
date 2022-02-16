@@ -2,7 +2,6 @@ use tracing::{debug, trace};
 
 use crate::builtins::{Closure, Float, Function, Name, NativeFunction, Record, String, Tuple};
 use crate::chunk::Chunk;
-// use crate::compiler::constant::ConstCell;
 use crate::opcode::OpCode;
 use crate::{Alloc, ObjectRef, Trace, Value};
 
@@ -157,7 +156,7 @@ impl<'a, 'alloc> VM<'a, 'alloc> {
         u16::from_le_bytes([a, b])
     }
 
-    pub fn run(mut self) -> Result<(), VmError> {
+    pub fn run(mut self) -> Result<Value<'alloc>, VmError> {
         debug!("script = {:?}", &self.chunk());
 
         loop {
@@ -187,8 +186,10 @@ impl<'a, 'alloc> VM<'a, 'alloc> {
                 OpCode::GET_TUPLE => self.op_get_tuple()?,
                 OpCode::GET_RECORD => self.op_get_record()?,
                 OpCode::EQUAL => self.op_equal()?,
+                OpCode::SUBTYPE => todo!("Subtype"),
                 OpCode::GREATER => self.op_greater()?,
                 OpCode::LESS => self.op_less()?,
+                OpCode::TYPE_OR => todo!("TypeOr"),
                 OpCode::ADD => self.op_add()?,
                 OpCode::CONCAT => self.op_concat()?,
                 OpCode::SUBTRACT => self.op_subtract()?,
@@ -207,8 +208,8 @@ impl<'a, 'alloc> VM<'a, 'alloc> {
                 OpCode::CALL => self.op_call()?,
                 OpCode::CLOSURE => self.op_closure(),
                 OpCode::RETURN => {
-                    if self.op_return() {
-                        break Ok(());
+                    if let Some(result) = self.op_return() {
+                        break Ok(result);
                     }
                 },
                 _ => {
@@ -780,8 +781,8 @@ impl<'a, 'alloc> VM<'a, 'alloc> {
         self.push(closure);
     }
 
-    /// Returns true when returning from the top level call frame
-    fn op_return(&mut self) -> bool {
+    /// Returns a Value when the last stack frame is poped
+    fn op_return(&mut self) -> Option<Value<'alloc>> {
         let result = self.pop();
 
         let stack_top = self.stack_offset;
@@ -800,10 +801,16 @@ impl<'a, 'alloc> VM<'a, 'alloc> {
             self.gc();
 
             // Continue in the caller
-            false
+            None
         } else {
-            // Empty call stack, break the interpreter loop
-            true
+            // Perform the last GC cycle. Explicitly mark the Value to be returned and sweep
+            // everything else.
+            result.mark();
+            // SAFETY we've explicitly marked the only Value we're interested in from now on
+            unsafe { self.alloc.sweep() };
+
+            // Empty call stack, break the interpreter loop and return a result
+            Some(result)
         }
     }
 }

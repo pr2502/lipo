@@ -1,6 +1,5 @@
 use crate::builtins::{Float, Function, String};
 use crate::chunk::{ChunkBuf, LoopPoint, PatchPlace};
-use crate::fmt::SourceDebug;
 use crate::lexer::T;
 use crate::name::Name;
 use crate::opcode::OpCode;
@@ -121,10 +120,7 @@ pub fn compile<'alloc>(
         return Err(emitter.errors);
     }
 
-    emitter.const_eval.print();
-    // TODO error handling
-    emitter.const_eval.resolve_all();
-
+    emitter.const_eval.resolve_all(emitter.alloc);
     let chunk = script.chunk.check();
     chunk.resolve_constants(&emitter.const_eval);
 
@@ -398,7 +394,6 @@ impl<'alloc> Emitter<'_, 'alloc> {
 
 impl<'alloc> Emitter<'_, 'alloc> {
     fn fn_item(&mut self, fn_item: &FnItem) {
-        dbg!(fn_item.wrap(&self.source));
         let name = self.intern_token(fn_item.name);
         // If the function has too many parameters we'll emit a specific error, the `0`
         // is a dummy value which will get discarded with the chunk.
@@ -453,69 +448,105 @@ impl<'alloc> Emitter<'_, 'alloc> {
 
     fn const_item(&mut self, const_item: &ConstItem) {
         let name = self.intern_token(const_item.name);
-        let Const { id: _, .. } = self.resolve_const(name).unwrap();
-        // TODO we need to provide the value (code in this case?) to ConstEval
-        // if let Some(value) = self.const_expr(&const_item.expr) {
-        //     const_cell.set(value).unwrap();
-        // }
+        self.const_expr(name, &const_item.expr);
     }
 
     fn type_item(&mut self, type_item: &TypeItem) {
-        if let Some(_parameters) = &type_item.parameters {
-            todo!("type function"); // impl similar to fn_item
+        if let Some(ty_params) = &type_item.parameters {
+            let name = self.intern_token(type_item.name);
+            // If the function has too many parameters we'll emit a specific error, the `0`
+            // is a dummy value which will get discarded with the chunk.
+            let params = ty_params.parameters.items.len().try_into().unwrap_or(0);
+
+            let Const { id, .. } = self.resolve_const(name).unwrap();
+
+            // Same as with fn_expr, because of the calling convention we have to put
+            // something into the first stack slot but we don't want to allow
+            // recursion in type_fns so we'll just insert a dummy symbol that is
+            // not possible to reference from code thanks to its name not being
+            // a valid identitier.
+            let dummy = Local {
+                name: self.intern_string("<type_fn>"),
+                bind_span: FreeSpan::zero(),
+                mutable: false,
+            };
+            self.const_eval.dependency(self.fn_scope().id, id); // FIXME is this a real dependency that we need?
+            self.fn_stack.push(FnScope {
+                id,
+                name,
+                fndef_span: type_item.span(),
+                chunk: ChunkBuf::new(self.source, params),
+                blocks: Vec::from([BlockScope {
+                    locals: Vec::from([dummy]),
+                    consts: Vec::new(),
+                }]),
+                upvalues: Vec::new(),
+                // No upvalues in type_fn
+                closure: false,
+            });
+
+            for (i, &param) in ty_params.parameters.items.iter().enumerate() {
+                if i >= MAX_ARGS {
+                    self.error(TooManyParameters {
+                        extra_param_span: param.span,
+                        fn_params_span: ty_params.parens.span(),
+                        limit: MAX_ARGS,
+                    });
+                }
+                let param_name = self.intern_token(param);
+                // type parameters are always immutable bindings
+                self.add_local(param_name, false, param.span);
+            }
+
+            self.begin_scope();
+            self.expression(&type_item.expr);
+            self.emit(OpCode::Return, type_item.semicolon_tok.span);
+
+            let fn_scope = self.fn_stack.pop().unwrap();
+            let type_fn = Value::from(Function::new(
+                fn_scope.chunk.check(),
+                fn_scope.name,
+                self.alloc,
+            ));
+            self.const_eval.set_const_value(id, type_fn);
         } else {
             let name = self.intern_token(type_item.name);
-            let Const { id: _, .. } = self.resolve_const(name).unwrap();
-            // TODO we need to provide the value (code in this case?) to
-            // ConstEval
-            //
-            // if let Some(value) = self.const_expr(&type_item.expr) {
-            //     const_cell.set(value).unwrap();
-            // }
+            self.const_expr(name, &type_item.expr);
         }
     }
 
-    fn const_expr(&mut self, expr: &Expression) -> Option<Value<'alloc>> {
-        match expr {
-            Expression::Primary(primary_expr) => match primary_expr {
-                PrimaryExpr::True(_) => Some(Value::from(true)),
-                PrimaryExpr::False(_) => Some(Value::from(false)),
-                PrimaryExpr::BinaryNumber(_)
-                | PrimaryExpr::OctalNumber(_)
-                | PrimaryExpr::HexadecimalNumber(_) => {
-                    todo!()
-                },
-                PrimaryExpr::DecimalNumber(DecimalNumber { span }) => {
-                    let slice = span.anchor(&self.source).as_str();
-                    match slice.parse::<i32>() {
-                        Ok(int) => Some(Value::from(int)),
-                        Err(cause) => {
-                            self.error(InvalidInt32Literal { cause, span: *span });
-                            None
-                        },
-                    }
-                },
-                PrimaryExpr::DecimalPointNumber(DecimalPointNumber { span })
-                | PrimaryExpr::ExponentialNumber(ExponentialNumber { span }) => {
-                    let slice = span.anchor(&self.source).as_str();
-                    match slice.parse::<f64>() {
-                        Ok(float) => {
-                            let float =
-                                Float::new(float, self.alloc).expect("impossible number literal");
-                            Some(Value::from(float))
-                        },
-                        Err(cause) => {
-                            self.error(InvalidFloatLiteral { cause, span: *span });
-                            None
-                        },
-                    }
-                },
-                PrimaryExpr::Name(_) => {
-                    todo!()
-                },
-            },
-            _ => todo!(),
-        }
+    fn const_expr(&mut self, name: Name<'alloc>, expr: &Expression) {
+        let Const { id, .. } = self.resolve_const(name).unwrap();
+
+        // Same as with every other function, the first stack slot has to be fixed. We
+        // bind it to a name which makes it inaccessible from code.
+        let dummy = Local {
+            name: self.intern_string("<const_expr>"),
+            bind_span: FreeSpan::zero(),
+            mutable: false,
+        };
+        self.const_eval.dependency(self.fn_scope().id, id); // FIXME we're not sure about the dependency here
+        self.fn_stack.push(FnScope {
+            id,
+            name,
+            fndef_span: expr.span(),
+            chunk: ChunkBuf::new(self.source, 0), // no params for const_expr
+            blocks: Vec::from([BlockScope {
+                locals: Vec::from([dummy]),
+                consts: Vec::new(),
+            }]),
+            upvalues: Vec::new(),
+            // const exprs can only reference other consts
+            closure: false,
+        });
+
+        self.begin_scope();
+        self.expression(expr);
+        self.emit(OpCode::Return, expr.span().shrink_to_hi());
+
+        let fn_scope = self.fn_stack.pop().unwrap();
+        let function = Function::new(fn_scope.chunk.check(), fn_scope.name, self.alloc);
+        self.const_eval.set_const_code(id, function);
     }
 
     fn let_item(&mut self, let_item: &LetItem) {
@@ -959,7 +990,7 @@ impl<'alloc> Emitter<'_, 'alloc> {
             mutable: false,
         };
         let id = self.const_eval.add_const(name);
-        self.const_eval.dependency(self.fn_scope().id, id);
+        self.const_eval.dependency(self.fn_scope().id, id); // FIXME is this a real dependency that we need?
         self.fn_stack.push(FnScope {
             id,
             name,

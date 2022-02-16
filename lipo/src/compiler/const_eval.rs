@@ -1,13 +1,49 @@
 use fxhash::FxHashMap as HashMap;
 use petgraph::graph::{Graph, NodeIndex};
-use petgraph::Directed;
+use petgraph::{algo, Directed};
 
+use crate::builtins::Function;
 use crate::name::Name;
 use crate::value::Value;
+use crate::{Alloc, ObjectRef, VM};
 
+#[rustfmt::skip]
+// TODO we have to differentiate between runtime dependencies and const_eval
+// dependencies. for now all dependencies are considered cons_eval dependencies and mutually
+// recursive functions will fail to compile because of a dependency cycle which doesn't actually
+// exist until runtime (when it's fine).
+//
+// 1. const_eval dependency
+//     ```
+//     const a = ();
+//     const b = a;
+//     ```
+//
+// 2. runtime dependency
+//     ```
+//     const a = ();
+//     fn b() { a }
+//     ```
+//
+// 3. also runtime dependency, equivalent to 2.
+//     ```
+//     const a = ();
+//     const b = fn() a;
+//     ```
+//
+// 4. a runtime dependency promoted to a const_eval dependency
+//     ```
+//     const a = ();
+//     const b = fn() a;
+//     const c = b();
+//     ```
 pub struct ConstEval<'alloc> {
+    /// dependency graph between constants
     graph: Graph<Name<'alloc>, (), Directed, u32>,
+    /// constants which were immediately resolved to a Value or after their code has been evaluated
     resolved: HashMap<ConstId, Value<'alloc>>,
+    /// compiled code that evaluates to a constant
+    code: HashMap<ConstId, ObjectRef<'alloc, Function<'alloc>>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -18,6 +54,7 @@ impl<'alloc> ConstEval<'alloc> {
         ConstEval {
             graph: Graph::new(),
             resolved: HashMap::default(),
+            code: HashMap::default(),
         }
     }
 
@@ -32,7 +69,13 @@ impl<'alloc> ConstEval<'alloc> {
 
     pub fn set_const_value(&mut self, id: ConstId, value: Value<'alloc>) {
         if self.resolved.insert(id, value).is_some() {
-            unreachable!("BUG: Const value resolved multiple times");
+            unreachable!("BUG: Const value sete multiple times");
+        }
+    }
+
+    pub fn set_const_code(&mut self, id: ConstId, code: ObjectRef<'alloc, Function<'alloc>>) {
+        if self.code.insert(id, code).is_some() {
+            unreachable!("BUG: Const code set multiple times");
         }
     }
 
@@ -46,11 +89,28 @@ impl<'alloc> ConstEval<'alloc> {
         self.graph.add_edge(on.0, depends.0, ());
     }
 
-    pub fn resolve_all(&mut self) {
-        // todo
+    pub fn resolve_all(&mut self, alloc: &Alloc<'_, 'alloc>) {
+        self.print_dot();
+
+        let toposort = algo::toposort(&self.graph, None)
+            .expect("const_eval error: dependency cycle in constants detected");
+
+        for id in toposort.into_iter().map(ConstId) {
+            if self.resolved.contains_key(&id) {
+                continue;
+            }
+            let Some(&func) = self.code.get(&id) else {
+                eprintln!("const_eval error: constant {id:?} doesn't have either a value or code associated");
+                continue;
+            };
+            func.chunk.resolve_constants(&*self);
+            let vm = VM::new(func, alloc);
+            let value = vm.run().expect("const_eval error");
+            self.resolved.insert(id, value);
+        }
     }
 
-    pub fn print(&mut self) {
+    fn print_dot(&mut self) {
         use petgraph::dot::{Config, Dot};
 
         let dot = Dot::with_config(&self.graph, &[Config::EdgeNoLabel]);
