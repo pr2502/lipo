@@ -173,13 +173,13 @@ pub struct UnaryExpr {
     pub expr: Box<Expression>,
 }
 
-// BinaryExpr represents the following rules from the Lox grammar:
-// - assignment     : `=`, `::`
-// - logic_or       : `or`, `|`
+// BinaryExpr represents the following rules from the grammar:
+// - assignment     : `=`
+// - logic_or       : `or`
 // - logic_and      : `and`
-// - equality       : `/=`, `==`
+// - equality       : `/=`, `==`, `::`
 // - comparison     : `>`, `>=`, `<`, `<=`
-// - term           : `-`, `+`
+// - term           : `-`, `+`, `|`
 // - factor         : `/`, `*`
 // - call           : `.`
 pub struct BinaryExpr {

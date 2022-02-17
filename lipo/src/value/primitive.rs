@@ -4,6 +4,7 @@ use std::marker::PhantomData;
 use std::num::NonZeroU64;
 
 use super::{repr, TypeTag};
+use crate::builtins::{Ty, Type};
 use crate::name::Name;
 use crate::util::Invariant;
 
@@ -168,7 +169,7 @@ impl<F: Copy, const N: usize> Vtable<F, N> {
 
 struct PrimitiveVtables<const N: usize> {
     _tags: Vtable<TypeTag, N>,
-    _name: Vtable<&'static str, N>,
+    name: Vtable<&'static str, N>,
     debug_fmt: Vtable<fn(PrimitiveAny, &mut fmt::Formatter<'_>) -> fmt::Result, N>,
     eq: Vtable<fn(PrimitiveAny, PrimitiveAny) -> bool, N>,
     hash_code: Vtable<fn(PrimitiveAny) -> usize, N>,
@@ -204,7 +205,7 @@ static VTABLES: PrimitiveVtables<5> = {
             TypeTag::INT32,
         ]),
 
-        _name: Vtable([
+        name: Vtable([
             "[Object]",
             <()>::NAME,
             <bool>::NAME,
@@ -239,6 +240,19 @@ static VTABLES: PrimitiveVtables<5> = {
     };
     VTABLES
 };
+
+impl Debug for TypeTag {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.as_usize() < VTABLES.size() {
+            // SAFETY we checked for overflow
+            let name = unsafe { VTABLES.name.get(*self) };
+            f.write_str(name)
+        } else {
+            let idx = self.as_usize();
+            f.write_fmt(format_args!("UnknownTypeTag({idx})"))
+        }
+    }
+}
 
 fn debug_fmt<'alloc, P: Primitive<'alloc>>(
     this: PrimitiveAny,
@@ -281,5 +295,13 @@ impl<'alloc> PrimitiveAny<'alloc> {
     pub(super) fn hash_code(self) -> usize {
         let hash_code = unsafe { VTABLES.hash_code.get(repr::type_tag(self.repr)) };
         hash_code(self)
+    }
+
+    pub(super) fn is_subtype(self, ty: &Type<'_>) -> bool {
+        match &ty.ty {
+            Ty::Any => true,
+            Ty::Primitive(type_tag) => repr::type_tag(self.repr) == *type_tag,
+            _ => false,
+        }
     }
 }

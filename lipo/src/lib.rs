@@ -39,6 +39,7 @@ pub mod builtins {
     mod record;
     mod string;
     mod tuple;
+    mod ty;
 
     pub use float::Float;
     pub use function::{Closure, Function};
@@ -46,6 +47,7 @@ pub mod builtins {
     pub use record::Record;
     pub use string::String;
     pub use tuple::Tuple;
+    pub use ty::{Ty, Type};
 
     pub use crate::chunk::Chunk;
     pub use crate::name::Name;

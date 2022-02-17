@@ -4,6 +4,7 @@ use std::marker::PhantomData;
 use std::ops::Deref;
 use std::ptr::{self, NonNull};
 
+use crate::builtins::{Ty, Type};
 use crate::util::Invariant;
 
 
@@ -13,7 +14,7 @@ use crate::util::Invariant;
 
 pub mod gc;
 
-use gc::{ObjectHeader, Trace};
+use gc::{Alloc, ObjectHeader, Trace};
 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -106,6 +107,43 @@ where
 
     default fn hash_code(&self) -> usize {
         fxhash::hash(self)
+    }
+}
+
+
+pub trait ObjectSubtype: Object {
+    /// Returns whether the object is a subtype of certain type
+    fn is_subtype(&self, ty: &Type<'_>) -> bool;
+
+    /// Returns the type identifier for the object. this doesn't need to be
+    /// refined unless the Object supports type parametrisation.
+    fn get_type<'a, 'alloc: 'a>(
+        &self,
+        alloc: &'a Alloc<'a, 'alloc>,
+    ) -> ObjectRef<'alloc, Type<'alloc>>;
+}
+
+impl<O> ObjectSubtype for O
+where
+    O: Object,
+{
+    default fn is_subtype(&self, ty: &Type<'_>) -> bool {
+        // by default every object is a subtype of Any and of itself
+        match &ty.ty {
+            Ty::Any => true,
+            Ty::Object(vtable) => {
+                // Using the same comparison as in [`ObjectRefAny::is`]
+                ptr::eq(*vtable, O::__vtable())
+            },
+            _ => false,
+        }
+    }
+
+    default fn get_type<'a, 'alloc: 'a>(
+        &self,
+        alloc: &'a Alloc<'a, 'alloc>,
+    ) -> ObjectRef<'alloc, Type<'alloc>> {
+        Type::new(Ty::Object(O::__vtable()), alloc)
     }
 }
 
@@ -204,7 +242,7 @@ pub struct ObjectVtable {
     /// used via this or any other reference. Caller must ensure that the
     /// Object is unreachable.
     ///
-    /// The receiver must be of upcast ObjectRef<'static, Self>.
+    /// The receiver must be upcast ObjectRef<'alloc, Self>.
     pub drop: unsafe fn(
         // this: Self
         ObjectRefAny<'static>,
@@ -213,7 +251,7 @@ pub struct ObjectVtable {
     /// Mark Object as reachable, dispatch for [`Trace::mark`]
     ///
     /// # Safety
-    /// The receiver must be of upcast ObjectRef<'static, Self>.
+    /// The receiver must be upcast ObjectRef<'alloc, Self>.
     pub mark: for<'alloc> unsafe fn(
         // this: Self
         ObjectRefAny<'alloc>,
@@ -222,7 +260,7 @@ pub struct ObjectVtable {
     /// Format Object using the [`std::fmt::Debug`] formatter.
     ///
     /// # Safety
-    /// The receiver must be of upcast ObjectRef<'static, Self>.
+    /// The receiver must be upcast ObjectRef<'alloc, Self>.
     pub debug_fmt: for<'alloc> unsafe fn(
         // this: Self
         ObjectRefAny<'alloc>,
@@ -236,7 +274,7 @@ pub struct ObjectVtable {
     /// doesn't match.
     ///
     /// # Safety
-    /// The receiver must be of upcast ObjectRef<'static, Self>.
+    /// The receiver must be upcast ObjectRef<'alloc, Self>.
     pub partial_eq: for<'alloc> unsafe fn(
         // this: Self
         ObjectRefAny<'alloc>,
@@ -249,11 +287,22 @@ pub struct ObjectVtable {
     /// Returns `None` when `this` doesn't support hashing.
     ///
     /// # Safety
-    /// The receiver must be of upcast ObjectRef<'static, Self>.
+    /// The receiver must be upcast ObjectRef<'alloc, Self>.
     pub hash_code: for<'alloc> unsafe fn(
         // this: Self
         ObjectRefAny<'alloc>,
     ) -> Option<usize>,
+
+    /// Check if Object is a subtype of rhs
+    ///
+    /// # Safety
+    /// The receiver must be upcast ObjectRef<'alloc, Self>
+    pub subtype: for<'alloc> unsafe fn(
+        // this: Self
+        ObjectRefAny<'alloc>,
+        // rhs: Type
+        &Type<'_>,
+    ) -> bool,
 }
 
 impl<'alloc, O: Object> ObjectRef<'alloc, O> {
@@ -315,6 +364,13 @@ impl<'alloc> ObjectRefAny<'alloc> {
 
         // SAFETY we're using this Object's own vtable
         unsafe { hash_code(*self) }
+    }
+
+    pub fn is_subtype(&self, ty: &Type<'_>) -> bool {
+        let ObjectVtable { subtype, .. } = self.vtable();
+
+        // SAFETY we're using this Object's own vtable
+        unsafe { subtype(*self, ty) }
     }
 }
 

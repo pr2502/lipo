@@ -3,7 +3,7 @@ use std::env;
 use proc_macro::TokenStream;
 use quote::{quote, quote_spanned};
 use syn::spanned::Spanned;
-use syn::{parse_macro_input, Data, DeriveInput, Error, Fields, Index};
+use syn::{parse_macro_input, Data, DeriveInput, Error, Fields, Ident, Index};
 
 fn lipo_crate() -> impl quote::ToTokens {
     if env::var("CARGO_PKG_NAME").unwrap() == "lipo" {
@@ -69,6 +69,7 @@ pub fn derive_object(input: TokenStream) -> TokenStream {
                     debug_fmt: #lipo::__derive_object::debug_fmt::<#object_ident>,
                     partial_eq: #lipo::__derive_object::partial_eq::<#object_ident>,
                     hash_code: #lipo::__derive_object::hash_code::<#object_ident>,
+                    subtype: #lipo::__derive_object::subtype::<#object_ident>,
                 };
 
                 &VTABLE
@@ -143,7 +144,46 @@ fn mark_children(data: &Data) -> proc_macro2::TokenStream {
             },
             Fields::Unit => quote! {},
         },
-        Data::Enum(_) | Data::Union(_) => unimplemented!(),
+        Data::Enum(data) => {
+            let variants = data.variants.iter().map(|v| {
+                let name = &v.ident;
+                match &v.fields {
+                    Fields::Named(_fields) => {
+                        todo!()
+                    },
+                    Fields::Unnamed(fields) => {
+                        let matches = fields
+                            .unnamed
+                            .iter()
+                            .enumerate()
+                            .map(|(i, f)| Ident::new(&format!("f{i}"), f.span()));
+                        let marks = fields.unnamed.iter().enumerate().map(|(i, f)| {
+                            let ident = Ident::new(&format!("f{i}"), f.span());
+                            quote_spanned! {f.span()=>
+                                #lipo::__derive_trace::ProxyTrace::proxy_mark(#ident);
+                            }
+                        });
+
+                        quote_spanned! {v.span()=>
+                            Self::#name(#(#matches),*) => {
+                                #(#marks)*
+                            }
+                        }
+                    },
+                    Fields::Unit => {
+                        quote_spanned! {v.span()=>
+                            Self::#name => {}
+                        }
+                    },
+                }
+            });
+            quote! {
+                match self {
+                    #(#variants)*
+                }
+            }
+        },
+        Data::Union(_) => unimplemented!(),
     }
 }
 

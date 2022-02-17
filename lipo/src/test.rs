@@ -662,7 +662,6 @@ run! {
 }
 
 run! {
-    #[ignore = "type check operator not yet implemented"]
     cons_list,
     r#"
         fn cons(a, b) { fn(m) m(a, b) }
@@ -670,14 +669,22 @@ run! {
         fn tail(cell) { cell(fn(a, b) b) }
 
         fn for_each(list, cb) {
-            if not list :: () {
+            if not (list :: ()) {
                 cb(head(list));
-                for_each(tail(list));
+                for_each(tail(list), cb);
+            }
+        }
+
+        fn for_each_iter(mut list, cb) {
+            while not (list :: ()) {
+                cb(head(list));
+                list = tail(list);
             }
         }
 
         let list = cons(1, cons(2, cons(3, cons(4, cons(5, ())))));
         for_each(list, fn(e) { print e; });
+        for_each_iter(list, fn(e) { print e; });
     "#,
     Ok(_),
 }

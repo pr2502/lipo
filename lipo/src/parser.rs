@@ -651,9 +651,9 @@ impl<'src> Parser<'src> {
 // ASSIGNMENT   `=`
 // OR           `or`
 // AND          `and`
-// EQUALITY     `==` `/=`
+// EQUALITY     `==` `/=` `::`
 // COMPARISON   `<` `>` `<=` `>=`
-// TERM         `+` `-`
+// TERM         `+` `-` `|`
 // FACTOR       `*` `/`
 // UNARY        `not` `-`
 // CALL         `.` `()`
@@ -686,15 +686,14 @@ fn infix_binding_power(kind: TokenKind) -> Option<(u8, u8)> {
     // right associative: l_bp > r_bp
     Some(match kind {
         // assignment
-        T::Equal
-        | T::TypeEqual      => (2, 1),
+        T::Equal            => (2, 1),
         // or
-        T::Or
-        | T::TypeOr         => (3, 4),
+        T::Or               => (3, 4),
         // and
         T::And              => (5, 6),
         // equality
-        T::EqualEqual
+        T::TypeEqual
+        | T::EqualEqual
         | T::NotEqual       => (7, 8),
         // comparison
         T::Less
@@ -703,7 +702,8 @@ fn infix_binding_power(kind: TokenKind) -> Option<(u8, u8)> {
         | T::GreaterEqual   => (9, 10),
         // term
         T::Minus
-        | T::Plus           => (11, 12),
+        | T::Plus
+        | T::TypeOr         => (11, 12),
         // factor
         T::Div
         | T::Mul            => (13, 14),

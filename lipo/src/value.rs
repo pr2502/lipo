@@ -1,5 +1,6 @@
 use std::fmt::{self, Debug};
 
+use crate::builtins::Type;
 use crate::name::Name;
 use crate::value::object::{Object, ObjectRef};
 
@@ -92,6 +93,13 @@ impl<'alloc> Value<'alloc> {
         match self.kind() {
             ValueKind::Object(o) => o.hash_code(),
             ValueKind::Primitive(p) => Some(p.hash_code()),
+        }
+    }
+
+    pub fn is_subtype(&self, ty: &Type) -> bool {
+        match self.kind() {
+            ValueKind::Object(o) => o.is_subtype(ty),
+            ValueKind::Primitive(p) => p.is_subtype(ty),
         }
     }
 }

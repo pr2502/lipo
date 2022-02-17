@@ -1,6 +1,6 @@
 use std::fmt::{self, Debug};
 
-use crate::builtins::Name;
+use crate::name::Name;
 use crate::{Alloc, Object, ObjectRef, Trace, Value};
 
 

@@ -112,3 +112,15 @@ pub unsafe fn hash_code<'alloc, O: Object>(this: ObjectRefAny<'alloc>) -> Option
         None
     }
 }
+
+/// [`ObjectVtable::subtype`]
+///
+/// # Safety
+/// - Caller must provide correct receiver type, that is `this.is::<O>()` must
+///   be always true.
+pub unsafe fn subtype<'alloc, O: Object>(this: ObjectRefAny<'alloc>, ty: &Type<'_>) -> bool {
+    // SAFETY caller must use correct receiver type
+    let this = unsafe { downcast_unchecked::<O>(this) };
+
+    <O as ObjectSubtype>::is_subtype(&this, ty)
+}

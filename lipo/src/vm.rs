@@ -1,6 +1,8 @@
 use tracing::{debug, trace};
 
-use crate::builtins::{Closure, Float, Function, Name, NativeFunction, Record, String, Tuple};
+use crate::builtins::{
+    Closure, Float, Function, Name, NativeFunction, Record, String, Tuple, Type,
+};
 use crate::chunk::Chunk;
 use crate::opcode::OpCode;
 use crate::{Alloc, ObjectRef, Trace, Value};
@@ -17,7 +19,7 @@ pub struct VM<'a, 'alloc> {
     call_stack: Vec<Frame<'alloc>>,
     stack: Vec<Value<'alloc>>,
 
-    // PERF Cache the top frame values so we save a pointer dereference and eliminate bounds checks
+    // PERF cache the top frame values so we save a pointer dereference and eliminate bounds checks
     // on call_stack.
     ip: *const u8,
     stack_offset: usize,
@@ -186,7 +188,7 @@ impl<'a, 'alloc> VM<'a, 'alloc> {
                 OpCode::GET_TUPLE => self.op_get_tuple()?,
                 OpCode::GET_RECORD => self.op_get_record()?,
                 OpCode::EQUAL => self.op_equal()?,
-                OpCode::SUBTYPE => todo!("Subtype"),
+                OpCode::SUBTYPE => self.op_subtype()?,
                 OpCode::GREATER => self.op_greater()?,
                 OpCode::LESS => self.op_less()?,
                 OpCode::TYPE_OR => todo!("TypeOr"),
@@ -338,6 +340,15 @@ impl<'a, 'alloc> VM<'a, 'alloc> {
         let Some(result) = lhs.partial_eq(&rhs) else {
             todo!("type error");
         };
+        self.push(Value::from(result));
+        Ok(())
+    }
+
+    fn op_subtype(&mut self) -> Result<(), VmError> {
+        let rhs = self.pop();
+        let lhs = self.pop();
+        let ty = Type::from_value(rhs, &self.alloc); // TODO error handling
+        let result = lhs.is_subtype(&*ty);
         self.push(Value::from(result));
         Ok(())
     }

@@ -308,7 +308,7 @@ impl<'alloc> ChunkBuf<'alloc> {
         let key = self.constants.len();
         let key = key.try_into().expect("constant pool size limit reached");
         self.constants.push(promise);
-        return key;
+        key
     }
 }
 

@@ -42,9 +42,11 @@ pub struct ConstEval<'alloc> {
     graph: Graph<Name<'alloc>, (), Directed, u32>,
     /// constants which were immediately resolved to a Value or after their code has been evaluated
     resolved: HashMap<ConstId, Value<'alloc>>,
-    /// compiled code that evaluates to a constant
-    code: HashMap<ConstId, ObjectRef<'alloc, Function<'alloc>>>,
+    /// compiled code that evaluates to a constant with a function to map the return value
+    code: HashMap<ConstId, (ObjectRef<'alloc, Function<'alloc>>, ValueMap<'alloc>)>,
 }
+
+type ValueMap<'alloc> = Box<dyn FnOnce(Value<'alloc>, &Alloc<'_, 'alloc>) -> Value<'alloc>>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ConstId(NodeIndex<u32>);
@@ -74,7 +76,16 @@ impl<'alloc> ConstEval<'alloc> {
     }
 
     pub fn set_const_code(&mut self, id: ConstId, code: ObjectRef<'alloc, Function<'alloc>>) {
-        if self.code.insert(id, code).is_some() {
+        self.set_const_code_map(id, code, |v, _| v)
+    }
+
+    pub fn set_const_code_map(
+        &mut self,
+        id: ConstId,
+        code: ObjectRef<'alloc, Function<'alloc>>,
+        f: impl FnOnce(Value<'alloc>, &Alloc<'_, 'alloc>) -> Value<'alloc> + 'static,
+    ) {
+        if self.code.insert(id, (code, Box::new(f))).is_some() {
             unreachable!("BUG: Const code set multiple times");
         }
     }
@@ -99,13 +110,14 @@ impl<'alloc> ConstEval<'alloc> {
             if self.resolved.contains_key(&id) {
                 continue;
             }
-            let Some(&func) = self.code.get(&id) else {
+            let Some((func, map)) = self.code.remove(&id) else {
                 eprintln!("const_eval error: constant {id:?} doesn't have either a value or code associated");
                 continue;
             };
             func.chunk.resolve_constants(&*self);
             let vm = VM::new(func, alloc);
             let value = vm.run().expect("const_eval error");
+            let value = map(value, alloc);
             self.resolved.insert(id, value);
         }
     }

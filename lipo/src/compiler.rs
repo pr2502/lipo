@@ -1,4 +1,4 @@
-use crate::builtins::{Float, Function, String};
+use crate::builtins::{self, Float, Function, String};
 use crate::chunk::{ChunkBuf, LoopPoint, PatchPlace};
 use crate::lexer::T;
 use crate::name::Name;
@@ -17,8 +17,7 @@ use error::{CompilerError, Error};
 
 
 // Limits
-/// Maximum number of function arguments and parameters
-const MAX_ARGS: usize = u8::MAX as usize;
+const MAX_ARGS_OR_PARAMS: usize = u8::MAX as usize;
 const MAX_LOCALS: usize = u16::MAX as usize;
 const MAX_CONSTS: usize = u16::MAX as usize;
 const MAX_TUPLE_ITEMS: usize = u8::MAX as usize;
@@ -422,11 +421,11 @@ impl<'alloc> Emitter<'_, 'alloc> {
         });
 
         for (i, param) in fn_item.parameters.items.iter().enumerate() {
-            if i >= MAX_ARGS {
+            if i >= MAX_ARGS_OR_PARAMS {
                 self.error(TooManyParameters {
                     extra_param_span: param.span(),
                     fn_params_span: fn_item.parens.span(),
-                    limit: MAX_ARGS,
+                    limit: MAX_ARGS_OR_PARAMS,
                 });
             }
             let param_name = self.intern_token(param.name);
@@ -448,7 +447,9 @@ impl<'alloc> Emitter<'_, 'alloc> {
 
     fn const_item(&mut self, const_item: &ConstItem) {
         let name = self.intern_token(const_item.name);
-        self.const_expr(name, &const_item.expr);
+        let Const { id, .. } = self.resolve_const(name).unwrap();
+        let function = self.const_expr(name, &const_item.expr);
+        self.const_eval.set_const_code(id, function);
     }
 
     fn type_item(&mut self, type_item: &TypeItem) {
@@ -486,11 +487,11 @@ impl<'alloc> Emitter<'_, 'alloc> {
             });
 
             for (i, &param) in ty_params.parameters.items.iter().enumerate() {
-                if i >= MAX_ARGS {
+                if i >= MAX_ARGS_OR_PARAMS {
                     self.error(TooManyParameters {
                         extra_param_span: param.span,
                         fn_params_span: ty_params.parens.span(),
-                        limit: MAX_ARGS,
+                        limit: MAX_ARGS_OR_PARAMS,
                     });
                 }
                 let param_name = self.intern_token(param);
@@ -511,11 +512,21 @@ impl<'alloc> Emitter<'_, 'alloc> {
             self.const_eval.set_const_value(id, type_fn);
         } else {
             let name = self.intern_token(type_item.name);
-            self.const_expr(name, &type_item.expr);
+            let Const { id, .. } = self.resolve_const(name).unwrap();
+            let function = self.const_expr(name, &type_item.expr);
+            self.const_eval
+                .set_const_code_map(id, function, |value, alloc| {
+                    // TODO error handling
+                    Value::from(builtins::Type::from_value(value, alloc))
+                });
         }
     }
 
-    fn const_expr(&mut self, name: Name<'alloc>, expr: &Expression) {
+    fn const_expr(
+        &mut self,
+        name: Name<'alloc>,
+        expr: &Expression,
+    ) -> ObjectRef<'alloc, Function<'alloc>> {
         let Const { id, .. } = self.resolve_const(name).unwrap();
 
         // Same as with every other function, the first stack slot has to be fixed. We
@@ -545,8 +556,7 @@ impl<'alloc> Emitter<'_, 'alloc> {
         self.emit(OpCode::Return, expr.span().shrink_to_hi());
 
         let fn_scope = self.fn_stack.pop().unwrap();
-        let function = Function::new(fn_scope.chunk.check(), fn_scope.name, self.alloc);
-        self.const_eval.set_const_code(id, function);
+        Function::new(fn_scope.chunk.check(), fn_scope.name, self.alloc)
     }
 
     fn let_item(&mut self, let_item: &LetItem) {
@@ -882,7 +892,7 @@ impl<'alloc> Emitter<'_, 'alloc> {
                 self.error(TooManyTupleItems {
                     extra_item_span: item.span(),
                     tuple_expr_span: tuple_expr.span(),
-                    limit: MAX_ARGS,
+                    limit: MAX_ARGS_OR_PARAMS,
                 });
                 return;
             }
@@ -1005,11 +1015,11 @@ impl<'alloc> Emitter<'_, 'alloc> {
         });
 
         for (i, param) in fn_expr.parameters.items.iter().enumerate() {
-            if i >= MAX_ARGS {
+            if i >= MAX_ARGS_OR_PARAMS {
                 self.error(TooManyParameters {
                     extra_param_span: param.span(),
                     fn_params_span: fn_expr.parens.span(),
-                    limit: MAX_ARGS,
+                    limit: MAX_ARGS_OR_PARAMS,
                 });
             }
             let param_name = self.intern_token(param.name);
@@ -1044,11 +1054,11 @@ impl<'alloc> Emitter<'_, 'alloc> {
         // TODO PERF special-case Expr::Field as a direct method lookup on the lhs type
         self.expression(&call_expr.callee);
         for (i, arg) in call_expr.arguments.items.iter().enumerate() {
-            if i >= MAX_ARGS {
+            if i >= MAX_ARGS_OR_PARAMS {
                 self.error(TooManyArguments {
                     extra_arg_span: arg.span(),
                     call_span: call_expr.span(),
-                    limit: MAX_ARGS,
+                    limit: MAX_ARGS_OR_PARAMS,
                 });
                 return;
             }
