@@ -25,7 +25,6 @@ pub struct VM<'a, 'alloc> {
     stack_offset: usize,
 }
 
-#[derive(Debug)]
 struct Frame<'alloc> {
     function: ObjectRef<'alloc, Function<'alloc>>,
     closure: Option<ObjectRef<'alloc, Closure<'alloc>>>,
@@ -191,7 +190,7 @@ impl<'a, 'alloc> VM<'a, 'alloc> {
                 OpCode::SUBTYPE => self.op_subtype()?,
                 OpCode::GREATER => self.op_greater()?,
                 OpCode::LESS => self.op_less()?,
-                OpCode::TYPE_OR => todo!("TypeOr"),
+                OpCode::TYPE_OR => self.op_type_or()?,
                 OpCode::ADD => self.op_add()?,
                 OpCode::CONCAT => self.op_concat()?,
                 OpCode::SUBTRACT => self.op_subtract()?,
@@ -347,9 +346,9 @@ impl<'a, 'alloc> VM<'a, 'alloc> {
     fn op_subtype(&mut self) -> Result<(), VmError> {
         let rhs = self.pop();
         let lhs = self.pop();
-        let ty = Type::from_value(rhs, &self.alloc); // TODO error handling
-        let result = lhs.is_subtype(&*ty);
-        self.push(Value::from(result));
+        let rhs_ty = Type::from_value(rhs, &self.alloc); // TODO error handling
+        let lhs_ty = lhs.get_type(&self.alloc);
+        self.push(Value::from(Type::is_subtype(lhs_ty, rhs_ty)));
         Ok(())
     }
 
@@ -386,6 +385,16 @@ impl<'a, 'alloc> VM<'a, 'alloc> {
             }));
         };
         self.push(result);
+        Ok(())
+    }
+
+    fn op_type_or(&mut self) -> Result<(), VmError> {
+        let rhs = self.pop();
+        let lhs = self.pop();
+
+        let lhs = Type::from_value(lhs, &self.alloc);
+        let rhs = Type::from_value(rhs, &self.alloc);
+        self.push(Value::from(Type::or(lhs, rhs, &self.alloc)));
         Ok(())
     }
 

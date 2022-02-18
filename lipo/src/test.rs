@@ -149,20 +149,24 @@ run! {
     Ok(_),
 }
 
-parse! {
-    type_expr,
-    "foo :: Foo(Bar, Baz) | Qux",
-    Ok(_),
-}
-
-compile! {
-    // TODO run instead of compile, but Type type is not implemented yet
+run! {
     type_declarations,
     r"
-        type Foo = ();
-        type Bar = ();
-        // type Baz = Foo | Bar; // TODO OpCode::TypeOr and the Type type are not yet implemented
-        type Qux(T) = (Bar, T);
+        type Foo = { a: (), b: () };
+        type Bar = ((), (), ());
+        type Baz = Foo | Bar;
+        type Qux(T) = (T, Bar);
+
+        let foo = { a: (), b: () };
+        assert foo :: Foo;
+
+        let bar = ((), (), ());
+        assert bar :: Bar;
+
+        assert foo :: Baz;
+        assert bar :: Baz;
+
+        assert (foo, bar) :: Qux(Foo);
     ",
     Ok(_),
 }

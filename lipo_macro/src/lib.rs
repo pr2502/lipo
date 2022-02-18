@@ -69,7 +69,7 @@ pub fn derive_object(input: TokenStream) -> TokenStream {
                     debug_fmt: #lipo::__derive_object::debug_fmt::<#object_ident>,
                     partial_eq: #lipo::__derive_object::partial_eq::<#object_ident>,
                     hash_code: #lipo::__derive_object::hash_code::<#object_ident>,
-                    subtype: #lipo::__derive_object::subtype::<#object_ident>,
+                    get_type: #lipo::__derive_object::get_type::<#object_ident>,
                 };
 
                 &VTABLE

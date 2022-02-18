@@ -3,6 +3,7 @@ use std::fmt::{self, Debug};
 use crate::builtins::Type;
 use crate::name::Name;
 use crate::value::object::{Object, ObjectRef};
+use crate::Alloc;
 
 
 pub mod object;
@@ -96,10 +97,10 @@ impl<'alloc> Value<'alloc> {
         }
     }
 
-    pub fn is_subtype(&self, ty: &Type) -> bool {
+    pub fn get_type(&self, alloc: &Alloc<'_, 'alloc>) -> ObjectRef<'alloc, Type<'alloc>> {
         match self.kind() {
-            ValueKind::Object(o) => o.is_subtype(ty),
-            ValueKind::Primitive(p) => p.is_subtype(ty),
+            ValueKind::Object(o) => o.get_type(alloc),
+            ValueKind::Primitive(p) => p.get_type(alloc),
         }
     }
 }

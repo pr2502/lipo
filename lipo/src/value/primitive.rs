@@ -4,9 +4,10 @@ use std::marker::PhantomData;
 use std::num::NonZeroU64;
 
 use super::{repr, TypeTag};
-use crate::builtins::{Ty, Type};
+use crate::builtins::Type;
 use crate::name::Name;
 use crate::util::Invariant;
+use crate::{Alloc, ObjectRef};
 
 
 mod sealed {
@@ -168,7 +169,7 @@ impl<F: Copy, const N: usize> Vtable<F, N> {
 }
 
 struct PrimitiveVtables<const N: usize> {
-    _tags: Vtable<TypeTag, N>,
+    tags: Vtable<TypeTag, N>,
     name: Vtable<&'static str, N>,
     debug_fmt: Vtable<fn(PrimitiveAny, &mut fmt::Formatter<'_>) -> fmt::Result, N>,
     eq: Vtable<fn(PrimitiveAny, PrimitiveAny) -> bool, N>,
@@ -192,12 +193,12 @@ static VTABLES: PrimitiveVtables<5> = {
         // `TypeTag` associated constants.
         let mut i = 0usize;
         while i < VTABLES.size() {
-            assert!(VTABLES._tags.0[i].as_usize() == i);
+            assert!(VTABLES.tags.0[i].as_usize() == i);
             i += 1;
         }
     };
     const VTABLES: PrimitiveVtables<5> = PrimitiveVtables {
-        _tags: Vtable([
+        tags: Vtable([
             TypeTag::OBJECT,
             TypeTag::UNIT,
             TypeTag::BOOL,
@@ -297,11 +298,8 @@ impl<'alloc> PrimitiveAny<'alloc> {
         hash_code(self)
     }
 
-    pub(super) fn is_subtype(self, ty: &Type<'_>) -> bool {
-        match &ty.ty {
-            Ty::Any => true,
-            Ty::Primitive(type_tag) => repr::type_tag(self.repr) == *type_tag,
-            _ => false,
-        }
+    pub(super) fn get_type(self, alloc: &Alloc<'_, 'alloc>) -> ObjectRef<'alloc, Type<'alloc>> {
+        let tag = unsafe { VTABLES.tags.get(repr::type_tag(self.repr)) };
+        Type::new_primitive(tag, alloc)
     }
 }

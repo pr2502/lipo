@@ -1,6 +1,8 @@
 use std::fmt::{self, Debug};
 use std::ops::Deref;
 
+use crate::builtins::Type;
+use crate::value::object::ObjectType;
 use crate::{Alloc, Object, ObjectRef, Trace, Value};
 
 
@@ -15,6 +17,16 @@ impl<'alloc> Tuple<'alloc> {
         alloc: &Alloc<'_, 'alloc>,
     ) -> ObjectRef<'alloc, Tuple<'alloc>> {
         alloc.alloc(Tuple { items })
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = Value<'alloc>> + '_ {
+        self.items.iter().copied()
+    }
+}
+
+impl<'alloc> ObjectType<'alloc> for Tuple<'alloc> {
+    fn get_type(&self, alloc: &Alloc<'_, 'alloc>) -> ObjectRef<'alloc, Type<'alloc>> {
+        Type::new_tuple(self.iter(), alloc)
     }
 }
 

@@ -1,3 +1,4 @@
+#![feature(arbitrary_self_types)]
 #![feature(array_windows)]
 #![feature(assert_matches)]
 #![feature(is_sorted)]
@@ -47,7 +48,7 @@ pub mod builtins {
     pub use record::Record;
     pub use string::String;
     pub use tuple::Tuple;
-    pub use ty::{Ty, Type};
+    pub use ty::Type;
 
     pub use crate::chunk::Chunk;
     pub use crate::name::Name;

@@ -1,6 +1,8 @@
 use std::fmt::{self, Debug};
 
+use crate::builtins::Type;
 use crate::name::Name;
+use crate::value::object::ObjectType;
 use crate::{Alloc, Object, ObjectRef, Trace, Value};
 
 
@@ -41,7 +43,7 @@ impl<'alloc> Record<'alloc> {
     ///
     /// - the slice length must be a multiple of 2,
     /// - the first half must only contain `Name` keys
-    /// - keys are sorderd,
+    /// - keys are sorted,
     /// - for key at index `i` its value is at index `i + len/2`
     /// - the number of keys must not exceed [`u8::MAX`]
     ///
@@ -68,7 +70,7 @@ impl<'alloc> Record<'alloc> {
                 None => {
                     // SAFETY the caller ensures first half of `keys_vals` slice only contains
                     // `Name`s
-                    unsafe { std::hint::unreachable_unchecked() }
+                    debug_unreachable!("Record key is not a Name");
                 },
             })
             .collect();
@@ -82,6 +84,24 @@ impl<'alloc> Record<'alloc> {
         let idx = self.keys.iter().position(|k| *k == name)?;
         // SAFETY self.keys and self.vals always have the same length
         Some(unsafe { *self.vals.get_unchecked(idx) })
+    }
+
+    pub fn keys(&self) -> impl Iterator<Item = Name<'alloc>> + '_ {
+        self.keys.iter().copied()
+    }
+
+    pub fn values(&self) -> impl Iterator<Item = Value<'alloc>> + '_ {
+        self.vals.iter().copied()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (Name<'alloc>, Value<'alloc>)> + '_ {
+        self.keys.iter().copied().zip(self.vals.iter().copied())
+    }
+}
+
+impl<'alloc> ObjectType<'alloc> for Record<'alloc> {
+    fn get_type(&self, alloc: &Alloc<'_, 'alloc>) -> ObjectRef<'alloc, Type<'alloc>> {
+        Type::new_record(self.iter(), alloc)
     }
 }
 
