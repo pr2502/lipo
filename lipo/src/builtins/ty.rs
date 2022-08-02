@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::fmt::{self, Debug};
 use std::ptr;
 
@@ -44,7 +45,7 @@ enum Ty<'alloc> {
     /// ```lipo
     /// type MyType = (Int, Float, String);
     /// ```
-    Tuple(Box<[ObjectRef<'alloc, Type<'alloc>>]>),
+    Tuple(Box<[ObjectRef<'alloc, Type<'alloc>>]>, bool),
 
     /// Record of `Type`s
     ///
@@ -56,7 +57,11 @@ enum Ty<'alloc> {
     ///     c: String,
     /// };
     /// ```
-    Record(Box<[Name<'alloc>]>, Box<[ObjectRef<'alloc, Type<'alloc>>]>),
+    Record(
+        Box<[Name<'alloc>]>,
+        Box<[ObjectRef<'alloc, Type<'alloc>>]>,
+        bool,
+    ),
 
     /// A set of types
     ///
@@ -111,7 +116,7 @@ impl<'alloc> Type<'alloc> {
         alloc: &Alloc<'_, 'alloc>,
     ) -> ObjectRef<'alloc, Type<'alloc>> {
         let types = elems.map(|e| e.get_type(alloc)).collect();
-        Type::new(Ty::Tuple(types), alloc)
+        Type::new(Ty::Tuple(types, false), alloc)
     }
 
     pub(crate) fn new_record(
@@ -125,7 +130,7 @@ impl<'alloc> Type<'alloc> {
             vals.push(val.get_type(alloc));
         }
         Type::new(
-            Ty::Record(keys.into_boxed_slice(), vals.into_boxed_slice()),
+            Ty::Record(keys.into_boxed_slice(), vals.into_boxed_slice(), false),
             alloc,
         )
     }
@@ -152,7 +157,7 @@ impl<'alloc> Type<'alloc> {
                 .iter()
                 .map(|value| Type::from_value(value, alloc))
                 .collect();
-            return Type::new(Ty::Tuple(tuple), alloc);
+            return Type::new(Ty::Tuple(tuple, false), alloc);
         }
         if let Some(record) = value.downcast::<Record>() {
             let keys = record.keys().collect();
@@ -160,7 +165,7 @@ impl<'alloc> Type<'alloc> {
                 .values()
                 .map(|value| Type::from_value(value, alloc))
                 .collect();
-            return Type::new(Ty::Record(keys, vals), alloc);
+            return Type::new(Ty::Record(keys, vals, false), alloc);
         }
         todo!("type error: value cannot be converted to Type")
     }
@@ -177,11 +182,7 @@ impl<'alloc> Type<'alloc> {
             // Set intersection
             (Ty::Sum(set1), Ty::Sum(set2)) => {
                 let types = set1.types.clone();
-                let types = set2
-                    .types
-                    .iter()
-                    .cloned()
-                    .fold(types, |acc, ty| type_set_add(acc, ty));
+                let types = set2.types.iter().copied().fold(types, type_set_add);
                 Type::new(Ty::Sum(TypeSet { types }), alloc)
             },
 
@@ -228,16 +229,87 @@ impl<'alloc> Type<'alloc> {
                     ptr::eq(lhs, rhs)
                 },
 
-                // Tuples must match exactly in length
-                (Ty::Tuple(lhs), Ty::Tuple(rhs)) => {
-                    lhs.len() == rhs.len() && lhs.iter().zip(rhs.iter()).all(recur)
+                // Tuples must match exactly in length or they must allow extra trailing types
+                (Ty::Tuple(lhs, lhs_nex), Ty::Tuple(rhs, rhs_nex)) => {
+                    match (lhs_nex, rhs_nex, Ord::cmp(&lhs.len(), &rhs.len())) {
+                        // Both are non-exhaustive, lengths don't matter
+                        (true, true, _)
+
+                        // Shorter tuple is non-exhaustive
+                        | (true, false, Ordering::Less)
+                        | (false, true, Ordering::Greater)
+
+                        // Both are exhaustive and lenghts match
+                        | (false, false, Ordering::Equal) => {
+                            // in case the lengths are not equal zip will skip checking the extra
+                            // types of the longer tuple
+                            lhs.iter().zip(rhs.iter()).all(recur)
+                        }
+
+                        // All other cases can never match just based on their lenghts
+                        _ => false,
+                    }
                 },
 
-                // Record fields must match exactly
-                (Ty::Record(lhs1, lhs2), Ty::Record(rhs1, rhs2)) => {
-                    lhs1.len() == rhs1.len()
-                        && lhs1.iter().zip(rhs1.iter()).all(|(lhs, rhs)| lhs == rhs)
-                        && lhs2.iter().zip(rhs2.iter()).all(recur)
+                // Record fields must match exactly or they must be non-exhaustive
+                (Ty::Record(lhs_k, lhs_v, lhs_nex), Ty::Record(rhs_k, rhs_v, rhs_nex)) => {
+                    match (lhs_nex, rhs_nex, Ord::cmp(&lhs_k.len(), &rhs_k.len())) {
+                        (false, false, Ordering::Equal) => {
+                            // This is the base case where lenghts are equal and both Records are
+                            // exhaustive, in this case all keys must match and so they must be in
+                            // the same order and we can greatly simplify the comparison
+                            lhs_k.iter().zip(rhs_k.iter()).all(|(lhs, rhs)| lhs == rhs)
+                                && lhs_v.iter().zip(rhs_v.iter()).all(recur)
+                        },
+
+                        // Differing number of keys can never match if both Records are exhaustive
+                        (false, false, _) => false,
+
+                        // In the general case we have to do a more manual approach, we'll use the
+                        // fact that keys are sorted to allow exitting as early as possible.
+                        _ => {
+                            let (mut lhs, mut rhs) = (
+                                lhs_k.iter().zip(lhs_v.iter()),
+                                rhs_k.iter().zip(rhs_v.iter()),
+                            );
+                            let (mut l, mut r) = (lhs.next(), rhs.next());
+                            // SAFETY: this loop always ends because every branch either advances
+                            // at least one iterator or breaks
+                            loop {
+                                match (l, r) {
+                                    // One side ran out first, the types are subtypes if it's
+                                    // non-exhaustive
+                                    (None, _) => break *lhs_nex,
+                                    (_, None) => break *rhs_nex,
+
+                                    // Keys match, we can compare the associated values and advance
+                                    // both iterators
+                                    (Some((l_k, l_v)), Some((r_k, r_v))) if l_k == r_k => {
+                                        if !recur((l_v, r_v)) {
+                                            // Values of matching keys aren't subtypes, fail
+                                            break false;
+                                        }
+                                        l = lhs.next();
+                                        r = rhs.next();
+                                    },
+
+                                    // Keys don't match, advance the iterator that is behind if the
+                                    // other one is non-exhaustive, fail otherwise
+                                    (Some((l_k, _)), Some((r_k, _))) => {
+                                        match (lhs_nex, rhs_nex, Ord::cmp(l_k, r_k)) {
+                                            (_, true, Ordering::Less) => {
+                                                l = lhs.next();
+                                            },
+                                            (true, _, Ordering::Greater) => {
+                                                r = rhs.next();
+                                            },
+                                            _ => break false,
+                                        }
+                                    },
+                                }
+                            }
+                        },
+                    }
                 },
 
                 // T is a subtype of a TypeSet if it's a subtype of any of its elements
@@ -267,15 +339,33 @@ impl<'alloc> Debug for Ty<'alloc> {
                 let name = vtable.typename;
                 f.write_fmt(format_args!("Object({name})"))
             },
-            Ty::Tuple(types) => {
+            Ty::Tuple(types, non_exhaustive) => {
+                struct NonExhaustive;
+                impl Debug for NonExhaustive {
+                    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                        f.write_str("..")
+                    }
+                }
+
                 f.write_str("Tuple")?;
-                f.debug_list().entries(types.iter()).finish()
+                let mut w = f.debug_list();
+                w.entries(types.iter());
+                if *non_exhaustive {
+                    w.entry(&NonExhaustive);
+                }
+                w.finish()
             },
-            Ty::Record(names, types) => {
+            Ty::Record(names, types, non_exhaustive) => {
                 f.write_str("Record")?;
-                f.debug_map()
-                    .entries(names.iter().zip(types.iter()))
-                    .finish()
+                let mut w = f.debug_struct("Record");
+                for (name, ty) in names.iter().zip(types.iter()) {
+                    w.field(&name.to_string(), ty);
+                }
+                if *non_exhaustive {
+                    w.finish_non_exhaustive()
+                } else {
+                    w.finish()
+                }
             },
             Ty::Sum(set) => {
                 f.write_str("Sum")?;
