@@ -51,7 +51,7 @@ fn value_size() {
 
 const TYPE_MASK: u64 = 0xffff_0000_0000_0000;
 const PAYLOAD_MASK: u64 = !TYPE_MASK;
-const TYPE_OFFSET: u8 = 48;
+const TYPE_OFFSET: u8 = TYPE_MASK.trailing_zeros() as u8;
 
 
 unsafe fn new_object(ptr: NonNull<ObjectHeader>) -> NonZeroU64 {

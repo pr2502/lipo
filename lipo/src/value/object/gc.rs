@@ -1,8 +1,7 @@
-use std::lazy::SyncOnceCell;
 use std::marker::PhantomData;
 use std::ptr::{self, NonNull};
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 
 use tracing::info;
 
@@ -100,7 +99,7 @@ pub struct Alloc<'parent, 'root> {
     root: PhantomData<Invariant<'root>>,
     parent: Option<&'parent Alloc<'parent, 'root>>,
     alloc_list: AtomicPtr<ObjectHeader>,
-    name_interner: SyncOnceCell<Mutex<NameInterner>>,
+    name_interner: OnceLock<Mutex<NameInterner>>,
 }
 
 impl<'parent, 'root> Alloc<'parent, 'root> {
@@ -110,7 +109,7 @@ impl<'parent, 'root> Alloc<'parent, 'root> {
             root: PhantomData,
             parent: None,
             alloc_list: AtomicPtr::new(ptr::null_mut()),
-            name_interner: SyncOnceCell::new(),
+            name_interner: OnceLock::new(),
         }
     }
 
@@ -120,7 +119,7 @@ impl<'parent, 'root> Alloc<'parent, 'root> {
             root: self.root,
             parent: Some(self),
             alloc_list: AtomicPtr::new(ptr::null_mut()),
-            name_interner: SyncOnceCell::new(),
+            name_interner: OnceLock::new(),
         }
     }
 
@@ -356,7 +355,7 @@ unsafe impl<'alloc, O: Object> Trace for ObjectRef<'alloc, O> {
     fn mark(&self) {
         let prev_marked = self.upcast().header().mark.swap(true, Ordering::Relaxed);
         if !prev_marked {
-            <O as Trace>::mark(&*self)
+            <O as Trace>::mark(self)
         }
     }
 }

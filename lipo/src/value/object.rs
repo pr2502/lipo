@@ -374,13 +374,13 @@ impl<'alloc, O: Object> Deref for ObjectRef<'alloc, O> {
 
 impl<'alloc, O: Object + Debug> Debug for ObjectRef<'alloc, O> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <O as Debug>::fmt(&*self, f)
+        <O as Debug>::fmt(self, f)
     }
 }
 
 impl<'alloc, O: Object + PartialEq> PartialEq for ObjectRef<'alloc, O> {
     fn eq(&self, other: &Self) -> bool {
-        <O as PartialEq>::eq(&*self, &*other)
+        <O as PartialEq>::eq(self, other)
     }
 }
 
@@ -388,6 +388,6 @@ impl<'alloc, O: Object + Eq> Eq for ObjectRef<'alloc, O> {}
 
 impl<'alloc, O: Object + Hash> Hash for ObjectRef<'alloc, O> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        <O as Hash>::hash(&*self, state);
+        <O as Hash>::hash(self, state);
     }
 }

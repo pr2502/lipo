@@ -130,7 +130,7 @@ unsafe impl<'alloc> Primitive<'alloc> for Name<'alloc> {
     }
 }
 
-impl<'alloc> sealed::Sealed for i32 {}
+impl sealed::Sealed for i32 {}
 unsafe impl<'alloc> Primitive<'alloc> for i32 {
     const TYPE_TAG: TypeTag = TypeTag::INT32;
 

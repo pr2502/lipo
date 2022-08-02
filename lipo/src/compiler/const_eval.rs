@@ -122,7 +122,7 @@ impl<'alloc> ConstEval<'alloc> {
         }
     }
 
-    fn print_dot(&mut self) {
+    fn print_dot(&self) {
         use petgraph::dot::{Config, Dot};
 
         let dot = Dot::with_config(&self.graph, &[Config::EdgeNoLabel]);

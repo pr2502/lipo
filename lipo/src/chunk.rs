@@ -3,7 +3,7 @@ use std::convert::TryInto;
 use std::fmt::{self, Debug};
 use std::hash::Hash;
 use std::iter;
-use std::lazy::SyncOnceCell;
+use std::sync::OnceLock;
 
 use crate::builtins::String;
 use crate::compiler::const_eval::ConstId;
@@ -20,7 +20,7 @@ pub struct Chunk<'alloc> {
     /// Constant pool
     ///
     /// Chunk may contain up to `u16::MAX` unique constants.
-    constants: SyncOnceCell<Box<[Value<'alloc>]>>,
+    constants: OnceLock<Box<[Value<'alloc>]>>,
 
     /// Unresolved constant promises
     constant_promises: Box<[ConstId]>,
@@ -92,7 +92,7 @@ impl<'alloc> Chunk<'alloc> {
 
     pub fn constants(&self) -> Option<&[Value<'alloc>]> {
         match self.constants.get() {
-            Some(constants) => Some(&*constants),
+            Some(constants) => Some(constants),
             None => None,
         }
     }

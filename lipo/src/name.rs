@@ -31,7 +31,7 @@ impl<'interner> Name<'interner> {
     }
 
     fn as_str(self) -> &'static str {
-        *self.string
+        self.string
     }
 
     /// Only use for Primitive conversions
